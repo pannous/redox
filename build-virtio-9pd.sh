@@ -3,12 +3,19 @@ set -e
 
 cd /opt/other/redox/recipes/core/base/source
 
+ROOT="/opt/other/redox"
+TOOLCHAIN_FILE="$ROOT/rust-toolchain.toml"
+if [ -z "$NIGHTLY" ] && [ -f "$TOOLCHAIN_FILE" ]; then
+    NIGHTLY="$(awk -F'\"' '/^channel/ {print $2; exit}' "$TOOLCHAIN_FILE")"
+fi
+NIGHTLY="${NIGHTLY:-nightly-2026-01-02}"
+
 SYSROOT=/opt/other/redox/build/aarch64/cranelift-sysroot
 CRANELIFT_LIB=/opt/other/rustc_codegen_cranelift/dist/lib/librustc_codegen_cranelift.dylib
-NIGHTLY=nightly-2026-01-02
 TARGET=/opt/other/redox/tools/aarch64-unknown-redox-clif.json
 
 export DYLD_LIBRARY_PATH=~/.rustup/toolchains/${NIGHTLY}-aarch64-apple-darwin/lib
+export CARGO_INCREMENTAL=1
 
 RUSTFLAGS="-Zcodegen-backend=$CRANELIFT_LIB \
     -L $SYSROOT/lib \

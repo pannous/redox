@@ -2,25 +2,35 @@
 # Build uutils coreutils with Cranelift for aarch64 Redox
 set -e
 
-cd /opt/other/redox/recipes/core/uutils/source
+ROOT="/opt/other/redox"
+TOOLCHAIN_FILE="$ROOT/rust-toolchain.toml"
+if [ -z "$NIGHTLY" ] && [ -f "$TOOLCHAIN_FILE" ]; then
+    NIGHTLY="$(awk -F'\"' '/^channel/ {print $2; exit}' "$TOOLCHAIN_FILE")"
+fi
+NIGHTLY="${NIGHTLY:-nightly-2026-01-02}"
 
-NIGHTLY="nightly-2026-01-02"
+cd /opt/other/redox/recipes/core/uutils/source
 TARGET="/opt/other/redox/recipes/core/base/source/aarch64-unknown-redox-clif.json"
 CRANELIFT="/opt/other/rustc_codegen_cranelift/dist/lib/librustc_codegen_cranelift.dylib"
 RELIBC="/opt/other/redox/recipes/core/relibc/source/target/aarch64-unknown-redox-clif/release"
 
 export DYLD_LIBRARY_PATH=~/.rustup/toolchains/${NIGHTLY}-aarch64-apple-darwin/lib
+export CARGO_INCREMENTAL=1
 
 export RUSTFLAGS="-Zcodegen-backend=${CRANELIFT} \
   -Crelocation-model=static \
+  -Clto=no \
   -Clink-arg=-L${RELIBC} \
   -Clink-arg=${RELIBC}/crt0.o \
   -Clink-arg=${RELIBC}/crt0_rust.o \
   -Clink-arg=${RELIBC}/crti.o \
   -Clink-arg=${RELIBC}/crtn.o \
   -Clink-arg=-lunwind_stubs \
+  -Clink-arg=-lc \
   -Clink-arg=-z -Clink-arg=muldefs \
   -Cpanic=abort"
+
+export CARGO_PROFILE_RELEASE_LTO=false
 
 echo "=== Building coreutils with Cranelift ==="
 # Minimal feature set: essential utilities without C deps (no expr, no hashsum/b3sum)

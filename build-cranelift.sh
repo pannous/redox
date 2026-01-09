@@ -19,12 +19,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Resolve default nightly from rust-toolchain.toml when NIGHTLY isn't set.
+TOOLCHAIN_FILE="$SCRIPT_DIR/rust-toolchain.toml"
+if [ -z "$NIGHTLY" ] && [ -f "$TOOLCHAIN_FILE" ]; then
+    NIGHTLY="$(awk -F'\"' '/^channel/ {print $2; exit}' "$TOOLCHAIN_FILE")"
+fi
+
 # ============================================================================
 # Configuration - aarch64 is the default!
 # ============================================================================
 
 # Architecture: aarch64 (default), x86_64 (legacy, use ARCH_x86=1)
 if [ -n "$ARCH_x86" ] || [ "$ARCH" = "x86_64" ]; then
+    echo "Using legacy x86_64 architecture (don't! use aarch64 instead!)"
     ARCH="x86_64"
     TARGET_KERNEL="x86_64-unknown-none"
     TARGET_USER="x86_64-unknown-redox"
@@ -147,6 +154,7 @@ Install with: rustup toolchain install $NIGHTLY"
     export LD_LIBRARY_PATH="$TOOLCHAIN_LIB:$LD_LIBRARY_PATH"
     export RUSTFLAGS="-Zcodegen-backend=$CRANELIFT_LIB"
     export RUSTUP_TOOLCHAIN="$NIGHTLY"
+    export CARGO_INCREMENTAL=1
 
     # Disable sccache - interferes with custom codegen backends
     unset RUSTC_WRAPPER
@@ -345,10 +353,17 @@ build_relibc() {
 
     # Build relibc (Rust code only - pure Rust math via libm crate)
     # NOTE: With rust-math feature, openlibm (C) is not needed!
+    local relibc_features="${RELIBC_FEATURES:-rust-math}"
+    local relibc_feature_args=()
+    if [ -n "$relibc_features" ]; then
+        relibc_feature_args=(--features "$relibc_features")
+    fi
+
     CARGO_TARGET_DIR="$(pwd)/target" \
     cargo build \
         --target ${TARGET_USER}-clif.json \
         --release \
+        "${relibc_feature_args[@]}" \
         -Z build-std=core,alloc \
         -Zbuild-std-features=compiler_builtins/no-f16-f128
 
