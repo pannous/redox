@@ -602,3 +602,18 @@ RUSTFLAGS="-Zcodegen-backend=/opt/other/rustc_codegen_cranelift/dist/lib/librust
 cargo build --target /opt/other/redox/tools/aarch64-unknown-redox-clif.json --release -Z build-std=std,core,alloc,panic_abort -p redox_netstack
 ```
 
+
+### Connectivity Test Results (2026-01-09)
+
+**Working:**
+- ICMP ping to gateway (10.0.2.2): ✅ SUCCESS
+  ```
+  PING 10.0.2.2 (10.0.2.2) 40(68) bytes of data.
+  From 10.0.2.2 icmp_seq=0 time=26.098ms
+  ```
+
+**Not working yet:**
+- curl/TCP: Times out (may need more investigation - DNS? TCP stack issue?)
+- SSH: Connection timeout
+
+**Summary:** Network IP configuration fix is working. ICMP works through smoltcp stack. TCP may have additional issues or just needs longer timeout.
