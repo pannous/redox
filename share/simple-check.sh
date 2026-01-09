@@ -1,0 +1,12 @@
+echo "MAC:"
+cat /scheme/network.pci-00-00-03.0_virtio_net/mac
+echo ""
+echo "netcfg:"
+ls /scheme/netcfg/
+echo ""
+echo "ifaces:"
+ls /scheme/netcfg/ifaces/
+echo ""
+echo "netdrv:"
+ls /scheme/network.pci-00-00-03.0_virtio_net/
+echo "END"

@@ -543,3 +543,32 @@ Commits:
 - QEMU user-mode networking: ping won't work (no ICMP), use curl/wget instead
 - DHCP should assign 10.0.2.x address automatically
 - Port forward: host:2222 -> guest:22 (SSH)
+
+## Network Debugging - smolnetd interface issue (2026-01-09)
+
+### Status: UNRESOLVED
+smolnetd runs and creates ip/tcp/udp/icmp/netcfg schemes but doesn't create interfaces.
+
+### Working:
+- virtio-netd driver loaded, scheme `network.pci-00-00-03.0_virtio_net` exists
+- MAC readable from driver scheme (6 bytes correct)
+- /etc/net/* config files present and correct (ip, ip_router, ip_subnet, dns)
+- smolnetd binary runs (PID varies)
+
+### Not working:
+- /scheme/netcfg/ifaces/ is empty
+- No eth0 interface created
+
+### Tried:
+- Added sleep 2, then 5 seconds before smolnetd in /usr/lib/init.d/10_net
+- Verified boot order (00_drivers before 10_net)
+- Manual interface creation via write to netcfg (doesn't work - scheme read-only?)
+
+### Hypothesis:
+smolnetd may have a bug in adapter detection for "network." prefixed schemes, or
+there's a silent failure during interface initialization.
+
+### Next steps to try:
+1. Build debug version of smolnetd with logging
+2. Check smolnetd source for adapter detection logic
+3. Try different smolnetd binary version
