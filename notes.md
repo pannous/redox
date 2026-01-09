@@ -537,3 +537,9 @@ Added to tools/aarch64-unknown-redox-clif.json:
 Commits:
 - 9dfae9134 (main): target spec with CRT objects
 - 8b003702 (base/source): copied target spec
+
+## 2026-01-09 Network testing
+- Added `-netdev user,id=net0 -device virtio-net-pci,netdev=net0` to run-dev.sh
+- QEMU user-mode networking: ping won't work (no ICMP), use curl/wget instead
+- DHCP should assign 10.0.2.x address automatically
+- Port forward: host:2222 -> guest:22 (SSH)
