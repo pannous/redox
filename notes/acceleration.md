@@ -56,3 +56,19 @@ To use HVF acceleration:
 ```
 qemu-system-aarch64 -M virt -accel hvf -cpu host -m 2G ...
 ```
+
+## 2026-01-09 DSB before WFI - 60% success rate
+
+Added DSB SY barrier before WFI in halt functions:
+- `kernel/src/arch/aarch64/interrupt/mod.rs`
+
+HVF intercepts WFI and may deliver interrupts before TLB/memory
+operations complete. The DSB ensures synchronization.
+
+**Result: 60% success rate** (up from ~20%)
+
+Also added memory barrier to ld_so after relocations (requires full rebuild).
+
+Remaining ~40% failures likely due to:
+- IPI unimplemented (TLB shootdowns don't work)
+- Other memory ordering issues in context switch
