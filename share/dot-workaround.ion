@@ -8,7 +8,6 @@
 # in src/lib/builtins/mod.rs
 #
 # For now, use "source" instead of "." to source scripts.
-fn . file
-    source $file
-end
-echo "✌️ dot workaround loaded - you can now use '. script' instead of 'source script'"
+# Note: Function names can't be "." so we use alias instead
+alias . source
+echo "dot workaround loaded - use '. script' to source scripts"

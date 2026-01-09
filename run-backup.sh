@@ -11,6 +11,11 @@ echo "Usage: ./run-backup.sh [ISO] [SHARE]"
 echo "WARNING: This is for emergency fallback only, not for development!"
 echo ""
 
+# no longer used:
+# ./snapshot.sh save test1  # Save state via qcow2 before experimenting
+# ./snapshot.sh load test1  # Rollback if things break
+# ./snapshot.sh reset       # Clean slate from base ISO
+
 echo password | pbcopy
 
 ISO="${1:-build/aarch64/pure-rust.iso.ok.DONT_TOUCH.bak}"

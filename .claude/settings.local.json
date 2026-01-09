@@ -7,7 +7,8 @@
       "Bash(git commit:*)",
       "Bash(cp:*)",
       "Bash(qemu-img rebase:*)",
-      "Bash(./snapshot.sh:*)"
+      "Bash(./snapshot.sh:*)",
+      "Bash(cat:*)"
     ]
   },
   "hooks": {

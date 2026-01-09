@@ -52,6 +52,9 @@ The new build-cranelift.sh uses:
 # Known Issues
 
   - fbcond crashes when no framebuffer (nographic mode)
+  | Headless (current) | -nographic without ramfb | fbcond crashes (harmless), serial login works |
+  | Graphical          | -device ramfb            | Resolution menu appears, needs user input     |
+  
   - virtio-netd panic: MSI-X not implemented for aarch64
   - 9p not available without explicit QEMU config
 
