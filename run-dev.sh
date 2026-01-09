@@ -1,21 +1,25 @@
 #!/bin/bash
 set -e
 
+echo password | pbcopy
+
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
-QCOW2="${QCOW2:-$ROOT/build/aarch64/dev.qcow2}"
-BASE_ISO="$ROOT/build/aarch64/pure-rust.iso"
+RAW_IMG="${RAW_IMG:-$ROOT/build/aarch64/pure-rust.img}"
 SHARE="${SHARE:-$ROOT/share/}"
-SOCK="${SOCK:-/tmp/redox-dev.sock}"
-MONSOCK="${MONSOCK:-/tmp/redox-dev-mon.sock}"
+SOCK="${SOCK:-/tmp/redox-dev-raw.sock}"
+MONSOCK="${MONSOCK:-/tmp/redox-dev-raw-mon.sock}"
 
-# Create qcow2 from base ISO if it doesn't exist
-if [[ ! -f "$QCOW2" ]]; then
-    echo "Creating dev.qcow2 from $BASE_ISO..." >&2
-    mkdir -p "$(dirname "$QCOW2")"
-    qemu-img create -f qcow2 -b "$BASE_ISO" -F raw "$QCOW2" 4G
-    echo "Created $QCOW2" >&2
+
+if [[ ! -f "$RAW_IMG" ]]; then
+    echo "Missing raw image: $RAW_IMG" >&2
+    echo "Set RAW_IMG or create /tmp/dev-raw.img first." >&2
+    echo "run in background via ./run-dev-img.sh -s then"
+    echo "socat - unix-connect:/tmp/redox-dev-raw.sock"
+    echo "⚠️ cache=writethrough dangerous?"
+    echo "⚠️ cache=writeback more dangerous;)"
+    exit 1
 fi
 
 CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4"
@@ -28,10 +32,12 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     echo "Connect: socat - unix-connect:$SOCK" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file="$QCOW2",format=qcow2,id=hd0,if=none \
+        -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=writethrough \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
+        -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+        -device virtio-net-pci,netdev=net0 \
         -device qemu-xhci -device usb-kbd \
         -serial unix:"$SOCK",server,nowait \
         -monitor unix:"$MONSOCK",server,nowait \
@@ -42,15 +48,16 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     echo "$SOCK"  # Output socket path for scripts
 else
     # Interactive mode (default)
-    echo "Using: $QCOW2" >&2
-    echo "Snapshots: ./snapshot.sh [save|load|list]" >&2
+    echo "Using: $RAW_IMG" >&2
     echo "Socket mode: $0 -s" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file="$QCOW2",format=qcow2,id=hd0,if=none \
+        -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=writeback \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
+        -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+        -device virtio-net-pci,netdev=net0 \
         -device qemu-xhci -device usb-kbd \
         -nographic
 fi
