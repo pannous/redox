@@ -572,3 +572,33 @@ there's a silent failure during interface initialization.
 1. Build debug version of smolnetd with logging
 2. Check smolnetd source for adapter detection logic
 3. Try different smolnetd binary version
+
+## Network Configuration Fix (2026-01-09)
+
+**Root Cause Found:** smolnetd never read `/etc/net/ip` or `/etc/net/ip_subnet` to configure eth0's IP address during initialization.
+
+**Fix Applied:**
+- Added `subnet_to_prefix()` helper function to convert subnet mask (255.255.255.0) to CIDR prefix length (24)
+- Modified `Smolnetd::new()` in `/opt/other/redox/recipes/core/base/source/netstack/src/scheme/mod.rs` to:
+  1. Read IP from `/etc/net/ip`
+  2. Read subnet from `/etc/net/ip_subnet`
+  3. Configure eth0 device with IP/CIDR
+  4. Add route for local network (10.0.2.0/24)
+
+**Test Results:**
+```
+cat /scheme/netcfg/ifaces/eth0/addr/list
+10.0.2.15/24
+
+cat /scheme/netcfg/route/list
+default via 10.0.2.2 dev eth0 src 10.0.2.15
+127.0.0.0/8  dev loopback src 127.0.0.1
+10.0.2.0/24  dev eth0 src 10.0.2.15
+```
+
+**Build Command:**
+```bash
+RUSTFLAGS="-Zcodegen-backend=/opt/other/rustc_codegen_cranelift/dist/lib/librustc_codegen_cranelift.dylib -L /opt/other/redox/build/aarch64/sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
+cargo build --target /opt/other/redox/tools/aarch64-unknown-redox-clif.json --release -Z build-std=std,core,alloc,panic_abort -p redox_netstack
+```
+
