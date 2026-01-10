@@ -907,3 +907,45 @@ Valid fixes kept:
 - Duplicate IP panic fix (netcfg/mod.rs line 246)
 
 smolnetd is running after reboot. Testing ping was difficult due to terminal output capture issues.
+
+
+  Call Chain
+
+  sync command
+      ↓
+  relibc::sync() → Ok(()) ← EMPTY!
+      ↓
+  Nothing happens
+
+  fsync(fd)
+      ↓
+  kernel → redoxfs → file.sync()
+      ↓
+  Transaction writes to disk.write_at()
+      ↓
+  virtio-blk Out request ← NO FLUSH SENT
+      ↓
+  QEMU writeback cache (may not persist!)
+
+  The Fix
+
+  The real issue is virtio-blk needs FLUSH support. Want me to implement it? It would involve:
+
+  1. Adding flush request type to virtio-blkd
+  2. Calling it from redoxfs after transaction commit
+  3. Optionally fixing relibc's empty sync()
+
+## RTC Fix (2026-01-10)
+System time was stuck at 1970 (Unix epoch) because:
+1. Bootloader uses ACPI (not DTB) so init_devicetree() was skipped
+2. RTC init was only in DTB code path
+3. Device memory at 0x9010000 wasn't mapped for ACPI boot
+
+Fix:
+- Added -rtc base=utc,clock=host to QEMU (run-dev.sh)
+- Added init_qemu_virt() fallback in rtc.rs
+- Pre-register device memory 0x08000000-0x40000000 BEFORE memory::init()
+- Call RTC fallback in ACPI error branch
+
+Kernel commit: f06fd970 in recipes/core/kernel/source
+
