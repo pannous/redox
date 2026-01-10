@@ -730,3 +730,82 @@ cargo +${NIGHTLY} build --target ${TARGET} --release \
 
 **Result**: smolnetd 4MB, ping works, no allocator crash!
 **Image backup**: pure-rust-smolnetd-tcp-fix.img
+
+## Cranelift PE/COFF aarch64 Support (2026-01-10)
+
+### Why Bootloader Cannot Be Built with Cranelift
+
+The UEFI bootloader requires PE/COFF format (`aarch64-unknown-uefi`), but Cranelift doesn't support the required relocations for aarch64 PE/COFF.
+
+**Error encountered:**
+```
+not implemented: Aarch64AdrGotPage21 is not supported for this file format
+```
+
+**Location:** `cranelift-object/src/backend.rs:837`
+
+### Technical Details
+
+The missing support is in the `process_reloc()` function:
+```rust
+Reloc::Aarch64AdrGotPage21 => match self.object.format() {
+    object::BinaryFormat::Elf => /* implemented */,
+    object::BinaryFormat::MachO => /* implemented */,
+    object::BinaryFormat::Coff => /* NOT IMPLEMENTED - panics */,
+}
+```
+
+### PE/COFF vs ELF/Mach-O
+
+PE/COFF aarch64 has different relocations:
+- `IMAGE_REL_ARM64_ADDR32/64` (absolute)
+- `IMAGE_REL_ARM64_REL32` (relative)  
+- `IMAGE_REL_ARM64_PAGEBASE_REL21` (page-relative)
+- `IMAGE_REL_ARM64_PAGEOFFSET_12L` (page offset)
+
+But **no GOT (Global Offset Table) relocations** - PE/COFF uses import tables differently.
+
+### Effort to Add Support
+
+| Task | Time |
+|------|------|
+| Understand PE/COFF aarch64 relocation model | 1-2 days |
+| Modify cranelift-codegen for non-GOT code | 1-2 weeks |
+| Add PE/COFF handling in cranelift-object | 3-5 days |
+| Testing & edge cases | 1-2 weeks |
+| Upstream review | 1-4 weeks |
+
+**Total: ~1-2 months** for full support
+
+**Minimal workaround** (disable GOT for static UEFI): ~1-2 weeks
+
+### Current Solution
+
+Extract bootloader from existing image - it's the only component that truly needs LLVM.
+
+| Component | Format | Cranelift |
+|-----------|--------|-----------|
+| Kernel | ELF | ✅ Works |
+| InitFS drivers | ELF | ✅ Works |
+| Userspace | ELF | ✅ Works |
+| Bootloader | PE/COFF | ❌ Needs LLVM |
+
+### Files of Interest
+
+- Cranelift backend: `~/.cargo/registry/src/.../cranelift-object-*/src/backend.rs`
+- Bootloader source: `/opt/other/redox/recipes/core/bootloader/source/`
+- Target spec: `recipes/core/bootloader/source/targets/aarch64-unknown-uefi.json`
+
+
+## 2026-01-10: Fixed sleep binary
+
+- Built simple sleep binary in simple-coreutils/src/sleep.rs
+- Replaced broken coreutils symlink with working binary
+- Added sleep to initfs build script
+- Now `sleep 5` works in 10_net init script
+
+Files changed (in gitignored recipes):
+- recipes/core/base/source/simple-coreutils/Cargo.toml - added sleep bin
+- recipes/core/base/source/simple-coreutils/src/sleep.rs - new file
+- recipes/core/base/source/build-initfs-cranelift.sh - added sleep to build
+
