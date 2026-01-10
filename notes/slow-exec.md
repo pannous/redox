@@ -148,3 +148,40 @@ The EPERM/EBADF fallback fix was committed to relibc but the initfs rebuild prod
 ### For now:
 The fix is committed in relibc source but not actively used due to initfs rebuild issues.
 Performance on current image: ~11s for 24MB coreutils (using pread, no file-backed mmap).
+
+## Investigation Update (2026-01-10 continued)
+
+### Initfs rebuild crash investigation:
+
+1. **Root cause identified**: Rebuilt CRT objects (crt0.o, crti.o, crtn.o) cause init to crash
+   - Init crashes before main() runs (no "=== init starting ===" printed)
+   - ESR_EL1: 0x02000000 - Unknown exception class
+   - FAR_EL1: 0x7fffffff9c40 - Stack area fault
+
+2. **Working image verification**: pure-rust.img.bak-fmap-debug boots successfully
+   - Uses older CRT objects (77 MiB initfs)
+   - Newer builds produce broken binaries (73 MiB initfs)
+
+3. **Bootstrap patching done**:
+   - Added patch to bootstrap/Cargo.toml to use local redox-rt
+   - Bootstrap now uses patched fexec_impl with EPERM fallback
+   - However, this alone doesn't fix the crash
+
+4. **Build script fixes**:
+   - Removed non-existent crt0_rust.o from build-initfs-cranelift.sh
+   - Target spec only expects crt0.o, crti.o, crtn.o
+
+5. **Possible causes for CRT crash**:
+   - CRT objects built with different Rust nightly version
+   - Incompatible symbol versions between CRT and librelibc.a
+   - Missing or incorrect startup code in new crt0.o
+
+### Files modified:
+- recipes/core/base/source/bootstrap/Cargo.toml - Added patch for local redox-rt
+- recipes/core/base/source/build-initfs-cranelift.sh - Removed crt0_rust.o reference
+
+### Current state:
+- Working image restored from pure-rust.img.bak-fmap-debug
+- File-backed mmap code is in relibc with EPERM/EBADF fallback
+- Initfs rebuild produces broken binaries due to CRT object issues
+- Need to investigate why new CRT objects don't work
