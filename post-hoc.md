@@ -12,3 +12,10 @@
 - Source at recipes/core/base/source/curl/
 - Tested: curl http://example.com works
 
+
+## 2026-01-10 - simple-pkg package manager
+- Built simple-pkg using ureq (no TLS, HTTP only)
+- Supports local package installation from /scheme/9p.hostshare/packages/
+- Use uncompressed .tar files (not .tar.gz)
+- Workflow: download packages on host, put in share/packages/, install with pkg
+
