@@ -1,26 +1,24 @@
-## 2026-01-10: Replaced broken coreutils with simple-coreutils
+## Post-hoc Image Modifications
 
-The original uutils coreutils multicall binary was broken (calling any command ran as `ls`).
+Tools manually copied to the image that are NOT yet in the build pipeline.
 
-Replaced symlinks with standalone binaries from simple-coreutils:
-- chmod
-- ln
-- head
-- tail
-- wc
-- pwd
-- true
-- false
-- sleep (earlier fix)
+### less, more (text pagers)
 
-These are in `/opt/other/redox/share/` and deployed to `/usr/bin/` in the image.
-
-Source: `recipes/core/base/source/simple-coreutils/`
-
-
-cp /scheme/9p.hostshare/more /usr/bin/
+```bash
 cp /scheme/9p.hostshare/less /usr/bin/
+cp /scheme/9p.hostshare/more /usr/bin/
+```
+
+Pre-built static binaries. WIP recipe exists at `recipes/wip/tools/less/` but blocked on termcap.
+
+### nc (netcat)
+
+```bash
 cp /scheme/9p.hostshare/nc /usr/bin/
+```
 
-Note: nc is PIE (dynamically linked) - if it fails to run, I can rebuild it with Cranelift to get a static non-PIE binary.
+Pre-built static binary for network debugging.
 
+---
+
+Note: simple-coreutils (chmod, ln, head, tail, wc, pwd, true, false, sleep) moved to build pipeline - see `notes/simple-coreutils.md`

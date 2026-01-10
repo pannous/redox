@@ -195,7 +195,9 @@ create_target_specs() {
 EOF
 
         # aarch64 userspace target (Redox)
-        cat > tools/${TARGET_USER}-clif.json << 'EOF'
+        # Use full paths for CRT objects so they can be found during linking
+        local sysroot_lib="${SCRIPT_DIR}/build/${ARCH}/sysroot/lib"
+        cat > tools/${TARGET_USER}-clif.json << EOF
 {
     "arch": "aarch64",
     "crt-objects-fallback": "false",
@@ -214,10 +216,13 @@ EOF
     "panic-strategy": "abort",
     "position-independent-executables": false,
     "pre-link-objects": {
-        "static-nopic-exe": ["crt0.o", "crti.o"]
+        "static-nopic-exe": ["${sysroot_lib}/crt0.o", "${sysroot_lib}/crti.o"]
     },
     "post-link-objects": {
-        "static-nopic-exe": ["crtn.o"]
+        "static-nopic-exe": ["${sysroot_lib}/crtn.o"]
+    },
+    "pre-link-args": {
+        "gnu-lld": ["-L", "${sysroot_lib}"]
     },
     "relro-level": "full",
     "target-family": ["unix"],
@@ -468,6 +473,48 @@ build_drivers() {
     cd "$SCRIPT_DIR"
 }
 
+build_simple_coreutils() {
+    log "Building simple-coreutils for $ARCH with Cranelift"
+
+    cd recipes/core/base/source/simple-coreutils
+
+    # Copy target spec
+    cp "$SCRIPT_DIR/tools/${TARGET_USER}-clif.json" .
+
+    # Setup sysroot path
+    local sysroot="$SCRIPT_DIR/build/$ARCH/sysroot"
+
+    # Build all binaries
+    RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
+    cargo build \
+        --target ${TARGET_USER}-clif.json \
+        --release \
+        -Z build-std=std,core,alloc,panic_abort \
+        -Zbuild-std-features=compiler_builtins/no-f16-f128
+
+    # Strip and copy to share/
+    local output_dir="$SCRIPT_DIR/share"
+    mkdir -p "$output_dir"
+
+    local binaries=(
+        sleep chmod ln head tail wc pwd true false
+        simple-cat simple-rm simple-mkdir simple-echo simple-cp simple-touch simple-sync
+    )
+
+    local count=0
+    for bin in "${binaries[@]}"; do
+        local src="target/${TARGET_USER}-clif/release/$bin"
+        if [ -f "$src" ]; then
+            $STRIP -o "$output_dir/$bin" "$src"
+            ((count++))
+        fi
+    done
+
+    success "Built and stripped $count simple-coreutils binaries to share/"
+
+    cd "$SCRIPT_DIR"
+}
+
 build_all() {
     log "Full Cranelift build for $ARCH"
 
@@ -475,6 +522,7 @@ build_all() {
     build_relibc
     build_kernel
     build_drivers
+    build_simple_coreutils
 
     success "Full build complete for $ARCH"
 }
@@ -542,7 +590,8 @@ usage() {
     echo "  kernel      Build kernel with Cranelift"
     echo "  relibc      Build relibc with Cranelift"
     echo "  drivers     Build base drivers with Cranelift"
-    echo "  all         Full build (kernel + relibc + drivers)"
+    echo "  coreutils   Build simple-coreutils with Cranelift"
+    echo "  all         Full build (kernel + relibc + drivers + coreutils)"
     echo "  shell       Start shell with Cranelift environment"
     echo "  env         Show environment configuration"
     echo "  clean       Clean build artifacts"
@@ -595,6 +644,9 @@ main() {
             ;;
         drivers)
             build_drivers
+            ;;
+        coreutils|simple-coreutils)
+            build_simple_coreutils
             ;;
         all)
             build_all
