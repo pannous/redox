@@ -24,13 +24,16 @@ wait_for_prompt() {
 }
 
 # Check if tmux session exists and is at prompt
-if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Session '$SESSION' already running. Attach with: tmux attach -t $SESSION"
+else
     echo "Starting QEMU in tmux..."
     pkill -f "qemu-system-aarch64.*pure-rust" 2>/dev/null || true
     sleep 1
     ./run-dev.sh -t -d 2>/dev/null
     sleep 3  # wait for tmux session to be created
     echo "Waiting for boot..."
+    echo "In 60 seconds you can attach to session: tmux attach -t $SESSION"
     wait_for_prompt 60
     echo "Logging in..."
     tmux send-keys -t "$SESSION" "root" Enter
@@ -85,4 +88,3 @@ else
     done
 fi
 
-echo "Session: tmux attach -t $SESSION"
