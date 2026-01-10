@@ -19,3 +19,13 @@
 - Use uncompressed .tar files (not .tar.gz)
 - Workflow: download packages on host, put in share/packages/, install with pkg
 
+
+## 2026-01-10 - pkgar extractor tool
+- Created tools/extract_pkgar.py for extracting Redox pkgar packages
+- Skips signature verification (no public key needed)
+- Usage: python3 tools/extract_pkgar.py <pkgar_file> <output_dir>
+- Tested with vim.pkgar (2316 files) and ncurses.pkgar (55 files)
+
+Note: vim needs libncurses.so.6 which isn't in the base image
+Note: kibi editor is available at /usr/bin/kibi as alternative
+

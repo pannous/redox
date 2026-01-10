@@ -58,3 +58,21 @@ Updated these files from older nightlies to nightly-2026-01-02:
 
 TODO: Consider symlinking all rust-toolchain.toml files to the root one for single-point configuration.
 
+
+## 2026-01-10 - pkgar extractor
+
+Created /tmp/extract_pkgar.py to extract Redox pkgar packages without signature verification.
+- Header: 136 bytes (64 signature + 32 pubkey + 32 blake3 + 8 count)
+- Entry: 308 bytes (32 blake3 + 8 offset + 8 size + 4 mode + 256 path)
+- Data section follows entries
+
+Successfully extracted vim and ncurses packages.
+
+## 2026-01-10 - vim installation challenges
+
+1. redoxfs FUSE mount not syncing writes properly - files copied don't persist
+2. 9p share doesn't support executing binaries (ENOSYS on mmap)
+3. vim binary is dynamically linked, needs libncurses.so.6
+
+Workaround: kibi editor is already installed (/usr/bin/kibi)
+
