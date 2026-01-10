@@ -40,6 +40,7 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     echo "Monitor: $MONSOCK" >&2
     echo "Connect: socat - unix-connect:$SOCK" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G \
+        -rtc base=utc,clock=host \
         -bios tools/firmware/edk2-aarch64-code.fd \
         -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=writethrough \
         -device virtio-blk-pci,drive=hd0 \
@@ -64,6 +65,7 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
 
     tmux new-session -d -s "$SESSION" \
         "qemu-system-aarch64 -M virt $CPU -m 2G \
+        -rtc base=utc,clock=host \
         -bios tools/firmware/edk2-aarch64-code.fd \
         -drive file=\"$RAW_IMG\",format=raw,id=hd0,if=none,cache=none \
         -device virtio-blk-pci,drive=hd0 \
@@ -82,6 +84,7 @@ else
     echo "Using: $RAW_IMG" >&2
     echo "Socket mode: $0 -s" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G \
+        -rtc base=utc,clock=host \
         -bios tools/firmware/edk2-aarch64-code.fd \
         -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=none \
         -device virtio-blk-pci,drive=hd0 \
