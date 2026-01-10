@@ -100,3 +100,68 @@ Successfully built and tested Helix Editor 23.10 using pure Rust (Cranelift) too
 - Binary installed at /usr/bin/helix
 - Runtime files at /usr/share/helix/
 
+
+## tee/file permission bug - ROOT CAUSE FOUND (2026-01-11)
+
+**Root Cause: Cranelift varargs broken on aarch64**
+
+Issue: https://github.com/rust-lang/rustc_codegen_cranelift/issues/1451
+
+Test results:
+- OpenOptions: mode = 0o1144 (corrupted)
+- libc::open: mode = 0o0000 (completely lost)
+
+The mode packing math is CORRECT, but varargs don't work on Cranelift/aarch64.
+
+**Fix Applied:**
+Added `__open_mode()` to relibc (non-varargs version):
+- recipes/core/relibc/source/src/header/fcntl/mod.rs
+
+**Next Steps:**
+1. Test __open_mode works
+2. Patch Rust libc crate to use __open_mode on Redox/aarch64
+
+
+
+  Call Chain
+
+  sync command
+      ↓
+  relibc::sync() → Ok(()) ← EMPTY!
+      ↓
+  Nothing happens
+
+  fsync(fd)
+      ↓
+  kernel → redoxfs → file.sync()
+      ↓
+  Transaction writes to disk.write_at()
+      ↓
+  virtio-blk Out request ← NO FLUSH SENT
+      ↓
+  QEMU writeback cache (may not persist!)
+
+  The Fix
+
+  The real issue is virtio-blk needs FLUSH support. Want me to implement it? It would involve:
+
+  1. Adding flush request type to virtio-blkd
+  2. Calling it from redoxfs after transaction commit
+  3. Optionally fixing relibc's empty sync()
+
+## virtio-blk FLUSH support (2026-01-11)
+Added FLUSH request type (type 4) to virtio-blkd driver.
+This enables proper fsync/sync semantics for disk writes.
+
+Files modified:
+- drivers/storage/virtio-blkd/src/main.rs - Added BlockRequestTy::Flush = 4
+- drivers/storage/virtio-blkd/src/scheme.rs - Implemented flush() in BlkExtension trait
+- drivers/storage/driver-block/src/lib.rs - Added flush() to Disk trait and fsync to DiskScheme
+
+
+## relibc sync() fix (2026-01-11)
+Fixed sync() in relibc to actually flush filesystem buffers.
+Previously was a no-op. Now opens '/' and calls fsync on it.
+
+File: recipes/core/relibc/source/src/platform/redox/mod.rs
+
