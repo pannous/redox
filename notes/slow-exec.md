@@ -129,3 +129,22 @@ match mmap_result {
 
 ### Files modified:
 - recipes/core/relibc/source/redox-rt/src/proc.rs - Added EPERM/EBADF fallback handling
+
+## Investigation Update (2026-01-10 continued)
+
+### Current Status:
+The EPERM/EBADF fallback fix was committed to relibc but the initfs rebuild produces broken init binaries. The known good image (without the fix) still works and shows ~11s for coreutils (24MB).
+
+### Issue with initfs rebuild:
+- Rebuilding initfs with the patched relibc causes init to crash with "UNHANDLED EXCEPTION"
+- Even reverting the relibc changes doesn't fix the initfs rebuild
+- The CRT objects (crt0.o, crti.o, crtn.o) may have become inconsistent
+
+### Next steps:
+1. Debug why initfs rebuild produces broken binaries
+2. Check CRT object build process
+3. Consider building relibc from scratch on a clean checkout
+
+### For now:
+The fix is committed in relibc source but not actively used due to initfs rebuild issues.
+Performance on current image: ~11s for 24MB coreutils (using pread, no file-backed mmap).
