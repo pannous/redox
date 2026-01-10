@@ -497,7 +497,7 @@ build_simple_coreutils() {
     mkdir -p "$output_dir"
 
     local binaries=(
-        sleep chmod ln head tail wc pwd true false
+        sleep chmod ln head tail wc pwd true false more less
         simple-cat simple-rm simple-mkdir simple-echo simple-cp simple-touch simple-sync
     )
 

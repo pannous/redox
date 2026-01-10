@@ -21,6 +21,8 @@ Created standalone implementations in `recipes/core/base/source/simple-coreutils
 | `true` | Exit with success |
 | `false` | Exit with failure |
 | `sleep` | Delay for specified time |
+| `more` | Page through files |
+| `less` | Page through files (wrapper for more) |
 | `simple-cat` | Concatenate files |
 | `simple-rm` | Remove files |
 | `simple-mkdir` | Create directories |
