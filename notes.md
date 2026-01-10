@@ -36,3 +36,12 @@ Injected into initfs via extract/repack workflow.
 - The shell commands themselves work, just prompt pipeline execution leaks FDs
 - Needs investigation in pipe_exec/streams.rs - dup2/close handling differs between LLVM and Cranelift
 
+
+## 2026-01-10 File-backed mmap investigation
+
+- File-backed mmap with userspace schemes fails with EBADF
+- Issue is in kernel's user.rs:1052 find_by_scheme()
+- Disabled use_file_mmap in relibc/redox-rt/src/proc.rs
+- Rebuilt relibc and ion
+- ion binary available at /opt/other/redox/share/ion
+- See notes/slow-exec.md for detailed investigation

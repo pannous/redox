@@ -16,10 +16,13 @@
     "panic-strategy": "abort",
     "position-independent-executables": false,
     "pre-link-objects": {
-        "static-nopic-exe": ["crt0.o", "crti.o"]
+        "static-nopic-exe": ["/opt/other/redox/build/aarch64/sysroot/lib/crt0.o", "/opt/other/redox/build/aarch64/sysroot/lib/crti.o"]
     },
     "post-link-objects": {
-        "static-nopic-exe": ["crtn.o"]
+        "static-nopic-exe": ["/opt/other/redox/build/aarch64/sysroot/lib/crtn.o"]
+    },
+    "pre-link-args": {
+        "gnu-lld": ["-L", "/opt/other/redox/build/aarch64/sysroot/lib"]
     },
     "relro-level": "full",
     "target-family": ["unix"],

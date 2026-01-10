@@ -1,44 +1,33 @@
 Fork of Redox OS - Pure Rust Build
 
-<h2 align="center">100% Rust — No LLVM Required</h2>
+100% Rust — No LLVM Required
 
-<b>Redox OS can now be compiled using a pure Rust toolchain.</b><br>
+Redox OS can now be compiled using a pure Rust toolchain.
 The kernel boots and relibc compiles using Cranelift — no C++ make or cmake dependencies.
-</p>
 
-We build ONLY for aarch64! 
-
-Using virtio-9p ./share for direct access to host filesystem on mac!
+We build ONLY for aarch64 
 
 # Development Workflow
-
-## Quick Start
 
 ⚠️ Make a backup of our current image:
 `cp build/aarch64/pure-rust.img build/aarch64/pure-rust.img.bak` before each session !
 
-./run-dev.sh       # Unix socket Foreground or -s for /tmp/redox-dev-raw.sock
-./old/run-debug.sh  # GDB TCP (telnet) daemonized ever needed?
-
 ## Injecting Files into Redox
-• we want to use direct host file system integration ./share with 9P as often as possible. 
 
 ### Method 1: 9P Share
+• we want to use direct host file system integration ./share via virtio-9p as often as possible. 
 Host files in /opt/other/redox/share/ appear at /scheme/9p.hostshare/ in Redox.
-```bash
 # On host:
 cp my-tool /opt/other/redox/share/
 # In Redox:
 /scheme/9p.hostshare/my-tool
-```
 Good for: Testing binaries, scripts, quick iterations
 
 ### Method 2: Mount img
-```bash
 /opt/other/redox/stamp-and-mount.sh  # Mounts + stamps initrc with git hash & date
 cp my-tool /opt/other/redox/redox-mount/usr/bin/
 umount /opt/other/redox/redox-mount/
-```
+
 
 ### Method 3: wget not yet
 Until we have wget working, get missing pkg packages from 
@@ -46,38 +35,34 @@ https://static.redox-os.org/pkg/aarch64-unknown-redox/
 
 
 IMPORTANT: 
-ALWAYS test with /opt/other/redox/run-dev.sh after your injections!
-If it works cp pure-rust.img with feature name, otherwise ask if we want to rollback or try again!
+after your injections ALWAYS test with /opt/other/redox/test-in-redox.sh # gives you a root login with a socket after ≈ 30s boot time. If it works cp pure-rust.img with feature name, otherwise ask if we want to rollback or try again!
 
 IMPORTANT:
 Note all post-hoc modifications to the img or redox-mount as post-hoc.md 
-or apply them to the source when they are viable and not for debugging
-
-### Method 3: Rebuild initfs (For drivers/init)
-```bash
-# Edit files in recipes/core/base/source/
-cd recipes/core/base/source && ./build-initfs-cranelift.sh
-# Inject new initfs same as above
-```
+or apply the changes them in the source folders directly
 
 ## Building Userspace Tools
-```bash
 # Build a tool with Cranelift for Redox
 cd recipes/core/base/source
 ./build-initfs-cranelift.sh  # Builds all initfs tools
 # Or build individual:
 RUSTFLAGS="..." cargo +nightly build --target aarch64-unknown-redox-clif.json -p my-tool
-```
+
+
+### Rebuild initfs (For drivers/init)
+# Edit files in recipes/core/base/source/
+cd recipes/core/base/source && ./build-initfs-cranelift.sh
+# Inject new initfs same as above
+
 
 # Cargo Configuration
 Incremental builds are enabled by default (CARGO_INCREMENTAL=1).
 Offline mode is enabled by default to avoid unexpected network fetches.
 
 To go online on demand (e.g., to update dependencies):
-```bash
 cargo --config net.offline=false update
 cargo --config net.offline=false fetch
-```
+
 
 # Cranelift
 The new build-cranelift.sh uses:
@@ -91,13 +76,12 @@ The new build-cranelift.sh uses:
 - `build-pure-rust-iso.sh` - Quick ISO assembly from pre-built binaries ONLY USE WHEN WE CAN'T patch via qcow2
 
 ## Usage
-```bash
 ./build-cranelift.sh kernel   # Build kernel
 ./build-cranelift.sh relibc   # Build relibc
 ./build-cranelift.sh drivers  # Build drivers
 ./build-cranelift.sh all      # Full build
 ./build-cranelift.sh shell    # Enter build shell
-```
+
 
 # Skills
 - `/build-driver <pkg>` - Build driver with Cranelift, strip, inject into image
@@ -125,11 +109,11 @@ Boot logging is controlled by `RUST_LOG` in init.rc (line 9).
 - Current: `export RUST_LOG warn` (suppresses INFO/DEBUG)
 - To re-enable verbose logging: change `warn` to `info` or `debug`
 - Files to edit: all three init.rc locations above, then rebuild initfs:
-  ```bash
+
   cd /opt/other/redox/build/aarch64/cranelift-initfs
   ./initfs-tools-target/release/redox-initfs-ar --max-size 134217728 --output initfs.img initfs/
   cp initfs.img /opt/other/redox/redox-mount/boot/initfs && sync
-  ```
+  
 
 # TODOs
 ✅ FIXED: Cranelift binaries now have proper entry points (CRT objects added to target spec)

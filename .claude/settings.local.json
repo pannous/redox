@@ -12,7 +12,8 @@
       "Bash(/opt/other/redox/mount-redox-mount.sh:*)",
       "Bash(git checkout:*)",
       "Bash(nm:*)",
-      "Bash(git submodule:*)"
+      "Bash(git submodule:*)",
+      "Bash(git push)"
     ]
   },
   "hooks": {
