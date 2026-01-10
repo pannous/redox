@@ -54,12 +54,34 @@ Here's how tools get into /usr/bin/ and survive rebuilds:
 
   Your Cranelift Build
 
-  Since you're using build-cranelift.sh which bypasses the normal recipe system, tools built that way need to be:
-  1. Added to your build script's compilation list
-  2. Copied to the staging/initfs location your script uses
-  3. Or injected post-build into the image
+  build-cranelift.sh bypasses the COOKBOOK ORCHESTRATION, not the recipes folder itself:
 
-  The recipes under recipes/core/coreutils/source/ show the pattern - binaries compiled there would go into /usr/bin/ if coreutils is in your [packages] section.
+  ✅ USES: recipes/core/*/source/ folders (actual Rust source code)
+  ❌ BYPASSES: recipe.toml files, cookbook system, .pkg staging
+
+  What are recipe.toml files?
+  They're TOML config files (NOT Rust), containing:
+  - [source] section: git URL to fetch code
+  - [build] section: shell script calling ${COOKBOOK_CARGO}
+
+  Example from recipes/core/base/recipe.toml:
+    "${COOKBOOK_CARGO}" build --manifest-path "${COOKBOOK_SOURCE}/${package}/Cargo.toml"
+
+  Why don't we use them?
+  ${COOKBOOK_CARGO} is the cookbook's cargo wrapper that sets up the LLVM toolchain.
+  We'd need to either:
+  - Modify cookbook to support Cranelift backend (complex)
+  - Or just call cargo directly with cranelift flags (what build-cranelift.sh does)
+
+  The direct approach is simpler - build-cranelift.sh runs cargo with:
+  - Custom target spec (aarch64-unknown-redox-clif.json)
+  - RUSTFLAGS="-Zcodegen-backend=cranelift"
+  - Direct binary injection into image
+
+  Tools built with build-cranelift.sh need to be:
+  1. Added to the build script's compilation list
+  2. Copied to the staging/initfs location
+  3. Or injected post-build into the image
 
 
 
