@@ -45,3 +45,16 @@ Injected into initfs via extract/repack workflow.
 - Rebuilt relibc and ion
 - ion binary available at /opt/other/redox/share/ion
 - See notes/slow-exec.md for detailed investigation
+
+## Rust Toolchain Unification (2026-01-10)
+
+Updated these files from older nightlies to nightly-2026-01-02:
+- recipes/core/bootloader/source/rust-toolchain.toml (was nightly-2025-10-03)
+- recipes/core/base/source/rust-toolchain.toml (was nightly-2025-10-03)
+- prefix/aarch64-unknown-redox/relibc/rust-toolchain.toml (was nightly-2025-11-15)
+- prefix/aarch64-unknown-redox/relibc-freestanding/rust-toolchain.toml (was nightly-2025-11-15)
+
+⚠️ RISK: nightly-2025-10-03 was a special Redox-patched build. May need to revert if builds break.
+
+TODO: Consider symlinking all rust-toolchain.toml files to the root one for single-point configuration.
+
