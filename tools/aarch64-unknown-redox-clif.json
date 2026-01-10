@@ -15,8 +15,15 @@
     "os": "redox",
     "panic-strategy": "abort",
     "position-independent-executables": false,
-    "pre-link-objects": {},
-    "post-link-objects": {},
+    "pre-link-args": {
+        "gnu-lld": ["-L/opt/other/redox/build/aarch64/sysroot/lib", "-z", "muldefs"]
+    },
+    "pre-link-objects": {
+        "static-nopic-exe": ["/opt/other/redox/build/aarch64/sysroot/lib/crt0.o", "/opt/other/redox/build/aarch64/sysroot/lib/crti.o"]
+    },
+    "post-link-objects": {
+        "static-nopic-exe": ["/opt/other/redox/build/aarch64/sysroot/lib/crtn.o"]
+    },
     "relro-level": "full",
     "target-family": ["unix"],
     "target-pointer-width": 64
