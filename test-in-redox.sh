@@ -13,7 +13,7 @@ if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Starting QEMU in tmux..." >&2
     pkill -f "qemu-system-aarch64.*pure-rust" 2>/dev/null || true
     sleep 1
-    ./run-dev.sh -t
+    ./run-dev.sh -t -d
     echo "Waiting for boot (25s)..." >&2
     sleep 25
 fi
