@@ -76,3 +76,27 @@ Successfully extracted vim and ncurses packages.
 
 Workaround: kibi editor is already installed (/usr/bin/kibi)
 
+
+## Helix Editor - Pure Rust Build (2026-01-10)
+
+Successfully built and tested Helix Editor 23.10 using pure Rust (Cranelift) toolchain.
+
+### Build Notes:
+- Uses Cranelift codegen backend instead of LLVM
+- Required patches for cross-compilation:
+  - Disabled LTO (incompatible with Cranelift)
+  - Added --allow-multiple-definition for allocator conflicts between std and relibc
+  - C cross-compilation for tree-sitter using clang with Redox sysroot headers
+- Build script: /opt/other/redox/recipes/tools/helix/build-cranelift.sh
+- Binary size: ~38MB stripped
+
+### Key Challenges:
+1. tree-sitter has C code requiring cross-compilation
+2. Allocator symbol conflicts between -Zbuild-std and relibc
+3. LTO not supported with Cranelift
+
+### Testing:
+- `helix --version` returns "helix 23.10 (a0397551)"
+- Binary installed at /usr/bin/helix
+- Runtime files at /usr/share/helix/
+
