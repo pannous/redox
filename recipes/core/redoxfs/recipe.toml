@@ -1,5 +1,5 @@
 [source]
-git = "https://gitlab.redox-os.org/redox-os/redoxfs.git"
+git = "https://github.com/pannous/redoxfs.git"
 
 [build]
 template = "custom"
