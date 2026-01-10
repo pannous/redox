@@ -891,3 +891,19 @@ cargo +${NIGHTLY} build --manifest-path netstack/Cargo.toml --target ${TARGET} -
 - ICMP ping to 10.0.2.2 appears to work (based on earlier tests)
 - TCP/curl testing needs further verification
 
+
+## Netstack mod.rs fix (2026-01-10)
+
+Reverted mod.rs to working version (3f22f0c3). Three changes had broken ping:
+
+1. **Extra default route** - We added `0.0.0.0/0` route to route_table, but interface already has default route via `iface.routes_mut().add_default_ipv4_route()`. This caused duplicate routes.
+
+2. **schedule_time_event in all handlers** - Only `on_time_event()` should call `schedule_time_event()`. Adding it to every handler caused timing issues.
+
+3. **Timer reset in poll()** - Adding `self.timer = ::std::time::Instant::now()` at start of poll() broke smoltcp's time-based logic. Timer should only be initialized once in `new()`.
+
+Valid fixes kept:
+- TcpScheme in initial processing array (main.rs line 163)
+- Duplicate IP panic fix (netcfg/mod.rs line 246)
+
+smolnetd is running after reboot. Testing ping was difficult due to terminal output capture issues.
