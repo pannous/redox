@@ -8,61 +8,81 @@ cd "$(dirname "$0")"
 
 SESSION="redox-dev"
 
-# Check if tmux session exists
+# Wait for prompt to appear
+wait_for_prompt() {
+    local timeout="${1:-60}"
+    local i=0
+    while [[ $i -lt $timeout ]]; do
+        if tmux capture-pane -t "$SESSION" -p | grep -q "redox login:\|^root:.*#"; then
+            return 0
+        fi
+        sleep 1
+        ((i++))
+    done
+    echo "Timeout waiting for prompt" >&2
+    return 1
+}
+
+# Check if tmux session exists and is at prompt
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-    echo "Starting QEMU in tmux..." >&2
+    echo "Starting QEMU in tmux..."
     pkill -f "qemu-system-aarch64.*pure-rust" 2>/dev/null || true
     sleep 1
-    ./run-dev.sh -t -d
-    echo "Waiting for boot (25s)..." >&2
-    sleep 25
+    ./run-dev.sh -t -d 2>/dev/null
+    sleep 3  # wait for tmux session to be created
+    echo "Waiting for boot..."
+    wait_for_prompt 60
+    echo "Logging in..."
+    tmux send-keys -t "$SESSION" "root" Enter
+    sleep 3
+    echo ""
 fi
+
+# Wait for shell prompt
+wait_for_prompt 10
 
 # Function to send command and capture output
 run_cmd() {
     local cmd="$1"
     local wait="${2:-3}"
+
+    # Clear and send command
+    tmux send-keys -t "$SESSION" "" C-l  # clear screen
+    sleep 0.2
     tmux send-keys -t "$SESSION" "$cmd" Enter
     sleep "$wait"
-    tmux capture-pane -t "$SESSION" -p | tail -20 | \
-        tr -d '\r' | \
-        sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | \
-        sed 's/\[?[0-9]*[lh]//g' | \
-        grep -v "^$" | \
-        tail -10
-}
 
-# Login first (no password needed)
-login() {
-    echo "Logging in..." >&2
-    tmux send-keys -t "$SESSION" "root" Enter
-    sleep 3
-    echo "Logged in" >&2
+    # Extract output: find line containing command, print until next prompt
+    tmux capture-pane -t "$SESSION" -p | \
+        sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | \
+        tr -d '\r' | \
+        awk -v cmd="$cmd" '
+            BEGIN { found=0 }
+            index($0, cmd) && /^root:.*#/ { found=1; next }
+            found && /^root:.*#/ { exit }
+            found && !/^$/ { print }
+        ' | head -3
 }
 
 # Default tests if no args
 if [[ $# -eq 0 ]]; then
-    login
-    echo "=== Testing shell builtin ===" >&2
+    echo "=== echo hello ==="
     run_cmd "echo hello" 2
     echo ""
-    echo "=== Testing local binary ===" >&2
+
+    echo "=== /scheme/9p.hostshare/echo test ==="
     run_cmd "/scheme/9p.hostshare/echo test" 5
     echo ""
-    echo "=== Testing coreutils ===" >&2
+
+    echo "=== /usr/bin/date ==="
     run_cmd "/usr/bin/date" 12
+    echo ""
 else
-    # Run provided commands
-    login
     for cmd in "$@"; do
-        echo "=== Running: $cmd ===" >&2
+        echo "=== $cmd ==="
         run_cmd "$cmd" 5
         echo ""
     done
 fi
 
-echo ""
-echo "Interactive commands:" >&2
-echo "  tmux send-keys -t $SESSION 'cmd' Enter"
-echo "  tmux attach-session -t $SESSION"
-echo "  tmux capture-pane -t $SESSION -pS - > redox-dev.log"
+echo "Session: tmux attach -t $SESSION"
