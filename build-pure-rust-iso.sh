@@ -7,7 +7,11 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 ARCH="aarch64"
-NIGHTLY="nightly-2026-01-02"
+TOOLCHAIN_FILE="$ROOT/rust-toolchain.toml"
+if [ -z "$NIGHTLY" ] && [ -f "$TOOLCHAIN_FILE" ]; then
+    NIGHTLY="$(awk -F'\"' '/^channel/ {print $2; exit}' "$TOOLCHAIN_FILE")"
+fi
+NIGHTLY="${NIGHTLY:-nightly-2026-01-02}"
 STRIP="$HOME/.rustup/toolchains/${NIGHTLY}-aarch64-apple-darwin/lib/rustlib/aarch64-apple-darwin/bin/llvm-strip"
 
 # Source and target paths

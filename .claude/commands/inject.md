@@ -12,11 +12,8 @@ Examples:
 ## Workflow
 
 ```bash
-# 1. Mount (if not already mounted)
-/opt/other/redox/build/fstools/bin/redoxfs \
-    /opt/other/redox/build/aarch64/pure-rust.img \
-    /opt/other/redox/redox-mount/ &
-sleep 2
+# 1. Mount with git stamp (if not already mounted)
+/opt/other/redox/stamp-and-mount.sh
 
 # 2. Copy file
 cp <SOURCE> /opt/other/redox/redox-mount/<DEST>

@@ -637,4 +637,8 @@ main() {
     esac
 }
 
+echo "you may also need to run these commands to rebuild parts:"
+echo "cd recipes/core/base/source/bootstrap && ./build-cranelift.sh  # Rebuild bootstrap"
+echo "cd recipes/core/base/source && ./build-initfs-cranelift.sh     # Rebuild initfs"
+
 main "$@"

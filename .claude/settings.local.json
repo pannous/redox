@@ -8,7 +8,11 @@
       "Bash(cp:*)",
       "Bash(qemu-img rebase:*)",
       "Bash(./snapshot.sh:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(/opt/other/redox/mount-redox-mount.sh:*)",
+      "Bash(git checkout:*)",
+      "Bash(nm:*)",
+      "Bash(git submodule:*)"
     ]
   },
   "hooks": {

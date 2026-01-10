@@ -809,3 +809,42 @@ Files changed (in gitignored recipes):
 - recipes/core/base/source/simple-coreutils/src/sleep.rs - new file
 - recipes/core/base/source/build-initfs-cranelift.sh - added sleep to build
 
+
+
+// Redox doesn't support passwd/group lookups                                                              
+    •   Reason (design, not omission)
+Redox rejects ambient, text-file–based global identity. Identity is capability-oriented and attached to processes/resources, not resolved dynamically from global databases.
+    •   What exists instead
+    •   Numeric UID/GID are still present (for POSIX compatibility).
+    •   Users are defined via login contexts and filesystem ownership, not via NSS.
+    •   No pluggable backends (LDAP, sssd, etc.); no shadow/password DB in the UNIX sense.
+    •   Practical consequences
+    •   Canonical Redox stance
+User/group names are a legacy abstraction; capabilities + IDs are the security model.
+
+#[cfg(target_os = "redox")]                                                                                
+pub mod users {                                                                                            
+    use nix::unistd::{Gid, Uid};                                                                           
+                                                                                                           
+    pub struct User {                                                                                      
+        pub name: String,                                                                                  
+        pub uid: Uid,                                                                                      
+        pub gid: Gid,                                                                                      
+    }                                                                                                      
+                                                                                                           
+    pub struct Group {                                                                                     
+        pub name: String,                                                                                  
+        pub gid: Gid,                                                                                      
+    }                                                                                                      
+                                                                                                           
+    pub fn get_user_by_uid(_uid: Uid) -> Option<User> {                                                    
+        None                  
+
+  # Or symlink them to /usr/bin for easier access
+  cp /scheme/9p.hostshare/more /usr/bin/
+  cp /scheme/9p.hostshare/less /usr/bin/
+  cp /scheme/9p.hostshare/nc /usr/bin/
+
+  Note: nc is PIE (dynamically linked) - if it fails to run, I can rebuild it with Cranelift to get a static non-PIE binary.
+
+        
