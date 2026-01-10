@@ -53,7 +53,7 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     QEMU_PID=$!
     sleep 1
     echo "QEMU PID: $QEMU_PID" >&2
-    echo "$SOCK"  # Output socket path for scripts
+    echo "$SOCK"  # Output socket path for scripts   
 elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     SESSION="redox-dev"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
@@ -65,7 +65,7 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     tmux new-session -d -s "$SESSION" \
         "qemu-system-aarch64 -M virt $CPU -m 2G \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file=\"$RAW_IMG\",format=raw,id=hd0,if=none,cache=writeback \
+        -drive file=\"$RAW_IMG\",format=raw,id=hd0,if=none,cache=none \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
@@ -78,11 +78,12 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     fi
 else
     # Interactive mode (default)
+    # cache=writeback
     echo "Using: $RAW_IMG" >&2
     echo "Socket mode: $0 -s" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=writeback \
+        -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=none \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
