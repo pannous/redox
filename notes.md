@@ -165,3 +165,10 @@ Previously was a no-op. Now opens '/' and calls fsync on it.
 
 File: recipes/core/relibc/source/src/platform/redox/mod.rs
 
+
+## 2026-01-10: __open_mode fix verified working
+- Cranelift varargs bug workaround tested successfully
+- Files can be created and read with proper permissions
+- See notes/open-mode-fix-status.md for full details
+- See notes/cranelift-varargs-bug.md for bug analysis
+
