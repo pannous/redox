@@ -848,3 +848,46 @@ pub mod users {
   Note: nc is PIE (dynamically linked) - if it fails to run, I can rebuild it with Cranelift to get a static non-PIE binary.
 
         
+## 2026-01-10 Network TcpScheme Fix
+
+### Issue
+smolnetd was crashing during boot with:
+```
+thread 'main' panicked at netstack/src/scheme/netcfg/mod.rs:246:102:
+called `Result::unwrap()` on an `Err` value: Ipv4(Cidr { address: 10.0.2.15, prefix_len: 24 })
+```
+
+### Root Cause
+1. main.rs:163 was missing TcpScheme from initial processing array
+2. netcfg/mod.rs:246 was panicking when trying to insert duplicate IP address
+
+### Fixes Applied
+1. Added `TcpScheme` to initial processing in main.rs:163
+2. Fixed duplicate IP handling in netcfg/mod.rs:246-250 by removing existing IP before insert
+
+### Files Modified
+- recipes/core/base/source/netstack/src/main.rs - Added TcpScheme to initial processing
+- recipes/core/base/source/netstack/src/scheme/netcfg/mod.rs - Fixed IP insertion to handle duplicates
+- recipes/core/base/source/netstack/Cargo.toml - NEW - Created Cargo.toml for netstack package
+
+### Build Command for smolnetd
+See /tmp/build-netstack.sh or use:
+```bash
+NIGHTLY="nightly-2026-01-02"
+TARGET="/opt/other/redox/tools/aarch64-unknown-redox-clif.json"
+CRANELIFT="/opt/other/rustc_codegen_cranelift/dist/lib/librustc_codegen_cranelift.dylib"
+RELIBC="/opt/other/redox/recipes/core/relibc/source/target/aarch64-unknown-redox-clif/release"
+export DYLD_LIBRARY_PATH="$HOME/.rustup/toolchains/${NIGHTLY}-aarch64-apple-darwin/lib"
+export RUSTC_WRAPPER=""
+export RUSTFLAGS="-Zcodegen-backend=${CRANELIFT} ..."
+cargo +${NIGHTLY} build --manifest-path netstack/Cargo.toml --target ${TARGET} --release -Zbuild-std=...
+```
+
+### Status
+- smolnetd boots successfully without crashes
+- Network schemes created: ip, udp, tcp, icmp, netcfg
+- eth0 configured with 10.0.2.15/24
+- Routes configured correctly
+- ICMP ping to 10.0.2.2 appears to work (based on earlier tests)
+- TCP/curl testing needs further verification
+
