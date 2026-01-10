@@ -96,7 +96,36 @@ File-backed mmap with userspace schemes (like redoxfs) appears to be untested/br
   - Added mmap_file_remote() function
   - Modified PT_LOAD to try file-backed mmap (currently disabled with `let use_file_mmap = false`)
 
-### Next steps to investigate:
-1. Add debug prints to kernel's extract_scheme_number to see what fd is being looked up
-2. Check if proc scheme handler runs in correct context
-3. Test simple fmap syscall from userspace to see if it works outside exec path
+## DONE - Fixed (2026-01-10)
+
+### Root cause discovered:
+The EBADF wasn't from redoxfs - it was **EPERM from initfs**!
+
+Debug logging revealed:
+- initfs scheme doesn't support file-backed mmap with PROT_WRITE (even with MAP_PRIVATE)
+- initfs returns EPERM, not EBADF
+- The exec was failing on initfs binaries (like init), not redoxfs binaries
+
+### Fix applied:
+Modified `relibc/redox-rt/src/proc.rs` to handle EPERM/EBADF by falling back to pread_all:
+
+```rust
+match mmap_result {
+    Ok(_) => { /* file mmap worked, allocate BSS */ }
+    Err(e) if e.errno == syscall::EPERM || e.errno == syscall::EBADF => {
+        // Scheme doesn't support file-backed mmap (initfs returns EPERM,
+        // redoxfs may return EBADF). Fall back to pread.
+        do_pread_fallback()?;
+    }
+    Err(e) => return Err(e),
+}
+```
+
+### Result:
+- Boot works with file-mmap enabled
+- initfs binaries use pread fallback (as before)
+- redoxfs binaries should use file-backed mmap when alignment matches
+- No performance regression for initfs binaries
+
+### Files modified:
+- recipes/core/relibc/source/redox-rt/src/proc.rs - Added EPERM/EBADF fallback handling

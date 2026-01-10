@@ -31,3 +31,5 @@ redox-mount
 share
 
 old
+*.img
+*.iso
