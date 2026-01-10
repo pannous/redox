@@ -54,6 +54,28 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     sleep 1
     echo "QEMU PID: $QEMU_PID" >&2
     echo "$SOCK"  # Output socket path for scripts
+elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
+    SESSION="redox-dev"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+    echo "Starting QEMU in tmux session: $SESSION" >&2
+    echo "Attach: tmux attach -t $SESSION" >&2
+    echo "Detach: Ctrl-b d" >&2
+
+    tmux new-session -d -s "$SESSION" \
+        "qemu-system-aarch64 -M virt $CPU -m 2G \
+        -bios tools/firmware/edk2-aarch64-code.fd \
+        -drive file=\"$RAW_IMG\",format=raw,id=hd0,if=none,cache=writeback \
+        -device virtio-blk-pci,drive=hd0 \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
+        ${NETDEV_ARGS[*]} \
+        -device qemu-xhci -device usb-kbd \
+        -nographic"
+
+    if [[ "$2" != "-d" ]]; then
+        tmux attach -t "$SESSION"
+    fi
 else
     # Interactive mode (default)
     echo "Using: $RAW_IMG" >&2
