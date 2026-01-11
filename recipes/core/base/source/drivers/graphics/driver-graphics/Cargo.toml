@@ -1,0 +1,15 @@
+[package]
+name = "driver-graphics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+drm-sys = "0.8.0"
+log = "0.4"
+redox-scheme = "0.8.3"
+redox_syscall = "0.6"
+libredox = "0.1.11"
+
+common = { path = "../../common" }
+graphics-ipc = { path = "../graphics-ipc" }
+inputd = { path = "../../inputd" }

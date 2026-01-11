@@ -1,0 +1,34 @@
+# Server configuration
+
+include = ["net.toml"]
+
+# General settings
+[general]
+# Filesystem size in MiB
+filesystem_size = 512
+
+# Package settings
+[packages]
+bash = {}
+bottom = {}
+ca-certificates = {}
+#contain = {} # needs to update dependencies
+coreutils = {}
+curl = {}
+diffutils = {}
+extrautils = {}
+findutils = {}
+git = {}
+installer = {}
+ion = {}
+kibi = {}
+pkgutils = {}
+redoxfs = {}
+
+[[files]]
+path = "/usr/lib/init.d/30_console"
+data = """
+inputd -A 2
+nowait getty 2
+nowait getty /scheme/debug/no-preserve -J
+"""

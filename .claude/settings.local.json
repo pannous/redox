@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(qemu-system-aarch64:*)",
+      "Bash(ls:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(cp:*)",
+      "Bash(qemu-img rebase:*)",
+      "Bash(./snapshot.sh:*)",
+      "Bash(cat:*)",
+      "Bash(/opt/other/redox/mount-redox-mount.sh:*)",
+      "Bash(git checkout:*)",
+      "Bash(nm:*)",
+      "Bash(git submodule:*)",
+      "Bash(git push)",
+      "Bash(git -C /opt/other/redox log --oneline --since=\"2026-01-09\" --until=\"2026-01-11\" -- .)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "ExitPlanMode|Edit|MultiEdit|Write|NotebookEdit|WebFetch|WebSearch|Bash|BashOutput|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node $CLAUDE_PROJECT_DIR/.claude/hooks/permissions_hook.js",
+            "timeout": 300
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node $CLAUDE_PROJECT_DIR/.claude/hooks/permissions_hook.js",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

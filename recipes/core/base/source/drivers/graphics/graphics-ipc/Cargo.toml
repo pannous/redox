@@ -1,0 +1,13 @@
+[package]
+name = "graphics-ipc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+drm = "0.14"
+log = "0.4"
+libredox = "0.1.11"
+redox-ioctl = { git = "https://gitlab.redox-os.org/redox-os/relibc.git" }
+redox_syscall = "0.6"
+
+common = { path = "../../common" }

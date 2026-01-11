@@ -1,0 +1,103 @@
+[workspace]
+resolver = "2"
+members = [
+    "audiod",
+    "daemon",
+    "init",
+    "initfs",
+    "initfs/archive-common",
+    "initfs/tools",
+    "ipcd",
+    "logd",
+    "netstack",
+    "ptyd",
+    "ramfs",
+    "randd",
+    "zerod",
+    "test-9p",
+    "simple-ls",
+    "simple-coreutils",
+    "sync",
+    "test-mode",
+
+    "drivers/common",
+    "drivers/executor",
+
+    "drivers/acpid",
+    "drivers/hwd",
+    "drivers/pcid",
+    "drivers/pcid-spawner",
+    "drivers/rtcd",
+    "drivers/vboxd",
+    "drivers/inputd",
+    "drivers/virtio-core",
+
+    "drivers/audio/ac97d",
+    "drivers/audio/ihdad",
+    "drivers/audio/sb16d",
+
+    "drivers/graphics/bgad",
+    "drivers/graphics/console-draw",
+    "drivers/graphics/fbbootlogd",
+    "drivers/graphics/driver-graphics",
+    "drivers/graphics/fbcond",
+    "drivers/graphics/graphics-ipc",
+    "drivers/graphics/ihdgd",
+    "drivers/graphics/vesad",
+    "drivers/graphics/virtio-gpud",
+
+    "drivers/input/ps2d",
+    "drivers/input/usbhidd",
+
+    "drivers/net/alxd",
+    "drivers/net/driver-network",
+    "drivers/net/e1000d",
+    "drivers/net/ixgbed",
+    "drivers/net/rtl8139d",
+    "drivers/net/rtl8168d",
+    "drivers/net/virtio-netd",
+
+    "drivers/redoxerd",
+
+    "drivers/storage/ahcid",
+    "drivers/storage/bcm2835-sdhcid",
+    "drivers/storage/driver-block",
+    "drivers/storage/ided",
+    "drivers/storage/lived",          # TODO: not really a driver...
+    "drivers/storage/nvmed",
+    "drivers/storage/usbscsid",
+    "drivers/storage/virtio-blkd",
+
+    "drivers/fs/virtio-9pd",
+
+    "drivers/usb/xhcid",
+    "drivers/usb/usbctl",
+    "drivers/usb/usbhubd",
+]
+
+
+# Bootstrap needs it's own profile configuration
+exclude = ["bootstrap"]
+
+[patch.crates-io]
+# Needs libc 0.2 backport of https://github.com/rust-lang/libc/pull/4825
+libc = { git = "https://gitlab.redox-os.org/redox-os/liblibc.git", branch = "redox-0.2" }
+orbclient = { git = "https://gitlab.redox-os.org/redox-os/orbclient.git", version = "0.3.44" }
+
+# Rustix doesn't support ioctls on Redox OS
+rustix = { git = "https://github.com/jackpot51/rustix.git", branch = "redox-ioctl" }
+drm = { git = "https://github.com/Smithay/drm-rs.git" }
+drm-sys = { git = "https://github.com/Smithay/drm-rs.git" }
+
+# Updated for redox_syscall 0.7.0 compatibility
+redox-scheme = { path = "redox-scheme" }
+
+[patch."https://gitlab.redox-os.org/redox-os/relibc.git"]
+#redox-rt = { path = "../../relibc/source/redox-rt" }
+#redox-ioctl = { path = "../../relibc/source/redox-ioctl" }
+
+# [profile.dev]
+# incremental = true
+
+# [profile.release]
+# incremental = true

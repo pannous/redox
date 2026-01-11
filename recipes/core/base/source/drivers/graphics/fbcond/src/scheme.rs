@@ -1,0 +1,200 @@
+use std::collections::BTreeMap;
+use std::os::fd::AsRawFd;
+
+use event::{EventQueue, UserData};
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::{CallerCtx, OpenResult};
+use syscall::schemev2::NewFdFlags;
+use syscall::{Error, EventFlags, Result, EACCES, EAGAIN, EBADF, ENOENT, O_NONBLOCK};
+
+use crate::display::Display;
+use crate::text::TextScreen;
+
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd, Debug)]
+pub struct VtIndex(usize);
+
+impl VtIndex {
+    pub const SCHEMA_SENTINEL: VtIndex = VtIndex(usize::MAX);
+}
+
+impl UserData for VtIndex {
+    fn into_user_data(self) -> usize {
+        self.0
+    }
+
+    fn from_user_data(user_data: usize) -> Self {
+        VtIndex(user_data)
+    }
+}
+
+pub struct FdHandle {
+    pub vt_i: VtIndex,
+    pub flags: usize,
+    pub events: EventFlags,
+    pub notified_read: bool,
+}
+
+pub struct FbconScheme {
+    pub vts: BTreeMap<VtIndex, TextScreen>,
+    next_id: usize,
+    pub handles: BTreeMap<usize, FdHandle>,
+}
+
+impl FbconScheme {
+    pub fn new(vt_ids: &[usize], event_queue: &mut EventQueue<VtIndex>) -> FbconScheme {
+        let mut vts = BTreeMap::new();
+
+        for &vt_i in vt_ids {
+            let display = Display::open_new_vt().expect("Failed to open display for vt");
+            event_queue
+                .subscribe(
+                    display.input_handle.event_handle().as_raw_fd() as usize,
+                    VtIndex(vt_i),
+                    event::EventFlags::READ,
+                )
+                .expect("Failed to subscribe to input events for vt");
+            vts.insert(VtIndex(vt_i), TextScreen::new(display));
+        }
+
+        FbconScheme {
+            vts,
+            next_id: 0,
+            handles: BTreeMap::new(),
+        }
+    }
+
+    fn get_vt_handle_mut(&mut self, id: usize) -> Result<&mut FdHandle> {
+        match self.handles.get_mut(&id) {
+            Some(handle) => Ok(handle),
+            None => Err(Error::new(EBADF)),
+        }
+    }
+}
+
+impl SchemeSync for FbconScheme {
+    fn open(&mut self, path_str: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
+        let vt_i = VtIndex(path_str.parse::<usize>().map_err(|_| Error::new(ENOENT))?);
+        if self.vts.contains_key(&vt_i) {
+            let id = self.next_id;
+            self.next_id += 1;
+
+            self.handles.insert(
+                id,
+                FdHandle {
+                    vt_i,
+                    flags: flags,
+                    events: EventFlags::empty(),
+                    notified_read: false,
+                },
+            );
+
+            Ok(OpenResult::ThisScheme {
+                number: id,
+                flags: NewFdFlags::empty(),
+            })
+        } else {
+            Err(Error::new(ENOENT))
+        }
+    }
+
+    fn fevent(
+        &mut self,
+        id: usize,
+        flags: syscall::EventFlags,
+        _ctx: &CallerCtx,
+    ) -> Result<syscall::EventFlags> {
+        let handle = match self.handles.get_mut(&id) {
+            Some(handle) => Ok(handle),
+            None => Err(Error::new(EBADF)),
+        }?;
+
+        handle.notified_read = false;
+        handle.events = flags;
+
+        Ok(syscall::EventFlags::empty())
+    }
+
+    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
+        let handle = match self.handles.get(&id) {
+            Some(handle) => Ok(handle),
+            None => Err(Error::new(EBADF)),
+        }?;
+
+        let path_str = format!("fbcon:{}", handle.vt_i.0);
+        let path = path_str.as_bytes();
+
+        let mut i = 0;
+        while i < buf.len() && i < path.len() {
+            buf[i] = path[i];
+            i += 1;
+        }
+
+        Ok(i)
+    }
+
+    fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> Result<()> {
+        match self.handles.get(&id) {
+            Some(_) => Ok(()),
+            None => Err(Error::new(EBADF)),
+        }
+    }
+
+    fn fcntl(&mut self, id: usize, cmd: usize, arg: usize, _ctx: &CallerCtx) -> Result<usize> {
+        if !self.handles.get(&id).is_some() {
+            return Err(Error::new(EBADF));
+        };
+        Ok(0)
+    }
+
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
+        let handle = match self.handles.get(&id) {
+            Some(handle) => Ok(handle),
+            None => Err(Error::new(EBADF)),
+        }?;
+
+        if let Some(screen) = self.vts.get_mut(&handle.vt_i) {
+            if !screen.can_read() {
+                if handle.flags & O_NONBLOCK != 0 {
+                    Err(Error::new(EAGAIN))
+                } else {
+                    Err(Error::new(EAGAIN))
+                }
+            } else {
+                screen.read(buf)
+            }
+        } else {
+            Err(Error::new(EBADF))
+        }
+    }
+
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
+        let handle = match self.handles.get(&id) {
+            Some(handle) => Ok(handle),
+            None => Err(Error::new(EBADF)),
+        }?;
+
+        if let Some(console) = self.vts.get_mut(&handle.vt_i) {
+            console.write(buf)
+        } else {
+            Err(Error::new(EBADF))
+        }
+    }
+
+    fn on_close(&mut self, id: usize) {
+        let _ = self.handles.remove(&id);
+    }
+}

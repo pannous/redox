@@ -1,0 +1,42 @@
+/build/
+/prefix/
+.config
+**/my_*
+# Local settings folder for Jetbrains products (RustRover, IntelliJ, CLion)
+.idea/
+# Local settings folder for Visual Studio Professional
+.vs/
+# Local settings folder for vscode
+.vscode/
+# Local settings folder for the devcontainer extension that most IDEs support.
+.devcontainer/
+# Cookbook
+/repo
+/cookbook.toml
+source
+source.tmp
+source-new
+source-old
+source.tar
+source.tar.tmp
+target
+wget-log
+
+# Subtree sources (tracked)
+!recipes/core/kernel/source/
+!recipes/core/relibc/source/
+!recipes/core/redoxfs/source/
+!recipes/core/base/source/
+!recipes/core/ion/source/
+!recipes/core/netutils/source/
+!recipes/core/uutils/source/
+
+mount/
+redox-mount-works/
+redox-mount-works
+redox-mount
+share
+old
+*.img
+*.iso
+denovo/*.img
