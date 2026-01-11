@@ -262,16 +262,8 @@ impl<'a, W: io::Write> Editor<'a, W> {
         context: &'a mut Context,
         buffer: B,
     ) -> io::Result<Self> {
-        // Partial line indicator: if previous command output didn't end with newline,
-        // show ⏎ symbol and move to a new line (like zsh's PROMPT_SP)
-        // Ignore errors here - this is cosmetic and fd might be non-blocking
-        let width = util::terminal_width().unwrap_or(80).max(2);
-        let _ = out.write_all("⏎".as_bytes());
-        for _ in 0..(width - 1) {
-            let _ = out.write_all(b" ");
-        }
-        let _ = out.write_all("\r \r".as_bytes());
-        let _ = out.flush();
+        // Partial line indicator disabled - causes issues on Redox terminal
+        // TODO: investigate terminal_width() and CR handling on Redox
         let Prompt {
             mut prompt,
             vi_status,
