@@ -1,0 +1,56 @@
+[package]
+name = "netutils"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jeremy Soller <jackpot51@gmail.com>"]
+
+[[bin]]
+name = "dhcpd"
+path = "src/dhcpd/main.rs"
+
+[[bin]]
+name = "dns"
+path = "src/dns/main.rs"
+
+[[bin]]
+name = "nc"
+path = "src/nc/main.rs"
+
+# [[bin]]
+# name = "telnetd"
+# path = "src/telnetd/main.rs"
+
+# [[bin]]
+# name = "wget"
+# path = "src/wget/main.rs"
+
+[[bin]]
+name = "ping"
+path = "src/ping/main.rs"
+
+[[bin]]
+name = "ifconfig"
+path = "src/ifconfig/main.rs"
+
+[dependencies]
+anyhow = "1"
+# hyper-rustls = "0.16.1"
+redox_event = "0.4"
+#arg_parser = { git = "https://gitlab.redox-os.org/redox-os/arg-parser.git" }
+pbr = "1.0.1"
+redox_termios = "0.1.3"
+# tokio = { git = "https://gitlab.redox-os.org/redox-os/tokio" }
+# tokio-reactor = { git = "https://gitlab.redox-os.org/redox-os/tokio" }
+url = "1.7.2"
+libredox = "0.1"
+# for ifconfig
+regex = "1"
+#for ping
+clap = "4.5"
+
+# [dependencies.hyper]
+# version = "0.12.27"
+# default-features = false
+
+[target.'cfg(not(target_os = "redox"))'.dependencies]
+libc = "0.2.51"
