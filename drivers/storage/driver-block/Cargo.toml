@@ -1,0 +1,18 @@
+[package]
+name = "driver-block"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+daemon = { path = "../../../daemon" }
+executor = { path = "../../executor" }
+partitionlib = { path = "../partitionlib" }
+
+libredox = "0.1.11"
+log = "0.4"
+
+# TODO: migrate virtio to our executor
+futures = { version = "0.3.28", features = ["executor"] }
+
+redox_syscall = { version = "0.6", features = ["std"] }
+redox-scheme = "0.8.3"

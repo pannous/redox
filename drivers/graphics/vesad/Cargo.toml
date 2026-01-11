@@ -1,0 +1,21 @@
+[package]
+name = "vesad"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+drm-sys = "0.8.0"
+orbclient = "0.3.27"
+ransid = "0.4"
+redox_syscall = "0.6"
+redox_event = "0.4.1"
+
+common = { path = "../../common" }
+daemon = { path = "../../../daemon" }
+driver-graphics = { path = "../driver-graphics" }
+graphics-ipc = { path = "../graphics-ipc" }
+inputd = { path = "../../inputd" }
+libredox = "0.1.11"
+
+[features]
+default = []

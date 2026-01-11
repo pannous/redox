@@ -1,0 +1,11 @@
+[package]
+name = "logd"
+version = "0.1.0"
+authors = ["Jeremy Soller <jackpot51@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+redox_syscall = "0.6"
+daemon = { path = "../daemon" }
+libredox = "0.1.11"
+redox-scheme = "0.8.3"

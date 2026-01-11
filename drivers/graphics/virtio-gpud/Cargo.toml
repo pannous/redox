@@ -1,0 +1,28 @@
+[package]
+name = "virtio-gpud"
+version = "0.1.0"
+edition = "2021"
+authors = ["Anhad Singh <andypython@protonmail.com>"]
+
+[dependencies]
+drm-sys = "0.8.0"
+#TODO: edid is abandoned, fork it an maintain?
+edid = "0.3.0"
+log = "0.4"
+static_assertions = "1.1.0"
+futures = { version = "0.3.28", features = ["executor"] }
+anyhow = "1.0.71"
+
+common = { path = "../../common" }
+daemon = { path = "../../../daemon" }
+driver-graphics = { path = "../driver-graphics" }
+graphics-ipc = { path = "../graphics-ipc" }
+virtio-core = { path = "../../virtio-core" }
+pcid = { path = "../../pcid" }
+inputd = { path = "../../inputd" }
+
+redox_event = "0.4.1"
+redox_syscall = "0.6"
+orbclient = "0.3.27"
+spin = "0.9.8"
+libredox = "0.1.11"
