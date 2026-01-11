@@ -264,13 +264,14 @@ impl<'a, W: io::Write> Editor<'a, W> {
     ) -> io::Result<Self> {
         // Partial line indicator: if previous command output didn't end with newline,
         // show ⏎ symbol and move to a new line (like zsh's PROMPT_SP)
+        // Ignore errors here - this is cosmetic and fd might be non-blocking
         let width = util::terminal_width().unwrap_or(80).max(2);
-        out.write_all("⏎".as_bytes())?;
+        let _ = out.write_all("⏎".as_bytes());
         for _ in 0..(width - 1) {
-            out.write_all(b" ")?; // if the line is not empty, overflow on next line
+            let _ = out.write_all(b" ");
         }
-        out.write_all("\r \r".as_bytes())?; // Erase the "⏎" if nothing overwrites it
-        out.flush()?; // Ensure partial line indicator is visible before prompt
+        let _ = out.write_all("\r \r".as_bytes());
+        let _ = out.flush();
         let Prompt {
             mut prompt,
             vi_status,
