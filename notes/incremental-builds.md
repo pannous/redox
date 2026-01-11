@@ -165,9 +165,9 @@ cd build/aarch64/cranelift-initfs
 
 # 9. Mount and inject
 ../../../stamp-and-mount.sh
-cp initfs.img /opt/other/redox/redox-mount/boot/initfs
+cp initfs.img /opt/other/redox/mount/boot/initfs
 sync
-umount /opt/other/redox/redox-mount
+umount /opt/other/redox/mount
 
 # 10. Test
 ./run-dev.sh

@@ -385,7 +385,7 @@ Added run-utm.sh to boot with UTM-bundled QEMU and virtio-9p share support.
 - Writing to /root/ok inside QEMU persisted during session, but after QEMU terminated the host-mounted raw img still had old contents (cat showed 123).
 - Suspect unclean shutdown or different RAW_IMG path; need clean shutdown/sync to flush or verify RAW_IMG used by run-dev-img.sh.
 
-- No `sync` binary found in `redox-mount/usr/bin`; added `simple-sync` to `simple-coreutils` for a lightweight sync helper.
+- No `sync` binary found in `mount/usr/bin`; added `simple-sync` to `simple-coreutils` for a lightweight sync helper.
 
 - `cargo +nightly build` for `simple-sync` failed under sccache (Operation not permitted); succeeded with `RUSTC_WRAPPER=` and `-Zbuild-std` for `aarch64-unknown-redox-clif`.
 - Built binary copied to `share/simple-sync` for 9p usage.
@@ -428,9 +428,9 @@ errors gracefully and logs warning instead. Committed in drivers submodule as 25
 
 
 ## 2026-01-09 - initfs vs redoxfs mount clarification
-- /scheme/initfs/bin/* is embedded in boot image, NOT in redox-mount-works
+- /scheme/initfs/bin/* is embedded in boot image, NOT in mount-works
 - To recover initfs crashes: restore entire .img from working backup
-- redox-mount-works only contains the main filesystem (/usr, /home, /etc)
+- mount-works only contains the main filesystem (/usr, /home, /etc)
 
 
 ## 2026-01-09 - PIE fix SUCCESS!
@@ -445,7 +445,7 @@ errors gracefully and logs warning instead. Committed in drivers submodule as 25
 Added build version/commit/date to Ion shell initrc:
 - File: ~/.config/ion/initrc 
 - Shows: 'Pure-Rust Redox | Build: <commit> | <date>'
-- Applied to both pure-rust.img and redox-mount-works
+- Applied to both pure-rust.img and mount-works
 
                                                                    
 ###
@@ -641,7 +641,7 @@ git commit WIP often - curl/TCP timeout root cause: netstack route_table lacked 
 - Rebuilt smolnetd with nightly-2026-01-02; binary copied to /opt/other/redox/share/smolnetd for 9p testing.
 - Synced build scripts to read default nightly from rust-toolchain.toml when NIGHTLY is unset (build-cranelift.sh, build-coreutils.sh, build-pure-rust-iso.sh, build-virtio-9pd.sh).
 2025-01-09: Found expect-based auto-login helpers: `old/run-auto.sh` (auto-login root for QEMU ISO) and `get-redox-env.exp` (login automation over PTY). Likely reusable to avoid manual login on `run-dev.sh`/raw images.
-2025-01-09: Inspected userutils getty/login sources from https://gitlab.redox-os.org/redox-os/userutils.git; getty has no autologin flag and login has no username/password flags. Implemented login wrapper in mounted image to exec ion directly and blanked root password in `redox-mount/etc/shadow`.
+2025-01-09: Inspected userutils getty/login sources from https://gitlab.redox-os.org/redox-os/userutils.git; getty has no autologin flag and login has no username/password flags. Implemented login wrapper in mounted image to exec ion directly and blanked root password in `mount/etc/shadow`.
 2025-01-09: `./run-dev.sh -s` started QEMU but did not create `/tmp/redox-dev-raw.sock` (monitor socket appeared under `/private/tmp/redox-dev-raw-mon.sock`); hostfwd tcp::2222-:22 failed to bind. May need to adjust socket path or check QEMU serial socket behavior on macOS.
 2025-01-09: Updated `run-dev.sh` to use `SOCKET_DIR` (default `/private/tmp`) for sockets and `HOST_SSH_PORT` (default 2222, set 0 to disable) to avoid hostfwd bind failures.
 2025-01-09: Added `run-dev-once.sh` helper to start `run-dev.sh -s` and send a one-shot `root` login over the serial socket after a configurable delay.
@@ -949,3 +949,67 @@ Fix:
 
 Kernel commit: f06fd970 in recipes/core/kernel/source
 
+
+
+## 2026-01-11: __open_mode Fix Attempt
+
+### Summary
+Attempted to fix Cranelift varargs bug for file creation permissions by:
+1. Adding __open_mode() to relibc (already done previously)
+2. Patching Rust stdlib to call __open_mode() instead of varargs open()
+
+### Issue Encountered
+Rebuilding ion shell (with cargo clean) causes crashes when running external commands.
+This happens even WITHOUT the stdlib patch - something in the build environment changed.
+
+Working ion: share/bin/ion (Jan 10, 10.5MB)
+Broken ion: new builds (Jan 11, 9.6MB)
+
+### Root Cause: Unknown
+Need to investigate build differences. Possibly:
+- Cargo.lock differences
+- Toolchain component updates
+- Build flag changes
+
+### Current Workaround
+Using pre-built ion from share/bin/ion which works but doesn't have the fix.
+
+See notes/open-mode-fix-status.md for full details.
+
+
+### Ion Build Regression Fixed (2026-01-11)
+Root cause: relibc commit 200f0e11 introduced buggy demand paging code in fexec_impl.
+Fix: Revert that commit, rebuild relibc, and clean rebuild ion with -Z build-std.
+Working ion at: /opt/other/redox/share/ion-clean-rebuild
+
+
+### Ion Fixed Injected (2026-01-11 11:49)
+- Injected share/bin/ion-fixed as /usr/bin/ion in pure-rust.img
+- All tests pass: ls, cat, echo redirect, file creation
+- Backup at: pure-rust.img.bak-before-ion-fix
+
+
+### Demand Paging Mmap Reverted (2026-01-11)
+The file-backed mmap demand paging optimization (commit 200f0e11) was reverted because:
+1. It caused child processes to crash when executed from ion
+2. It's no longer necessary - main filesystem uses `cache=none,snapshot=on` (read-only)
+3. Only /scheme/9p.hostshare/ is writable, which uses 9p protocol anyway
+
+The original goal was to enable demand paging (load pages from disk on access instead of upfront).
+With snapshot mode, the filesystem is read-only so this optimization provides no benefit.
+liner fix: add flush and safe width for partial line indicator
+
+## ion O_NONBLOCK fix (not committed - ion source is gitignored)
+File: recipes/core/ion/source/src/binary/readln.rs
+
+change_blocking() was broken - using O_RDWR with F_SETFL doesn't clear O_NONBLOCK.
+Fixed to properly F_GETFL, clear O_NONBLOCK, then F_SETFL.
+Also added WouldBlock error handling to prevent spam.
+
+## Ion ENOEXEC Fix (2026-01-11)
+- Added POSIX-style fallback for scripts without shebang in `recipes/core/ion/source/src/lib/shell/pipe_exec/mod.rs`
+- When kernel returns ENOEXEC (error 8), ion now forks and runs the script through itself
+- Backup at: `recipes/core/ion/source/src/lib/shell/pipe_exec/mod.rs.bak`
+- New binary injected: `/usr/bin/ion` (3.9MB stripped)
+- Test script in share: `no-shebang-test`
+- To test in Redox: `./no-shebang-test` or `/scheme/9p.hostshare/no-shebang-test`

@@ -6,6 +6,19 @@ Fork of Redox OS - Pure Rust Build
 The kernel boots and relibc compiles using <a href="https://github.com/rust-lang/rustc_codegen_cranelift">Cranelift</a> — no C++ dependencies.
 </p>
 
+
+git subtree for https://github.com/pannous/redox/
+          Component            │ Size │                github endpoint                │
+rust                        │ 1.6G │ pannous/redox-rust              
+rustc_codegen_cranelift     │ 3.3G │ pannous/rustc_codegen_cranelift 
+recipes/core/kernel/source  │ 1.0G │ pannous/redox-kernel          
+recipes/core/relibc/source  │ 437M │ pannous/redox-relibc            
+recipes/core/redoxfs/source │ 1.2G │ pannous/redoxfs                 
+recipes/core/base/source    │ 5.3G │ pannous/redox-base              
+recipes/core/ion/source     │ 629M │ pannous/redox-ion             
+recipes/core/uutils/source     │ 3.4G │ pannous/redox-uutils
+recipes/core/netutils/source   │ 476M │ pannous/redox-netutils
+
 ## Status: aarch64 ls WORKS!
 
 Using virtio-9p for direct access to host filesystem on mac!

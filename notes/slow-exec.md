@@ -181,7 +181,10 @@ Performance on current image: ~11s for 24MB coreutils (using pread, no file-back
 - recipes/core/base/source/build-initfs-cranelift.sh - Removed crt0_rust.o reference
 
 ### Current state:
-- Working image restored from pure-rust.img.bak-fmap-debug
 - File-backed mmap code is in relibc with EPERM/EBADF fallback
-- Initfs rebuild produces broken binaries due to CRT object issues
 - Need to investigate why new CRT objects don't work
+
+root:~# time echo hi | tee ho
+hi
+real    36.184612274s
+Completely, utterly unacceptable. 

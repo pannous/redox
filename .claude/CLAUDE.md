@@ -21,12 +21,14 @@ Host files in /opt/other/redox/share/ appear at /scheme/9p.hostshare/ in Redox.
 cp my-tool /opt/other/redox/share/
 # In Redox:
 /scheme/9p.hostshare/my-tool
-Good for: Testing binaries, scripts, quick iterations
+Good for: Testing binaries, scripts, quick iterations, persisting across reboots
 
 ### Method 2: Mount img
 /opt/other/redox/stamp-and-mount.sh  # Mounts + stamps initrc with git hash & date
-cp my-tool /opt/other/redox/redox-mount/usr/bin/
-umount /opt/other/redox/redox-mount/
+cp my-tool /opt/other/redox/mount/usr/bin/
+These changes will be picked up on the next restart of Redox.
+⚠️ the Main file system outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we never need to unmount. 
+
 
 
 ### Method 3: wget not yet
@@ -35,11 +37,27 @@ https://static.redox-os.org/pkg/aarch64-unknown-redox/
 
 
 IMPORTANT: 
-after your injections ALWAYS test with /opt/other/redox/test-in-redox.sh # gives you a root login with a socket after ≈ 30s boot time. If it works cp pure-rust.img with feature name, otherwise ask if we want to rollback or try again!
+after your injections ALWAYS test with 
+/opt/other/redox/test-in-redox.sh 
+It gives you a root login with a tmux or socket after ≈ 15s boot time. 
+Sometimes the qemu tmux session is shared between different agents. 
+NEVER just kill a running qemu or tmux session; reattach and maybe try twice. 
+
+in test-in-redox.sh you can specify commands, or you can do yourself:
+tmux send-keys -t redox-dev "$cmd" Enter
+tmux capture-pane -t redox-dev -p -S -10 2>&1 | tail -10
+
+LOGGING
+you can check driver logs in redox under /scheme/logging/ e.g.
+root:~# ls /scheme/logging/fs/pci/
+virtio-9pd.log
+these can be cat/tail/or copied to /scheme/9p.hostshare/ for easier access from host
+
+If the feature works cp pure-rust.img with feature name, otherwise ask if we want to rollback or try again!
 
 IMPORTANT:
-Note all post-hoc modifications to the img or redox-mount as post-hoc.md 
-or apply the changes them in the source folders directly
+Note all post-hoc modifications to the img or mount as post-hoc.md 
+or apply the changes in the source folders directly
 
 ## Building Userspace Tools
 # Build a tool with Cranelift for Redox
@@ -56,9 +74,7 @@ cd recipes/core/base/source && ./build-initfs-cranelift.sh
 
 
 # Cargo Configuration
-Incremental builds are enabled by default (CARGO_INCREMENTAL=1).
-Offline mode is enabled by default to avoid unexpected network fetches.
-
+Incremental builds and offline mode are enabled by default (CARGO_INCREMENTAL=1).
 To go online on demand (e.g., to update dependencies):
 cargo --config net.offline=false update
 cargo --config net.offline=false fetch
@@ -93,9 +109,9 @@ pcid-spawner passes `RUST_LOG=warn` to spawned drivers.
 To re-enable verbose: edit pcid-spawner or set `RUST_LOG=info` in 00_base.
 
 # RECOVERY
-pure-rust.works.img is always mounted at /opt/other/redox/redox-mount-works
+pure-rust.works.img is always mounted at /opt/other/redox/mount-works
 copy it back to pure-rust.img if pure-rust.img is completely broken
-copy selected files from redox-mount-works if only parts are broken
+copy selected files from mount-works if only parts are broken
 
 # Build Version Tracking
 Update these files with current commit/date on each significant build:
@@ -112,7 +128,7 @@ Boot logging is controlled by `RUST_LOG` in init.rc (line 9).
 
   cd /opt/other/redox/build/aarch64/cranelift-initfs
   ./initfs-tools-target/release/redox-initfs-ar --max-size 134217728 --output initfs.img initfs/
-  cp initfs.img /opt/other/redox/redox-mount/boot/initfs && sync
+  cp initfs.img /opt/other/redox/mount/boot/initfs && sync
   
 
 # TODOs

@@ -61,8 +61,8 @@ Or mount the image and copy directly:
 ```bash
 # On host
 ./stamp-and-mount.sh
-cp share/{chmod,ln,head,tail,wc,pwd,true,false,sleep} redox-mount/usr/bin/
-umount redox-mount
+cp share/{chmod,ln,head,tail,wc,pwd,true,false,sleep} mount/usr/bin/
+umount mount
 ```
 
 ## Source Location
