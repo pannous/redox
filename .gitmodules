@@ -1,5 +1,0 @@
-[submodule "rust"]
-	path = rust
-	url = https://github.com/pannous/redox-rust.git
-	branch = redox-2025-10-03
-	update = none
