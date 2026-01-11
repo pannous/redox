@@ -1,0 +1,44 @@
+[package]
+name = "redox_netstack"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "smolnetd"
+path = "src/main.rs"
+
+[dependencies]
+log = { version = "0.4", features = ["release_max_level_warn"] }
+redox-log = "0.1"
+event = { package = "redox_event", version = "0.4.1" }
+daemon = { path = "../daemon" }
+redox_syscall = "0.6"
+libredox = { version = "0.1.10", features = ["call"] }
+redox-scheme = "0.8.3"
+anyhow = "1"
+libc = "0.2"
+syscall = { package = "redox_syscall", version = "0.6" }
+
+[dependencies.smoltcp]
+version = "0.12.0"
+default-features = false
+features = [
+    "std",
+    "alloc",
+    "medium-ethernet",
+    "medium-ip",
+    "proto-ipv4",
+    "socket-raw",
+    "socket-icmp",
+    "socket-udp",
+    "socket-tcp",
+    "log",
+]
+
+[patch.crates-io]
+# Needs libc 0.2 backport for Redox
+libc = { git = "https://gitlab.redox-os.org/redox-os/liblibc.git", branch = "redox-0.2" }
+
+[patch."https://gitlab.redox-os.org/redox-os/relibc.git"]
+# Use local redox-rt if needed
+# redox-rt = { path = "../../relibc/source/redox-rt" }

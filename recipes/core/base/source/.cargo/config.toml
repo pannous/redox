@@ -1,0 +1,27 @@
+# Patch relibc to use local source with proc feature
+[patch.'https://gitlab.redox-os.org/redox-os/relibc.git']
+relibc = { path = "/opt/other/redox/recipes/core/relibc/source" }
+redox-rt = { path = "/opt/other/redox/recipes/core/relibc/source/redox-rt" }
+redox-ioctl = { path = "/opt/other/redox/recipes/core/relibc/source/redox-ioctl" }
+
+[patch.crates-io]
+# Patch relibc and redox-rt to ensure proc feature is enabled everywhere
+relibc = { path = "/opt/other/redox/recipes/core/relibc/source" }
+redox-rt = { path = "/opt/other/redox/recipes/core/relibc/source/redox-rt" }
+
+# redox-scheme 0.8.3 from crates.io uses syscall 0.7
+
+# Cranelift build configuration for aarch64
+[target.aarch64-unknown-redox-clif]
+rustflags = [
+    "-Clink-arg=-L/opt/other/redox/recipes/core/relibc/source/target/aarch64-unknown-redox-clif/release",
+    "-Clink-arg=-z",
+    "-Clink-arg=muldefs",
+    "-Cpanic=abort",
+]
+
+[env]
+CARGO_INCREMENTAL="1"
+
+[net]
+offline = true
