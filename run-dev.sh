@@ -67,7 +67,7 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
         "qemu-system-aarch64 -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file=\"$RAW_IMG\",format=raw,id=hd0,if=none,cache=none \
+        -drive file=\"$RAW_IMG\",format=raw,id=hd0,if=none,cache=writethrough \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \

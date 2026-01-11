@@ -165,6 +165,29 @@ Previously was a no-op. Now opens '/' and calls fsync on it.
 
 File: recipes/core/relibc/source/src/platform/redox/mod.rs
 
+## redoxfs flush support (2026-01-11)
+Added flush() method to redoxfs Disk trait to ensure writes reach stable storage.
+
+Files modified:
+- recipes/core/redoxfs/source/src/disk/mod.rs - Added flush() to Disk trait
+- recipes/core/redoxfs/source/src/disk/file.rs - Implemented flush() using sync_data()
+- recipes/core/redoxfs/source/src/disk/io.rs - Implemented flush()
+- recipes/core/redoxfs/source/src/disk/cache.rs - Pass-through flush()
+- recipes/core/redoxfs/source/src/disk/sparse.rs - Implemented flush()
+- recipes/core/redoxfs/source/src/transaction.rs - Call disk.flush() after writing header
+
+This completes the sync chain:
+1. sync command calls sync()
+2. relibc sync() opens "/" and calls fsync(fd)
+3. Kernel sends fsync to redoxfs
+4. redoxfs Transaction::sync() writes data and calls disk.flush()
+5. disk.flush() calls File::sync_data() which becomes fsync syscall
+6. Kernel sends fsync to virtio-blkd
+7. virtio-blkd sends FLUSH request to QEMU virtio-blk device
+
+Note: Testing with hybrid initfs (LLVM init + Cranelift redoxfs/virtio-blkd) -
+pure Cranelift init crashes at startup, but hybrid approach works.
+
 
 ## 2026-01-10: __open_mode fix verified working
 - Cranelift varargs bug workaround tested successfully
