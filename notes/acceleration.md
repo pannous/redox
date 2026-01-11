@@ -72,3 +72,31 @@ Also added memory barrier to ld_so after relocations (requires full rebuild).
 Remaining ~40% failures likely due to:
 - IPI unimplemented (TLB shootdowns don't work)
 - Other memory ordering issues in context switch
+
+## 2026-01-11 Memory Barriers - 100% success rate!
+
+Root cause identified: Missing ISB barriers after critical system register writes.
+
+### Fixes applied:
+
+1. **TTBR write barrier** (`rmm/src/arch/aarch64.rs`):
+   - Added ISB immediately after MSR to TTBR0/TTBR1
+   - ARM ARM requires pipeline flush after TTBR change before any translation walks
+   - HVF speculates aggressively without this barrier
+
+2. **Context switch barrier** (`kernel/.../context/arch/aarch64.rs`):
+   - Added ISB at end of switch_to_inner before branch to switch_hook
+   - Ensures ELR_EL1, SPSR_EL1, TPIDR_EL0 writes complete before executing new context
+
+**Result: 10/10 = 100% success rate** (up from 60%)
+
+To use HVF acceleration:
+```
+qemu-system-aarch64 -M virt -accel hvf -cpu host -m 2G \
+    -bios tools/firmware/edk2-aarch64-code.fd \
+    -drive file=pure-rust.img,format=raw,id=disk0,if=none \
+    -device virtio-blk-pci,drive=disk0 \
+    -nographic
+```
+
+Note: Using `if=none` + `-device` is more reliable than `if=virtio` in QEMU 10.x

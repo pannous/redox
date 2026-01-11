@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo password | pbcopy
+# echo password | pbcopy
 
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
@@ -12,21 +12,26 @@ SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"
 SOCK="${SOCK:-$SOCKET_DIR/redox-dev-raw.sock}"
 MONSOCK="${MONSOCK:-$SOCKET_DIR/redox-dev-raw-mon.sock}"
 HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
-
+CACHE="cache=none,snapshot=on"
+#     •   cache=none # Direct I/O, no host page cache, safest against host write-back surprises.
+#     •   cache=directsync # Direct I/O + synchronous guest writes.
+#     •   cache=writethrough # Host cache used, writes flushed to storage before completion.
+#     •   cache=writeback # Host cache used, asynchronous flush (fastest, least safe).
+# ,readonly=on  if you want guest writes to fail loudly
+# ,snapshot=on if you want guest writes to be discarded on shutdown
+echo "main file system $CACHE, use /scheme/9p.hostshare/ mounted as ./share for persistence"
 
 if [[ ! -f "$RAW_IMG" ]]; then
     echo "Missing raw image: $RAW_IMG" >&2
     echo "Set RAW_IMG or create /tmp/dev-raw.img first." >&2
     echo "run in background via ./run-dev-img.sh -s then"
     echo "socat - unix-connect:/tmp/redox-dev-raw.sock"
-    echo "⚠️ cache=writethrough dangerous?"
-    echo "⚠️ cache=writeback more dangerous;)"
     exit 1
 fi
 
-CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # works
-# CPU="-accel hvf -cpu host" # still flaky / breaks 
-# CPU="-M virt,highmem=off -accel hvf -cpu host" # still breaks!
+# CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # slower but works
+CPU="-accel hvf -cpu host" # NOW WORKS! Fixed with ISB barriers (2026-01-11)
+# CPU="-M virt,highmem=off -accel hvf -cpu host" # not needed, regular HVF works
 NETDEV_ARGS=()
 if [[ "$HOST_SSH_PORT" != "0" ]]; then
     NETDEV_ARGS+=(-netdev user,id=net0,hostfwd=tcp::"$HOST_SSH_PORT"-:22)
@@ -42,8 +47,8 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     qemu-system-aarch64 -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=writethrough \
-        -device virtio-blk-pci,drive=hd0 \
+        -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         "${NETDEV_ARGS[@]}" \
@@ -67,8 +72,8 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
         "qemu-system-aarch64 -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file=\"$RAW_IMG\",format=raw,id=hd0,if=none,cache=writethrough \
-        -device virtio-blk-pci,drive=hd0 \
+        -drive file=\"$RAW_IMG\",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
         ${NETDEV_ARGS[*]} \
@@ -86,8 +91,8 @@ else
     qemu-system-aarch64 -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
         -bios tools/firmware/edk2-aarch64-code.fd \
-        -drive file="$RAW_IMG",format=raw,id=hd0,if=none,cache=none \
-        -device virtio-blk-pci,drive=hd0 \
+        -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         "${NETDEV_ARGS[@]}" \
