@@ -1,0 +1,35 @@
+image: "redoxos/redoxer:latest"
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PROJECT_NAMESPACE == "redox-os"'
+    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"'
+
+stages:
+  - host
+  - build
+  - test
+  # TODO: benchmarks and profiling (maybe manually enabled for relevant MRs)?
+
+build:
+  stage: build
+  script:
+    - mkdir -p target/${ARCH}
+    - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
+  parallel:
+    matrix:
+      - ARCH: [x86_64, i686, aarch64, riscv64gc]
+
+fmt:
+  stage: host
+  script:
+      - rustup component add rustfmt
+      - rustfmt --check
+
+unit_test:
+  stage: test
+  script:
+    - TARGET=x86_64-unknown-redox redoxer test
