@@ -262,11 +262,15 @@ impl<'a, W: io::Write> Editor<'a, W> {
         context: &'a mut Context,
         buffer: B,
     ) -> io::Result<Self> {
+        // Partial line indicator: if previous command output didn't end with newline,
+        // show ⏎ symbol and move to a new line (like zsh's PROMPT_SP)
+        let width = util::terminal_width().unwrap_or(80).max(2);
         out.write_all("⏎".as_bytes())?;
-        for _ in 0..(util::terminal_width().unwrap_or(80) - 1) {
+        for _ in 0..(width - 1) {
             out.write_all(b" ")?; // if the line is not empty, overflow on next line
         }
         out.write_all("\r \r".as_bytes())?; // Erase the "⏎" if nothing overwrites it
+        out.flush()?; // Ensure partial line indicator is visible before prompt
         let Prompt {
             mut prompt,
             vi_status,
