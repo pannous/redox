@@ -12,14 +12,14 @@ SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"
 SOCK="${SOCK:-$SOCKET_DIR/redox-dev-raw.sock}"
 MONSOCK="${MONSOCK:-$SOCKET_DIR/redox-dev-raw-mon.sock}"
 HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
-CACHE="cache=none,snapshot=on"
+CACHE="cache=unsafe,snapshot=on"
 #     •   cache=none # Direct I/O, no host page cache, safest against host write-back surprises.
 #     •   cache=directsync # Direct I/O + synchronous guest writes.
 #     •   cache=writethrough # Host cache used, writes flushed to storage before completion.
 #     •   cache=writeback # Host cache used, asynchronous flush (fastest, least safe).
 # ,readonly=on  if you want guest writes to fail loudly
 # ,snapshot=on if you want guest writes to be discarded on shutdown
-echo "main file system $CACHE, use /scheme/9p.hostshare/ mounted as ./share for persistence"
+echo "4-core HVF + $CACHE | /scheme/9p.hostshare/ for persistence"
 
 if [[ ! -f "$RAW_IMG" ]]; then
     echo "Missing raw image: $RAW_IMG" >&2
@@ -30,7 +30,7 @@ if [[ ! -f "$RAW_IMG" ]]; then
 fi
 
 # CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # slower but works
-CPU="-accel hvf -cpu host" # NOW WORKS! Fixed with ISB barriers (2026-01-11)
+CPU="-accel hvf -cpu host -smp 4" # NOW WORKS! Fixed with ISB barriers (2026-01-11)
 # CPU="-M virt,highmem=off -accel hvf -cpu host" # not needed, regular HVF works
 NETDEV_ARGS=()
 if [[ "$HOST_SSH_PORT" != "0" ]]; then
@@ -46,7 +46,8 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     echo "Connect: socat - unix-connect:$SOCK" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
-        -bios tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
         -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
         -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
@@ -71,7 +72,8 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     tmux new-session -d -s "$SESSION" \
         "qemu-system-aarch64 -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
-        -bios tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
         -drive file=\"$RAW_IMG\",format=raw,id=disk0,if=none,$CACHE \
         -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
@@ -90,7 +92,8 @@ else
     echo "Socket mode: $0 -s" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
-        -bios tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
         -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
         -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \

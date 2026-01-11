@@ -262,8 +262,11 @@ impl<'a, W: io::Write> Editor<'a, W> {
         context: &'a mut Context,
         buffer: B,
     ) -> io::Result<Self> {
-        // Partial line indicator disabled - causes issues on Redox terminal
-        // TODO: investigate terminal_width() and CR handling on Redox
+        out.write_all("⏎".as_bytes())?;
+        for _ in 0..(util::terminal_width().unwrap_or(80) - 1) {
+            out.write_all(b" ")?; // if the line is not empty, overflow on next line
+        }
+        out.write_all("\r \r".as_bytes())?; // Erase the "⏎" if nothing overwrites it
         let Prompt {
             mut prompt,
             vi_status,
