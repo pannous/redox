@@ -451,19 +451,31 @@ setup_redoxfs_partition() {
             echo "ion" > "$MOUNT_DIR/etc/init.d/30_console"
             log "Created init.d scripts"
 
-            # Copy shell binaries from works image
-            local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
-            local works_mnt="$SCRIPT_DIR/works-mnt"
-            if [[ -f "$works_img" ]]; then
-                mkdir -p "$works_mnt"
-                "$redoxfs_tool" "$works_img" "$works_mnt" 2>/dev/null &
-                local wpid=$!
-                sleep 3
-                if [[ -d "$works_mnt/usr/bin" ]]; then
-                    cp "$works_mnt/usr/bin/ion" "$MOUNT_DIR/usr/bin/" 2>/dev/null && log "Copied ion"
+            # Build ALL packages from config using build-packages.sh
+            local pkg_builder="$SCRIPT_DIR/build-packages.sh"
+            local pkg_config="${DENOVO_CONFIG:-$REDOX_DIR/config/minimal.toml}"
+
+            if [[ -x "$pkg_builder" ]]; then
+                log "Building all packages from $pkg_config..."
+                "$pkg_builder" all "$pkg_config" "$MOUNT_DIR" || {
+                    warn "Package build had some failures, continuing..."
+                }
+            else
+                warn "Package builder not found at $pkg_builder"
+                # Fallback to works image for essential binaries
+                local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
+                local works_mnt="$SCRIPT_DIR/works-mnt"
+                if [[ -f "$works_img" ]]; then
+                    mkdir -p "$works_mnt"
+                    "$redoxfs_tool" "$works_img" "$works_mnt" 2>/dev/null &
+                    local wpid=$!
+                    sleep 3
+                    if [[ -d "$works_mnt/usr/bin" ]]; then
+                        cp "$works_mnt/usr/bin/ion" "$MOUNT_DIR/usr/bin/" 2>/dev/null && log "Copied ion"
+                    fi
+                    umount "$works_mnt" 2>/dev/null || true
+                    kill $wpid 2>/dev/null || true
                 fi
-                umount "$works_mnt" 2>/dev/null || true
-                kill $wpid 2>/dev/null || true
             fi
 
             sync
@@ -601,8 +613,20 @@ main() {
         --extract-bootloader)
             extract_bootloader
             ;;
+        --packages)
+            # Build packages using build-packages.sh
+            local config="${2:-$REDOX_DIR/config/minimal.toml}"
+            local dest="${3:-$REDOX_DIR/mount}"
+            log "Building packages from $config to $dest"
+            "$SCRIPT_DIR/build-packages.sh" all "$config" "$dest"
+            ;;
+        --list-packages)
+            # List packages from config
+            local config="${2:-$REDOX_DIR/config/minimal.toml}"
+            "$SCRIPT_DIR/build-packages.sh" list "$config"
+            ;;
         *)
-            echo "Usage: $0 [--full|--quick|--copy|--test|--extract-bootloader]"
+            echo "Usage: $0 [--full|--quick|--copy|--test|--packages|--list-packages]"
             echo ""
             echo "Options:"
             echo "  --full    Build Cranelift components + create fresh image (default de novo)"
@@ -610,6 +634,8 @@ main() {
             echo "  --copy    Copy from existing image (NOT de novo, for fallback)"
             echo "  --test    Test boot the denovo.img"
             echo "  --extract-bootloader  Just extract bootloader from existing image"
+            echo "  --packages [config] [dest]   Build/fetch packages from config"
+            echo "  --list-packages [config]     List packages from config"
             echo ""
             echo "Default mode creates truly empty RedoxFS using redoxfs-mkfs."
             echo "Use --copy only if de novo build fails."
