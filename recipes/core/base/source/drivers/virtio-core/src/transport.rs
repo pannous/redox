@@ -239,6 +239,31 @@ impl<'a> Queue<'a> {
     pub fn descriptor_len(&self) -> usize {
         self.descriptor.len()
     }
+
+    /// Recycle a descriptor back to the available ring without allocating new buffers.
+    /// Used for RX buffer recycling where the buffer is reused in place.
+    pub fn recycle_descriptor(&self, descriptor_idx: u16) {
+        let head = self.available.head_index();
+        let queue_size = self.available.queue_size;
+
+        eprintln!("DEBUG: recycle_descriptor({}) head={} queue_size={}", descriptor_idx, head, queue_size);
+
+        // Add descriptor to available ring
+        self.available
+            .get_element_at(head as usize % queue_size)
+            .table_index
+            .store(descriptor_idx, Ordering::SeqCst);
+
+        // Memory barrier before updating head
+        std::sync::atomic::fence(Ordering::SeqCst);
+
+        // Update head index
+        self.available.set_head_idx(head.wrapping_add(1));
+
+        // Notify device
+        self.notification_bell.ring(self.queue_index);
+        eprintln!("DEBUG: recycle_descriptor done, new head={}", self.available.head_index());
+    }
 }
 
 unsafe impl Sync for Queue<'_> {}

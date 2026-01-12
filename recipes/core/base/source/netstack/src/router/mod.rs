@@ -15,7 +15,7 @@ pub mod route_table;
 pub type PacketBuffer = smoltcp::storage::PacketBuffer<'static, ()>;
 
 pub struct Router {
-    rx_buffer: PacketBuffer,
+    pub rx_buffer: PacketBuffer,
     tx_buffer: PacketBuffer,
     devices: Rc<RefCell<DeviceList>>,
     route_table: Rc<RefCell<RouteTable>>,

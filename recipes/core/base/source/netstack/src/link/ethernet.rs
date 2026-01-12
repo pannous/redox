@@ -94,8 +94,9 @@ impl EthernetLink {
 
         f(frame.payload_mut());
 
+        let now = libredox::call::clock_gettime(libredox::flag::CLOCK_MONOTONIC).ok();
         match self.network_file.write_all(&self.output_buffer) {
-            Ok(_) => eprintln!("DEBUG: {} Wrote {} bytes to network ({:?})", self.name, self.output_buffer.len(), proto),
+            Ok(_) => eprintln!("DEBUG: {} Wrote {} bytes @ {:?}", self.name, self.output_buffer.len(), now),
             Err(e) => eprintln!("DEBUG: {} Write error: {:?}", self.name, e),
         }
     }

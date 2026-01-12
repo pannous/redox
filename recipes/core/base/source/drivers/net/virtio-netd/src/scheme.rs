@@ -78,11 +78,17 @@ impl<'a> VirtioNet<'a> {
         let _header = unsafe { &*(buffer.as_ptr() as *const VirtHeader) };
         let packet = &buffer[header_size..(header_size + payload_size)];
 
-        // Copy the packet into the buffer.
-        target[..payload_size].copy_from_slice(&packet);
+        // Copy only as much as fits in the target buffer
+        let copy_size = core::cmp::min(payload_size, target.len());
+        target[..copy_size].copy_from_slice(&packet[..copy_size]);
 
         self.recv_head = self.rx.used.head_index();
-        payload_size
+
+        // Recycle the RX buffer back to the available ring for future packets
+        eprintln!("DEBUG: Recycling RX descriptor {} (recv_head now {})", descriptor_idx, self.recv_head);
+        self.rx.recycle_descriptor(descriptor_idx as u16);
+
+        copy_size
     }
 }
 

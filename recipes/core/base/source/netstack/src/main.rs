@@ -157,7 +157,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
     );
 
     // DISABLED: setrens(0,0) breaks event delivery - smolnetd blocks forever
-    // libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
+    libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
 
     let all = {
         use EventSource::*;
