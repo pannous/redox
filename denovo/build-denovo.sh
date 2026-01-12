@@ -328,8 +328,11 @@ setup_redoxfs_partition() {
     local redoxfs_tool="$REDOX_DIR/build/fstools/bin/redoxfs"
 
     # Option 1: Copy RedoxFS from existing image and update kernel/initfs
-    # This is the most reliable approach
-    local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
+    # Priority: local denovo-works.img > pure-rust.works.img > pure-rust.img
+    local works_img="$SCRIPT_DIR/denovo-works.img"
+    if [[ ! -f "$works_img" ]]; then
+        works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
+    fi
     if [[ ! -f "$works_img" ]]; then
         works_img="$REDOX_DIR/build/aarch64/pure-rust.img"
     fi
@@ -397,12 +400,17 @@ setup_redoxfs_partition() {
 
 # Alternative: Copy from existing image
 copy_from_existing() {
-    log "Copying from existing pure-rust.works.img..."
+    log "Copying from existing image..."
 
-    local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
+    # Priority: local denovo-works.img > pure-rust.works.img > pure-rust.img
+    local works_img="$SCRIPT_DIR/denovo-works.img"
+    if [[ ! -f "$works_img" ]]; then
+        works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
+    fi
     if [[ ! -f "$works_img" ]]; then
         works_img="$REDOX_DIR/build/aarch64/pure-rust.img"
     fi
+    log "Using source: $works_img"
 
     if [[ -f "$works_img" ]]; then
         cp "$works_img" "$DENOVO_IMG"
@@ -446,25 +454,36 @@ test_boot() {
     fi
 
     log "Image size: $(du -h "$DENOVO_IMG" | cut -f1)"
-    log "Starting QEMU..."
 
-    log "-accel hvf -cpu host \" doesn't work in denovo either"
-        # -accel tcg,thread=multi -cpu cortex-a72 \
-        # -M virt,highmem=off -accel hvf -cpu host \
-
-    qemu-system-aarch64 \
+    local TMUX_SESSION="redox-denovo"
+    local QEMU_CMD="qemu-system-aarch64 \
         -M virt \
         -accel tcg,thread=multi -cpu cortex-a72 \
         -smp 4 \
         -m 2G \
-        -bios "$REDOX_DIR/tools/firmware/edk2-aarch64-code.fd" \
-        -drive file="$DENOVO_IMG",format=raw,id=hd0,if=none,cache=writeback \
+        -bios '$REDOX_DIR/tools/firmware/edk2-aarch64-code.fd' \
+        -drive file='$DENOVO_IMG',format=raw,id=hd0,if=none,cache=writeback \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
-        -fsdev local,id=host0,path="$REDOX_DIR/share",security_model=none \
+        -fsdev local,id=host0,path='$REDOX_DIR/share',security_model=none \
         -device qemu-xhci \
         -device usb-kbd \
-        -nographic
+        -nographic"
+
+    # Kill existing session if it exists (but warn first)
+    if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+        warn "Existing tmux session '$TMUX_SESSION' found - killing it"
+        tmux kill-session -t "$TMUX_SESSION"
+    fi
+
+    log "Starting QEMU in tmux session: $TMUX_SESSION"
+    tmux new-session -d -s "$TMUX_SESSION" "bash -c '$QEMU_CMD'"
+
+    log "QEMU running in tmux. To attach:"
+    log "  tmux attach -t $TMUX_SESSION"
+    log ""
+    log "To send commands:"
+    log "  tmux send-keys -t $TMUX_SESSION 'command' Enter"
 }
 
 # Main entry point
