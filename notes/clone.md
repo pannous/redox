@@ -18,7 +18,7 @@ The codebase uses independent git repositories for major components instead of s
 | `recipes/core/netutils/source` | redox-netutils | gitlab:redox-os/netutils | master |
 | `recipes/core/uutils/source` | redox-uutils | uutils/coreutils | main |
 
-**Convention:** `origin` = pannous fork (push here), `upstream` = original source (pull from here, never push)
+**Convention:** `origin` = pannous fork, `upstream` = original source
 
 ## Recursive Operations
 

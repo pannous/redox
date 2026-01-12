@@ -30,12 +30,6 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-# SAFETY: Block pushes to upstream
-if [[ "$1" == "push" && "$*" == *"upstream"* ]]; then
-    echo "ERROR: Never push to upstream! Use 'origin' for pannous forks."
-    exit 1
-fi
-
 # Run in main repo first
 echo "=== . (main) ==="
 git "$@" || true
