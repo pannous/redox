@@ -9,7 +9,6 @@ We build ONLY for aarch64
 
 # Git: Component Repositories
 
-
 This repo has **independent git repos** for major components (kernel, relibc, ion, etc.).
 Plain `git` only sees the main repo and MISSES all component changes!
 
