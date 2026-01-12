@@ -22,14 +22,16 @@ source.tar.tmp
 target
 wget-log
 
-# Subtree sources (tracked)
-!recipes/core/kernel/source/
-!recipes/core/relibc/source/
-!recipes/core/redoxfs/source/
-!recipes/core/base/source/
-!recipes/core/ion/source/
-!recipes/core/netutils/source/
-!recipes/core/uutils/source/
+# Independent component repositories (see notes/clone.md)
+/rust/
+/rustc_codegen_cranelift/
+recipes/core/kernel/source/
+recipes/core/relibc/source/
+recipes/core/redoxfs/source/
+recipes/core/base/source/
+recipes/core/ion/source/
+recipes/core/netutils/source/
+recipes/core/uutils/source/
 
 mount/
 redox-mount-works/
