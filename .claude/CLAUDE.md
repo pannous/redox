@@ -5,7 +5,21 @@ Fork of Redox OS - Pure Rust Build
 Redox OS can now be compiled using a pure Rust toolchain.
 The kernel boots and relibc compiles using Cranelift — no C++ make or cmake dependencies.
 
-We build ONLY for aarch64 
+We build ONLY for aarch64
+
+# Git: Component Repositories
+
+This repo has **independent git repos** for major components (kernel, relibc, ion, etc.).
+Use `./git-all.sh` instead of `git` for operations across all components:
+
+```bash
+./git-all.sh log --oneline -5   # History across ALL components
+./git-all.sh status             # Status of all repos
+./git-all.sh pull               # Pull all repos
+./git-all.sh push               # Push all repos
+```
+
+See `notes/clone.md` for the full component list.
 
 # Development Workflow
 
