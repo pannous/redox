@@ -30,10 +30,24 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-# Handle push specially to set upstream if needed
+# Handle push and pull specially
 run_git() {
     if [ "$1" = "push" ] && [ $# -eq 1 ]; then
         git push -u origin HEAD 2>/dev/null || git push 2>/dev/null || echo "(no remote or nothing to push)"
+    elif [ "$1" = "pull" ] && [ "$2" = "upstream" ] && [ $# -eq 2 ]; then
+        # For 'pull upstream' without branch, fetch and show status instead
+        if git remote | grep -q "^upstream$"; then
+            git fetch upstream
+            local upstream_branch=$(git ls-remote --symref upstream HEAD 2>/dev/null | grep "^ref:" | awk '{print $2}' | sed 's|refs/heads/||')
+            if [ -n "$upstream_branch" ]; then
+                echo "Fetched upstream. Default branch: $upstream_branch"
+                echo "To merge: git merge upstream/$upstream_branch"
+            else
+                echo "Fetched upstream (could not determine default branch)"
+            fi
+        else
+            echo "(no upstream remote)"
+        fi
     else
         git "$@"
     fi

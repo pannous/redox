@@ -14,7 +14,9 @@
       "Bash(nm:*)",
       "Bash(git submodule:*)",
       "Bash(git push)",
-      "Bash(git -C /opt/other/redox log --oneline --since=\"2026-01-09\" --until=\"2026-01-11\" -- .)"
+      "Bash(git -C /opt/other/redox log --oneline --since=\"2026-01-09\" --until=\"2026-01-11\" -- .)",
+      "Bash(tmux has-session:*)",
+      "Bash(cargo:*)"
     ]
   },
   "hooks": {

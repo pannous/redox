@@ -64,7 +64,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
         port_set: &mut Self::SchemeDataT,
         context: &Context,
     ) -> SyscallResult<(SocketHandle, Self::DataT)> {
-        eprintln!("TCP new_socket: path={}", path);
+        trace!("TCP open {}", path);
         let mut parts = path.split('/');
         let remote_endpoint = parse_endpoint(parts.next().unwrap_or(""));
         let mut local_endpoint = parse_endpoint(parts.next().unwrap_or(""));

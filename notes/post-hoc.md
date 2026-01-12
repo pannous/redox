@@ -19,3 +19,6 @@ Note: simple-coreutils (chmod, ln, head, tail, wc, pwd, true, false, sleep, more
                   - Fire-and-forget TX with Box::leak() for DMA buffers
                   - Simplified IRQ thread without acknowledgment
                   - Packets now send without blocking
+
+## 2026-01-12 - Enable trace logging for smolnetd
+Modified /opt/other/redox/mount/usr/lib/init.d/10_net to add 'export RUST_LOG=trace' before smolnetd startup.

@@ -94,10 +94,11 @@ impl EthernetLink {
 
         f(frame.payload_mut());
 
-        let now = libredox::call::clock_gettime(libredox::flag::CLOCK_MONOTONIC).ok();
-        match self.network_file.write_all(&self.output_buffer) {
-            Ok(_) => eprintln!("DEBUG: {} Wrote {} bytes @ {:?}", self.name, self.output_buffer.len(), now),
-            Err(e) => eprintln!("DEBUG: {} Write error: {:?}", self.name, e),
+        if let Err(_) = self.network_file.write_all(&self.output_buffer) {
+            error!(
+                "Dropped outboud packet on {} (failed to write to network file)",
+                self.name
+            )
         }
     }
 
@@ -148,7 +149,6 @@ impl EthernetLink {
                     return;
                 }
 
-                eprintln!("DEBUG: {} Received ARP {:?} from {} (MAC: {})", self.name, operation, source_protocol_addr, source_hardware_addr);
                 self.neighbor_cache.insert(
                     IpAddress::Ipv4(source_protocol_addr),
                     Neighbor {
@@ -180,17 +180,12 @@ impl EthernetLink {
     }
 
     fn check_waiting_packets(&mut self, ip: Ipv4Address, mac: EthernetAddress, now: Instant) {
-        eprintln!("DEBUG: {} check_waiting_packets called for {} (MAC: {})", self.name, ip, mac);
         let mut waiting_packets =
             std::mem::replace(&mut self.waiting_packets, PacketBuffer::new(vec![], vec![]));
-        eprintln!("DEBUG: {} waiting_packets queue has {} bytes capacity", self.name, waiting_packets.payload_capacity());
         loop {
             match waiting_packets.peek() {
-                Ok((IpAddress::Ipv4(dst), data)) if dst == &ip => {
-                    eprintln!("DEBUG: {} Found matching queued packet for {} ({} bytes)", self.name, dst, data.len());
-                }
+                Ok((IpAddress::Ipv4(dst), _)) if dst == &ip => {}
                 Ok((IpAddress::Ipv4(dst), _)) => {
-                    eprintln!("DEBUG: {} queue has packet for different IP {}", self.name, dst);
                     self.arp_state = ArpState::Discovering {
                         target: *dst,
                         tries: 0,
@@ -199,15 +194,13 @@ impl EthernetLink {
                     self.send_arp(now);
                     break;
                 }
-                Err(e) => {
-                    eprintln!("DEBUG: {} queue peek error or empty: {:?}", self.name, e);
+                Err(_) => {
                     self.arp_state = ArpState::Discovered;
                     break;
                 }
             }
 
             let (_, packet) = waiting_packets.dequeue().unwrap();
-            eprintln!("DEBUG: {} Sending queued packet ({} bytes) to {} (MAC: {})", self.name, packet.len(), ip, mac);
             self.send_to(
                 mac,
                 packet.len(),
@@ -249,8 +242,6 @@ impl EthernetLink {
     }
 
     fn handle_missing_neighbor(&mut self, next_hop: IpAddress, packet: &[u8], now: Instant) {
-        eprintln!("DEBUG: {} Missing neighbor for {}, queuing packet ({} bytes)",
-               self.name, next_hop, packet.len());
         let Ok(buf) = self.waiting_packets.enqueue(packet.len(), next_hop) else {
             warn!(
                 "Dropped packet on {} because waiting queue was full",
@@ -262,7 +253,6 @@ impl EthernetLink {
 
         let IpAddress::Ipv4(next_hop) = next_hop;
         if let ArpState::Discovered = self.arp_state {
-            eprintln!("DEBUG: {} Starting ARP discovery for {}", self.name, next_hop);
             self.arp_state = ArpState::Discovering {
                 target: next_hop,
                 tries: 0,
@@ -270,29 +260,22 @@ impl EthernetLink {
             };
 
             self.send_arp(now)
-        } else {
-            eprintln!("DEBUG: {} ARP already in progress for different target", self.name);
         }
     }
 
     fn send_arp(&mut self, now: Instant) {
         let Some(hardware_address) = self.hardware_address else {
-            eprintln!("DEBUG: {} send_arp: no hardware_address", self.name);
             return;
         };
 
         let Some(ip_address) = self.ip_address else {
-            eprintln!("DEBUG: {} send_arp: no ip_address", self.name);
             return;
         };
 
         match self.arp_state {
             ArpState::Discovered => {}
-            ArpState::Discovering { silent_until, .. } if silent_until > now => {
-                // Still in silence period, don't spam ARP requests
-            }
+            ArpState::Discovering { silent_until, .. } if silent_until > now => {}
             ArpState::Discovering { target, tries, .. } if tries >= 3 => {
-                eprintln!("DEBUG: {} send_arp: giving up on {} after {} tries", self.name, target, tries);
                 self.drop_waiting_packets(target, now)
             }
             ArpState::Discovering {
@@ -300,13 +283,11 @@ impl EthernetLink {
                 ref mut tries,
                 ref mut silent_until,
             } => {
-                eprintln!("DEBUG: {} Sending ARP request for {} (try {}) src_ip={}",
-                    self.name, target, *tries + 1, ip_address.address());
                 let arp_repr = ArpRepr::EthernetIpv4 {
                     operation: ArpOperation::Request,
                     source_hardware_addr: hardware_address,
                     source_protocol_addr: ip_address.address(),
-                    target_hardware_addr: EMPTY_MAC, // Must be all zeros in ARP request
+                    target_hardware_addr: EthernetAddress::BROADCAST,
                     target_protocol_addr: target,
                 };
 
@@ -366,43 +347,22 @@ impl LinkDevice for EthernetLink {
         };
 
         let mut input_buffer = std::mem::replace(&mut self.input_buffer, Vec::new());
-        let mut packet_len = 0usize;
         loop {
-            let bytes_read = match self.network_file.read(&mut input_buffer) {
-                Ok(0) => {
-                    // EOF or no data - check if we have ARP to send
+            if let Err(e) = self.network_file.read(&mut input_buffer) {
+                if e.kind() != ErrorKind::WouldBlock {
+                    error!("Failed to read ethernet device on link {}", self.name);
+                } else {
+                    // No packet to read but we check if we have arp to send
                     self.send_arp(now);
-                    self.input_buffer = input_buffer;
-                    return None;
                 }
-                Ok(n) => n,
-                Err(e) => {
-                    if e.kind() != ErrorKind::WouldBlock {
-                        error!("Failed to read ethernet device on link {}", self.name);
-                    } else {
-                        // No packet to read but we check if we have arp to send
-                        if let ArpState::Discovering { target, tries, silent_until } = &self.arp_state {
-                            if *silent_until <= now {
-                                eprintln!("DEBUG: {} recv WouldBlock, ARP retry pending for {} (tries={}, now={:?})",
-                                    self.name, target, tries, now);
-                            }
-                        }
-                        self.send_arp(now);
-                    }
-                    self.input_buffer = input_buffer;
-                    return None;
-                }
-            };
-            packet_len = bytes_read;
-            let packet = EthernetFrame::new_unchecked(&input_buffer[..bytes_read]);
+                self.input_buffer = input_buffer;
+                return None;
+            }
+            let packet = EthernetFrame::new_unchecked(&input_buffer[..]);
             let Ok(repr) = EthernetRepr::parse(&packet) else {
-                eprintln!("DEBUG: {} Malformed frame ({} bytes)", self.name, bytes_read);
+                debug!("Dropped incomming frame on {} (Malformed)", self.name);
                 continue;
             };
-
-            // Log all received frames for debugging
-            eprintln!("DEBUG: {} RX {:?} {} bytes src={} dst={} our_mac={}",
-                self.name, repr.ethertype, bytes_read, repr.src_addr, repr.dst_addr, hardware_address);
 
             // We let EMPTY_MAC pass because somehow this is the mac used when net=redir is used
             if !repr.dst_addr.is_broadcast()
@@ -410,24 +370,16 @@ impl LinkDevice for EthernetLink {
                 && repr.dst_addr != hardware_address
             {
                 // Drop packets which are not for us
-                eprintln!("DEBUG: {} DROPPING packet not for us: dst={} our_mac={}",
-                    self.name, repr.dst_addr, hardware_address);
                 continue;
             }
 
             match repr.ethertype {
                 EthernetProtocol::Ipv4 => {
-                    // Store buffer back (don't truncate - it's reused for next packet)
                     self.input_buffer = input_buffer;
-                    // Return only the payload portion of the actual packet received
-                    let payload_start = repr.buffer_len(); // Ethernet header size (14)
-                    return Some(&self.input_buffer[payload_start..packet_len]);
+                    return Some(EthernetFrame::new_unchecked(&self.input_buffer[..]).payload());
                 }
                 EthernetProtocol::Arp => self.process_arp(packet.payload(), now),
-                _ => {
-                    eprintln!("DEBUG: {} ignoring unknown ethertype {:?}", self.name, repr.ethertype);
-                    continue;
-                }
+                _ => continue,
             }
         }
     }

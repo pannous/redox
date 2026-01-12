@@ -1,0 +1,1 @@
+Keep it short. Claude can only reliably follow around 150 to 200 instructions at a time, and Claude Code's system prompt already uses about 50 of those. Every instruction you add competes for attention. If your CLAUDE.md is a novel, Claude will start ignoring things randomly and you won't know which things.

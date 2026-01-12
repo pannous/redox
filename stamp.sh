@@ -4,6 +4,8 @@
 set -e
 cd /opt/other/redox
 
+MOUNT_POINT="/opt/other/redox/mount"
+
 INITRC="$MOUNT_POINT/root/.config/ion/initrc"
 
 # Get git info

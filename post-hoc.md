@@ -29,3 +29,10 @@
 Note: vim needs libncurses.so.6 which isn't in the base image
 Note: kibi editor is available at /usr/bin/kibi as alternative
 
+
+## 2026-01-12 - kill command fixed
+- Fixed `kill -9 PID` not working (ArgParser treated -9 as unknown flag)
+- Now supports: kill -9 PID, kill -KILL PID, kill -s 9 PID, kill PID
+- Source: recipes/core/coreutils/source/src/bin/kill.rs
+- Built with Cranelift and installed to /usr/bin/kill in image
+

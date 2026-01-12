@@ -1,4 +1,15 @@
 
+# RECOVERY
+pure-rust.works.img is always mounted at /opt/other/redox/mount-works
+copy it back to pure-rust.img if pure-rust.img is completely broken
+copy selected files from mount-works if only parts are broken
+
+
+### Method 3: wget not yet
+Until we have wget working, get missing pkg packages from 
+https://static.redox-os.org/pkg/aarch64-unknown-redox/
+
+
 ## randd aarch64 entropy fix (2026-01-10)
 - Added timer jitter entropy using CNTVCT_EL0 (ARM virtual counter)
 - Source: recipes/core/base/source/randd/src/main.rs (gitignored but patched)
@@ -195,3 +206,9 @@ pure Cranelift init crashes at startup, but hybrid approach works.
 - See notes/open-mode-fix-status.md for full details
 - See notes/cranelift-varargs-bug.md for bug analysis
 
+
+# todo: create note skill
+There is a ./notes/ folder, whenever you find something interesting that may be useful later on, create a new file in there with a descriptive name and append your findings there. For example, create one for networking.md . It may be even for curl.md until it works, and then you can delete it or just replace the whole file with it 'works now' unless we may stumble upon it again Then we can leave the relevant insights. Also update and remove the notes if you find something which is no longer relevant.  
+
+Whenever one of the processes or skills caused some friction, then update the relevant skill with what to avoid next time. 
+Or if you find doing some task repetitively, ask me to create an appropriate skill. 

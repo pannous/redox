@@ -9,17 +9,19 @@ We build ONLY for aarch64
 
 # Git: Component Repositories
 
+
 This repo has **independent git repos** for major components (kernel, relibc, ion, etc.).
-Use `./git-all.sh` instead of `git` for operations across all components:
+Plain `git` only sees the main repo and MISSES all component changes!
+
+**MANDATORY:** Use `./git-all.sh` instead of `git` for ALL operations:
 
 ```bash
 ./git-all.sh log --oneline -5   # History across ALL components
 ./git-all.sh status             # Status of all repos
 ./git-all.sh pull               # Pull all repos
+./git-all.sh commit -a -m "message" # ALL affected repos!
 ./git-all.sh push               # Push all repos
 ```
-
-See `notes/clone.md` for the full component list.
 
 # Development Workflow
 
@@ -37,18 +39,13 @@ cp my-tool /opt/other/redox/share/
 /scheme/9p.hostshare/my-tool
 Good for: Testing binaries, scripts, quick iterations, persisting across reboots
 
-### Method 2: Mount img
-/opt/other/redox/mount.sh  # create ./mount to build/aarch64/pure-rust.img
-cp my-tool /opt/other/redox/mount/usr/bin/
+### Method 2: Mounted img
+we did /opt/other/redox/mount.sh  to create permanent ./mount to build/aarch64/pure-rust.img
+You can just `cp tool /opt/other/redox/mount/usr/bin/`
 These changes will be picked up on the next restart of Redox.
-⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we never need to unmount. 
+⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we NEVER NEED TO UNMOUNT. 
 
-
-### Method 3: wget not yet
-Until we have wget working, get missing pkg packages from 
-https://static.redox-os.org/pkg/aarch64-unknown-redox/
-
-
+# Test
 IMPORTANT: 
 after your injections ALWAYS test with 
 /opt/other/redox/test-in-redox.sh 
@@ -60,7 +57,11 @@ in test-in-redox.sh you can specify commands, or you can do yourself:
 tmux send-keys -t redox-dev "$cmd" Enter
 tmux capture-pane -t redox-dev -p -S -10 2>&1 | tail -10
 
-LOGGING
+modifying logging in 
+mount/usr/lib/init.d/00_base etc
+
+
+# LOGGING
 you can check driver logs in redox under /scheme/logging/ e.g.
 root:~# ls /scheme/logging/fs/pci/
 virtio-9pd.log
@@ -70,39 +71,24 @@ If the feature works cp pure-rust.img with feature name, otherwise ask if we wan
 
 IMPORTANT:
 Note all post-hoc modifications to the img or mount as post-hoc.md 
-or apply the changes in the source folders directly
+or apply the changes in the source folders directly for denovo build
 
 ## Building Userspace Tools
-# Build a tool with Cranelift for Redox
+cd recipes/core/base/source/netstack && cargo build --target aarch64-unknown-redox 
+
+# Build all initfs tools
 cd recipes/core/base/source
-./build-initfs-cranelift.sh  # Builds all initfs tools
+./build-initfs-cranelift.sh  
 # Or build individual:
 RUSTFLAGS="..." cargo +nightly build --target aarch64-unknown-redox-clif.json -p my-tool
-
-
-### Rebuild initfs (For drivers/init)
-# Edit files in recipes/core/base/source/
-cd recipes/core/base/source && ./build-initfs-cranelift.sh
-# Inject new initfs same as above
-
 
 # Cargo Configuration
 Incremental builds and offline mode are enabled by default (CARGO_INCREMENTAL=1).
 To go online on demand (e.g., to update dependencies):
 cargo --config net.offline=false update
-cargo --config net.offline=false fetch
-
-
-# Cranelift
-The new build-cranelift.sh uses:
-- Cranelift - codegen backend (no LLVM)
-- rust-lld - linker (no GCC)
-- llvm-ar/strip - from Rust toolchain
-- libm crate - contrib/pure-rust/math_libm.rs replaces openlibm
 
 # Build Scripts
 - `build-cranelift.sh` - Main Cranelift builder (kernel, relibc, drivers, all)
-- `build-pure-rust-iso.sh` - Quick ISO assembly from pre-built binaries ONLY USE WHEN WE CAN'T patch via qcow2
 
 ## Usage
 ./build-cranelift.sh kernel   # Build kernel
@@ -111,83 +97,28 @@ The new build-cranelift.sh uses:
 ./build-cranelift.sh all      # Full build
 ./build-cranelift.sh shell    # Enter build shell
 
+# Caveats
+2>&1 doesn't work in ion scripts - use files 
+chmod doesn't work in 9p
 
-# Skills
-- `/build-driver <pkg>` - Build driver with Cranelift, strip, inject into image
-- `/inject <src> <dest>` - Quick file injection into mounted image
+
 
 # Logging
 Drivers respect `RUST_LOG` env var (set in `common/logger.rs`).
 pcid-spawner passes `RUST_LOG=warn` to spawned drivers.
 To re-enable verbose: edit pcid-spawner or set `RUST_LOG=info` in 00_base.
 
-# RECOVERY
-pure-rust.works.img is always mounted at /opt/other/redox/mount-works
-copy it back to pure-rust.img if pure-rust.img is completely broken
-copy selected files from mount-works if only parts are broken
-
-# Build Version Tracking
-Update these files with current commit/date on each significant build:
-- `recipes/core/base/source/init.rc` (source, line 1 comment)
-- `build/aarch64/pure-rust-initfs/etc/init.rc` (initfs)
-- `build/aarch64/cranelift-initfs/initfs/etc/init.rc` (cranelift initfs)
-- `~/.config/ion/initrc` in mounted images (login message)
-
 # Logging Configuration
-Boot logging is controlled by `RUST_LOG` in init.rc (line 9).
-- Current: `export RUST_LOG warn` (suppresses INFO/DEBUG)
-- To re-enable verbose logging: change `warn` to `info` or `debug`
-- Files to edit: all three init.rc locations above, then rebuild initfs:
+Boot logging is controlled by `RUST_LOG` in init.rc (line 9) currently "warn", ./build-initfs.sh
 
-  cd /opt/other/redox/build/aarch64/cranelift-initfs
-  ./initfs-tools-target/release/redox-initfs-ar --max-size 134217728 --output initfs.img initfs/
-  cp initfs.img /opt/other/redox/mount/boot/initfs && sync
-  
-
-# TODOs
-✅ FIXED: Cranelift binaries now have proper entry points (CRT objects added to target spec)
-
- Risk: pre-built packages may not match Cranelift ABI
-
-see notes/todo.md
+Risk: pre-built packages may not match Cranelift ABI
 
 The target spec NEEDS "position-independent-executables": false:
 The kernel's ELF loader doesn't support PIE relocation. Without this, binaries jump to address 0x0 on startup.
-'true' would only be for security 🤷
 
-# Get working redoxfs from mounted working image (it's inside initfs which we can't extract easily)
+commit often, small increments even broken wip!
 
-- **Config file**: `~/.config/ion/initrc` (not `.ionrc`!)
-- 
-See STATE.md for current state (may be out of sync, update often but carefully)
+Before and after each Bash command, give a short one-line comment 
 
-
-# FAQ
-⏺ Wrong tool! initfs needs "RedoxFtw" magic, not "RedoxFS\0". I used redoxfs-ar but should use redox-initfs-ar.
- ./build/aarch64/cranelift-initfs/initfs-tools-target/release/redox-initfs-ar --output /tmp/pure-rust-initfs.img 
- There should be an InitFS skill. Let's discuss next what to implement in that. 
-
-usually you want to cd into root dir
-cd /opt/other/redox/
-
-
-# OTHER
-
-if you go to other directories like recipes, cd back to /opt/other/redox/ after
-
-commit often, small increments even if broken ( as WIP but note the challenges in the commit message )
-
-Don't push to gitlab upstream, just to the origin fork!
-
-If fixes work in the iso also apply them to build/aarch64/server-cranelift.qcow2 or use qcow2 directly, but create .bak !
-
-blindly append all (semi) interesting finds and procedural insights to notes.md ( we may siff through them later )
-whenever you encounter scripts that don't / do work or found some 'missing' files append that to notes.md 
-
-Before and after each Bash command, give a short one-liner comment of what you are planning to achieve and what the result was. 
-
-# todo: create note skill
-There is a ./notes/ folder, whenever you find something interesting that may be useful later on, create a new file in there with a descriptive name and append your findings there. For example, create one for networking.md . It may be even for curl.md until it works, and then you can delete it or just replace the whole file with it 'works now' unless we may stumble upon it again Then we can leave the relevant insights. Also update and remove the notes if you find something which is no longer relevant.  
-
-Whenever one of the processes or skills caused some friction, then update the relevant skill with what to avoid next time. 
-Or if you find doing some task repetitively, ask me to create an appropriate skill. 
+⚠️ NEVER use `git` directly - ALWAYS use ./git-all.sh ⚠️
+NEVER remove a TODO, replace with DONE if done, keep text identical

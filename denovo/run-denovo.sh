@@ -1,0 +1,1 @@
+./build-denovo.sh --test

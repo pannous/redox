@@ -147,6 +147,47 @@ DEBUG: eth0 about to write 104 bytes
 ### Files modified:
 - `/opt/other/redox/recipes/core/base/source/netstack/src/scheme/mod.rs` - routing fix
 - `/opt/other/redox/recipes/core/base/source/netstack/src/link/ethernet.rs` - debug output
+
+## TCP Connection Timing Issue (2026-01-12)
+
+### Problem
+`curl http://81.169.181.160/test` (or any TCP connection) fails with "Connection timed out" even though:
+1. TCP SYN packet is sent successfully
+2. TCP SYN-ACK is received ~70ms later (fast!)
+3. smolnetd properly consumes the SYN-ACK packet
+
+### Timeline (from debug timestamps):
+```
+53.968s - ARP request sent
+53.988s - TCP SYN sent (66 bytes on wire)
+53.988s-54.0XXs - ~10 on_tcp_scheme_event calls (curl checking connection)
+54.0XXs - curl reports "Connection timed out"
+54.058s - TCP SYN-ACK arrives (70ms after SYN - this is FAST!)
+```
+
+### Observations:
+1. Packet flow is working - ARP, TCP SYN, and SYN-ACK all transmitted correctly
+2. smoltcp is processing packets (`iface.poll() consumed packets from router`)
+3. curl is making many rapid scheme calls (~10) before giving up
+4. curl gives up BEFORE the SYN-ACK arrives
+
+### Likely Cause:
+Event delivery issue - curl is not receiving proper events (fevent) to indicate connection progress. Instead of waiting/blocking properly, it makes rapid non-blocking checks and gives up quickly.
+
+### What to investigate:
+1. How does curl check for connection completion? (fevent/poll/select?)
+2. Is smolnetd sending proper fevent notifications when TCP state changes?
+3. Is there a timeout configuration in curl or relibc that's too short?
+4. Check notify_sockets() and events() functions in smolnetd
+
+### Debug output added:
+- Timestamps in ethernet.rs for TX packets
+- Timestamps in mod.rs when iface.poll() consumes packets
+- `on_tcp_scheme_event` debug prints
+- `TCP new_socket` debug prints
+
+### Note:
+ICMP ping has similar issues - it sends requests but responses arrive "late" (after the application gives up or is cancelled). The underlying issue might be the same: event delivery not working properly for non-blocking I/O.
 - `/opt/other/redox/run-dev.sh` - network device fix
 
 ### Next steps:
@@ -379,3 +420,11 @@ ls /scheme | grep -E "ip|tcp|udp|icmp|netcfg"
 cat /scheme/logging/net/smolnetd.log
 cat /scheme/logging/net/pci/virtio-netd.log
 ```
+
+
+⏺ The network scheme's tick() must be called when packets arrive. Let me check virtio-netd's main loop to see how IRQs trigger tick().
+
+⏺ Read(/opt/other/redox/recipes/core/base/source/drivers/net/virtio-netd/src/main.rs)
+
+⏺ Found the issue! The virtio-netd main loop only waits for scheme events, NOT for IRQ events. When packets arrive, there's no wake-up mechanism. Let me check virtio-core's IRQ handling.
+

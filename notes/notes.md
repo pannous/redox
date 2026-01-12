@@ -438,7 +438,6 @@ errors gracefully and logs warning instead. Committed in drivers submodule as 25
 - Rebuilt ALL initfs binaries with PIE:false
 - Boot now reaches login prompt with Cranelift-compiled initfs
 - Files fixed: tools/*.json, recipes/core/*/source/*.json, build-cranelift.sh
-- Snapshot: pure-rust.works.img
 
 
 ## 2026-01-09: initrc build version display
@@ -1013,3 +1012,17 @@ Also added WouldBlock error handling to prevent spam.
 - New binary injected: `/usr/bin/ion` (3.9MB stripped)
 - Test script in share: `no-shebang-test`
 - To test in Redox: `./no-shebang-test` or `/scheme/9p.hostshare/no-shebang-test`
+
+## ls timestamps (2025-01-12)
+
+**Enabled timestamps in `ls -l` output**
+
+The filesystem (redoxfs) already supported ctime/mtime/atime. The simple-ls tool just wasn't displaying them.
+
+Modified: `recipes/core/base/source/simple-ls/src/main.rs`
+- Added `format_time()` helper to convert Unix timestamps to human-readable format
+- Updated long listing to show mtime: `ls -l` now displays YYYY-MM-DD HH:MM
+
+Build: `CARGO_INCREMENTAL=0 cargo +nightly build --release --target aarch64-unknown-redox-clif.json -Zbuild-std=std,panic_abort -p simple-ls`
+
+Copy to image: `cp target/aarch64-unknown-redox-clif/release/simple-ls /opt/other/redox/mount/bin/`

@@ -61,3 +61,13 @@ Overwrites the content instead of appending.
 
 
  root:/scheme# cd lo2026-01-12T12-02-07.227Z [@inputd:208 ERROR] invalid path '' 
+
+
+  0000000000000000: GUARD PAGE
+kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 60, NAME /usr/bin/randd, CONTEXT 0xfffffe800015a9f0
+Abort
+
+
+root:~# bash
+relibc getrlimit(7, 0x7ffffffffb80): not implemented
+bash-5.2# 
