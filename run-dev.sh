@@ -89,9 +89,10 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
 else
     # Interactive mode (default)
     # cache=writeback
+    # NOMENU="-boot menu=off,strict=on" Doesn't prevent 2-second boot delay. 
     echo "Using: $RAW_IMG" >&2
     echo "Socket mode: $0 -s" >&2
-    qemu-system-aarch64 -M virt $CPU -m 2G \
+    qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \

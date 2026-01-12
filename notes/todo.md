@@ -55,3 +55,9 @@ Path            Size      Used      Free Use%
 
 root:/scheme/9p.hostshare# echo ja >> ok
 Overwrites the content instead of appending. 
+
+  -boot menu=off,strict=on \  no effect
+  -fw_cfg name=etc/boot-menu,raw=off
+
+
+ root:/scheme# cd lo2026-01-12T12-02-07.227Z [@inputd:208 ERROR] invalid path '' 

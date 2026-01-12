@@ -168,7 +168,6 @@ impl Ping {
     }
 
     pub fn on_echo_event(&mut self) -> Result<Option<()>> {
-        eprintln!("ping: on_echo_event start");
         // Read an ICMP echo reply into a fresh payload buffer.
         let mut payload = EchoPayload {
             seq: 0,
@@ -182,19 +181,12 @@ impl Ping {
 
         let readed = match self.echo_file.read(&mut payload) {
             Ok(0) => {
-                eprintln!("ping: on_echo_event read 0 bytes");
                 // No data – treat as an error condition.
                 self.stats.record_error();
                 return Ok(None);
             }
-            Ok(cnt) => {
-                eprintln!("ping: on_echo_event read {} bytes", cnt);
-                cnt
-            }
-            Err(e) if e.is_wouldblock() => {
-                eprintln!("ping: on_echo_event EWOULDBLOCK");
-                return Ok(None);
-            }
+            Ok(cnt) => cnt,
+            Err(e) if e.is_wouldblock() => return Ok(None),
             Err(e) => return Err(e).context("Failed to read from echo file"),
         };
 
@@ -227,21 +219,16 @@ impl Ping {
     }
 
     pub fn on_time_event(&mut self) -> Result<Option<()>> {
-        eprintln!("ping: on_time_event start");
         //  Read from the 'time:' file just to consume the alarm event,
         //  but do *not* treat it as the current time for RTT.
         let mut buf = [0_u8; mem::size_of::<TimeSpec>()];
         self.time_file.read(&mut buf)?; // discard
-        eprintln!("ping: on_time_event consumed alarm");
 
         // Get the real monotonic time for sending a new ping & timeouts
         let now = libredox::call::clock_gettime(libredox::flag::CLOCK_MONOTONIC)
             .context("Failed to get the current time")?;
-        eprintln!("ping: on_time_event now={}s, calling send_ping", now.tv_sec);
         self.send_ping(&now)?;
-        eprintln!("ping: on_time_event send_ping done");
         self.check_timeouts(&now)?;
-        eprintln!("ping: on_time_event check_timeouts done");
 
         // Schedule the *next* alarm event at now + self.interval
         let mut alarm_time = now;
@@ -253,20 +240,16 @@ impl Ping {
             let alarm_spec = libredox::data::timespec_from_mut_bytes(&mut alarm_buf);
             *alarm_spec = alarm_time;
         }
-        eprintln!("ping: on_time_event scheduling next alarm at {}s", alarm_time.tv_sec);
         self.time_file
             .write(&alarm_buf)
             .context("Failed to write the next alarm time")?;
-        eprintln!("ping: on_time_event alarm scheduled");
 
         // If we've sent all packets and have no outstanding replies, finish
         self.is_finished()
     }
 
     pub fn send_ping(&mut self, time: &TimeSpec) -> Result<Option<()>> {
-        eprintln!("ping: send_ping seq={} packets_to_send={}", self.seq, self.packets_to_send);
         if self.packets_to_send != 0 && usize::from(self.seq) >= self.packets_to_send {
-            eprintln!("ping: send_ping - done sending all packets");
             return Ok(None);
         }
 
@@ -285,9 +268,7 @@ impl Ping {
         ttl_fd.write(&[self.ttl])?;
         */
 
-        eprintln!("ping: send_ping writing to echo file");
         let _ = self.echo_file.write(&payload)?;
-        eprintln!("ping: send_ping write done");
 
         let mut timeout_time = *time;
 

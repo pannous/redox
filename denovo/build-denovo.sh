@@ -454,15 +454,18 @@ test_boot() {
     fi
 
     log "Image size: $(du -h "$DENOVO_IMG" | cut -f1)"
+    CPU="-accel hvf -cpu host" # NOW WORKS! Fixed with ISB barriers (2026-01-11)
+    # CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # slow Fallback (Shouldn't be necessary)
+    CACHE="cache=unsafe,snapshot=on" # not modifying image
 
     local TMUX_SESSION="redox-denovo"
     local QEMU_CMD="qemu-system-aarch64 \
         -M virt \
-        -accel tcg,thread=multi -cpu cortex-a72 \
+        $CPU \
         -smp 4 \
         -m 2G \
         -bios '$REDOX_DIR/tools/firmware/edk2-aarch64-code.fd' \
-        -drive file='$DENOVO_IMG',format=raw,id=hd0,if=none,cache=writeback \
+        -drive file='$DENOVO_IMG',format=raw,id=hd0,if=none,$CACHE \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path='$REDOX_DIR/share',security_model=none \
@@ -484,6 +487,7 @@ test_boot() {
     log ""
     log "To send commands:"
     log "  tmux send-keys -t $TMUX_SESSION 'command' Enter"
+    tmux send-keys -t $TMUX_SESSION 'root' Enter # login (later)
 }
 
 # Main entry point

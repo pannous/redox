@@ -38,11 +38,10 @@ cp my-tool /opt/other/redox/share/
 Good for: Testing binaries, scripts, quick iterations, persisting across reboots
 
 ### Method 2: Mount img
-/opt/other/redox/stamp-and-mount.sh  # Mounts + stamps initrc with git hash & date
+/opt/other/redox/mount.sh  # create ./mount to build/aarch64/pure-rust.img
 cp my-tool /opt/other/redox/mount/usr/bin/
 These changes will be picked up on the next restart of Redox.
-⚠️ the Main file system outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we never need to unmount. 
-
+⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we never need to unmount. 
 
 
 ### Method 3: wget not yet
