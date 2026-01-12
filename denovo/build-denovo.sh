@@ -426,10 +426,11 @@ setup_redoxfs_partition() {
         sleep 3
 
         if mount | grep -q "$MOUNT_DIR"; then
-            # Create minimal directory structure
+            # Create directory structure for shell boot
             mkdir -p "$MOUNT_DIR/boot"
             mkdir -p "$MOUNT_DIR/bin"
-            mkdir -p "$MOUNT_DIR/etc"
+            mkdir -p "$MOUNT_DIR/etc/init.d"
+            mkdir -p "$MOUNT_DIR/usr/bin"
             mkdir -p "$MOUNT_DIR/root"
             mkdir -p "$MOUNT_DIR/tmp"
             mkdir -p "$MOUNT_DIR/scheme"
@@ -442,6 +443,27 @@ setup_redoxfs_partition() {
             if [[ -f "$INITFS_PATH" ]]; then
                 cp "$INITFS_PATH" "$MOUNT_DIR/boot/initfs"
                 log "Installed initfs"
+            fi
+
+            # Create minimal init.d scripts
+            echo "# Minimal base" > "$MOUNT_DIR/etc/init.d/00_base"
+            # Just run ion - it inherits stdio from init
+            echo "ion" > "$MOUNT_DIR/etc/init.d/30_console"
+            log "Created init.d scripts"
+
+            # Copy shell binaries from works image
+            local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
+            local works_mnt="$SCRIPT_DIR/works-mnt"
+            if [[ -f "$works_img" ]]; then
+                mkdir -p "$works_mnt"
+                "$redoxfs_tool" "$works_img" "$works_mnt" 2>/dev/null &
+                local wpid=$!
+                sleep 3
+                if [[ -d "$works_mnt/usr/bin" ]]; then
+                    cp "$works_mnt/usr/bin/ion" "$MOUNT_DIR/usr/bin/" 2>/dev/null && log "Copied ion"
+                fi
+                umount "$works_mnt" 2>/dev/null || true
+                kill $wpid 2>/dev/null || true
             fi
 
             sync
