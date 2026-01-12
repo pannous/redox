@@ -166,6 +166,14 @@ impl Smolnetd {
                     route_table.borrow_mut().insert_rule(Rule::new(
                         network_cidr,
                         None,
+                        eth0_name.clone(),
+                        cidr.address(),
+                    ));
+
+                    // Add default route via gateway
+                    route_table.borrow_mut().insert_rule(Rule::new(
+                        IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+                        Some(IpAddress::Ipv4(default_gw)),
                         eth0_name,
                         cidr.address(),
                     ));

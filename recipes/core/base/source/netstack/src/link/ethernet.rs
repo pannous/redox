@@ -94,10 +94,10 @@ impl EthernetLink {
 
         f(frame.payload_mut());
 
-        if let Err(_) = self.network_file.write_all(&self.output_buffer) {
+        if let Err(e) = self.network_file.write_all(&self.output_buffer) {
             error!(
-                "Dropped outboud packet on {} (failed to write to network file)",
-                self.name
+                "Dropped outbound packet on {} (failed to write to network file): {:?}",
+                self.name, e
             )
         }
     }
@@ -149,6 +149,7 @@ impl EthernetLink {
                     return;
                 }
 
+                debug!("{}: Received ARP {:?} from {} (MAC: {})", self.name, operation, source_protocol_addr, source_hardware_addr);
                 self.neighbor_cache.insert(
                     IpAddress::Ipv4(source_protocol_addr),
                     Neighbor {
@@ -201,6 +202,7 @@ impl EthernetLink {
             }
 
             let (_, packet) = waiting_packets.dequeue().unwrap();
+            debug!("{}: Sending queued packet ({} bytes) to {} (MAC: {})", self.name, packet.len(), ip, mac);
             self.send_to(
                 mac,
                 packet.len(),
@@ -242,6 +244,7 @@ impl EthernetLink {
     }
 
     fn handle_missing_neighbor(&mut self, next_hop: IpAddress, packet: &[u8], now: Instant) {
+        debug!("{}: Missing neighbor for {}, queuing packet ({} bytes)", self.name, next_hop, packet.len());
         let Ok(buf) = self.waiting_packets.enqueue(packet.len(), next_hop) else {
             warn!(
                 "Dropped packet on {} because waiting queue was full",
@@ -253,6 +256,7 @@ impl EthernetLink {
 
         let IpAddress::Ipv4(next_hop) = next_hop;
         if let ArpState::Discovered = self.arp_state {
+            debug!("{}: Starting ARP discovery for {}", self.name, next_hop);
             self.arp_state = ArpState::Discovering {
                 target: next_hop,
                 tries: 0,
@@ -260,6 +264,8 @@ impl EthernetLink {
             };
 
             self.send_arp(now)
+        } else {
+            debug!("{}: ARP already in progress, not starting new discovery", self.name);
         }
     }
 
@@ -283,6 +289,7 @@ impl EthernetLink {
                 ref mut tries,
                 ref mut silent_until,
             } => {
+                debug!("{}: Sending ARP request for {} (try {})", self.name, target, *tries + 1);
                 let arp_repr = ArpRepr::EthernetIpv4 {
                     operation: ArpOperation::Request,
                     source_hardware_addr: hardware_address,

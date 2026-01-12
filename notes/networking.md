@@ -76,25 +76,62 @@ Example: smolnetd shows UB status and cannot be killed:
 
 - cat /scheme/netcfg/route hangs and corrupts shell
 
-## Debugging Summary (2026-01-12)
+## Debugging Summary (2026-01-12 - updated)
 
 ### What works:
-- ping 127.0.0.1 ✓ (loopback handled internally by smol-tcp)
+- ping 127.0.0.1 ✓ (loopback works)
 - smolnetd-new receives scheme requests when started from login shell
-- QEMU network now configured properly (run-dev.sh fix)
+- QEMU network properly configured (run-dev.sh fix)
+- **ARP works!** - 10.0.2.2 responds with MAC 52-55-0a-00-02-02
+- First packet transmission (ARP) completes successfully
 
 ### What doesn't work:
-- ping 10.0.2.2 (external) - packet "queued" but no reply
-- dhcpd - sends DHCP discover but no response
-- cat /scheme/netcfg/route - hangs and corrupts shell
+- ping 10.0.2.2 (external) - ARP works, but ICMP packet write BLOCKS
+- Second packet TX blocks forever in virtio-netd driver
 
-### Findings:
-1. run-dev.sh was missing network device when HOST_SSH_PORT=0 (now fixed)
-2. virtio-netd driver has no log output (empty log file)
-3. smolnetd logs "icmp: echo request queued" but packet may not be transmitted
-4. Issue likely in smoltcp -> virtio-net transmission path
+### Root Cause Found (2026-01-12)
+
+**smolnetd routing was fixed** - added default route to route_table:
+```rust
+// recipes/core/base/source/netstack/src/scheme/mod.rs lines 173-179
+route_table.borrow_mut().insert_rule(Rule::new(
+    IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),  // 0.0.0.0/0 default route
+    Some(IpAddress::Ipv4(default_gw)),          // via gateway
+    eth0_name,                                    // device
+    cidr.address(),                              // source
+));
+```
+
+**Real issue is in virtio-netd driver** (recipes/core/base/source/drivers/net/virtio-netd/src/scheme.rs):
+- Line 120: `futures::executor::block_on(self.tx.send(chain));`
+- This blocks until the device signals TX completion
+- First packet (ARP) completes - 42 bytes written
+- Second packet (ICMP/IPv4) blocks forever at `tx.send()`
+
+Debug output shows:
+```
+DEBUG: eth0 Sending ARP request for 10.0.2.2 (try 1)
+DEBUG: eth0 about to write 42 bytes
+DEBUG: eth0 Wrote 42/42 bytes to network (ARP)
+DEBUG: eth0 Received ARP Reply from 10.0.2.2 (MAC: 52-55-0a-00-02-02)
+DEBUG: eth0 Sending queued packet (90 bytes)
+DEBUG: eth0 about to write 104 bytes
+[BLOCKS HERE - write never returns]
+```
+
+### Possible causes in virtio-netd:
+1. TX queue completion interrupt not delivered for second packet
+2. virtio-core Queue::send future not being woken
+3. IRQ configuration issue (both RX and TX use same MSI-X vector)
+4. Descriptor recycling issue after first TX
+
+### Files modified:
+- `/opt/other/redox/recipes/core/base/source/netstack/src/scheme/mod.rs` - routing fix
+- `/opt/other/redox/recipes/core/base/source/netstack/src/link/ethernet.rs` - debug output
+- `/opt/other/redox/run-dev.sh` - network device fix
 
 ### Next steps:
-- Add debug logging to smoltcp device.send() path
-- Check if virtio-net driver is receiving TX requests
-- Verify ARP resolution is happening (needed before ICMP can go out)
+1. Debug virtio-netd TX queue handling
+2. Check if separate IRQ vectors for RX/TX help
+3. Try non-blocking TX (fire-and-forget with leak, for testing)
+4. Check virtio-core Queue completion handling

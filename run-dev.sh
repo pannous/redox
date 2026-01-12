@@ -11,9 +11,9 @@ SHARE="${SHARE:-$ROOT/share/}"
 SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"
 SOCK="${SOCK:-$SOCKET_DIR/redox-dev-raw.sock}"
 MONSOCK="${MONSOCK:-$SOCKET_DIR/redox-dev-raw-mon.sock}"
-# HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
-HOST_SSH_PORT="${HOST_SSH_PORT:-0}" # no tunnel
-CACHE="cache=unsafe,snapshot=on"
+HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
+# HOST_SSH_PORT="${HOST_SSH_PORT:-0}" # no tunnel
+CACHE="cache=unsafe"  # snapshot=off for testing smolnetd-fixed
 #     •   cache=none # Direct I/O, no host page cache, safest against host write-back surprises.
 #     •   cache=directsync # Direct I/O + synchronous guest writes.
 #     •   cache=writethrough # Host cache used, writes flushed to storage before completion.
