@@ -1,5 +1,10 @@
 ## Networking  Status (2026-01-12)
 
+affected, unfortunately not with fine commits since yesterday:
+
+recipes/core/base/source/netstack/
+recipes/core/base/source/drivers/virtio-core
+
 root:/scheme/9p.hostshare# ping 127.0.0.1
 PING 127.0.0.1 (127.0.0.1) 40(68) bytes of data.
 

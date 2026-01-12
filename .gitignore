@@ -42,3 +42,4 @@ old
 *.img
 *.iso
 denovo/*.img
+mount-works/
