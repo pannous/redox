@@ -30,9 +30,18 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
+# Handle push specially to set upstream if needed
+run_git() {
+    if [ "$1" = "push" ] && [ $# -eq 1 ]; then
+        git push -u origin HEAD 2>/dev/null || git push 2>/dev/null || echo "(no remote or nothing to push)"
+    else
+        git "$@"
+    fi
+}
+
 # Run in main repo first
 echo "=== . (main) ==="
-git "$@" || true
+run_git "$@" || true
 echo ""
 
 # Run in each component
@@ -40,7 +49,7 @@ for comp in "${COMPONENTS[@]}"; do
     dir="$ROOT/$comp"
     if [ -d "$dir/.git" ]; then
         echo "=== $comp ==="
-        (cd "$dir" && git "$@") || true
+        (cd "$dir" && run_git "$@") || true
         echo ""
     else
         echo "=== $comp === (no .git, skipping)"
