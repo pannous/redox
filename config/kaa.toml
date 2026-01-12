@@ -1,0 +1,32 @@
+# Configuration for development
+
+include = ["desktop.toml"]
+
+# General settings
+[general]
+# Filesystem size in MiB
+filesystem_size = 20000
+# Do not prompt if settings are not defined
+prompt = false
+
+# Package settings
+[packages]
+# dev-redox = {}
+hello-redox = {}
+
+
+[[files]]
+path = "/root/kaa"
+data = """
+echo 'example via config/kaa.toml file'
+"""
+
+
+[[files]]
+path = "/root/share"
+data = "/scheme/9p.hostshare/"
+symlink = true
+# directory = true
+# recursive_chown = false
+postinstall = true  # make sure /root/ and all pkg exists
+

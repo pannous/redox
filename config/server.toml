@@ -1,6 +1,6 @@
 # Server configuration
 
-include = ["net.toml"]
+include = ["net.toml","kaa.toml"]
 
 # General settings
 [general]

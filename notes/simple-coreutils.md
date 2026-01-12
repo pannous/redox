@@ -49,20 +49,19 @@ The build:
 
 Binaries in `share/` are available via 9P share at `/scheme/9p.hostshare/` in Redox.
 
-To install permanently:
+To install 'permanently':
 ```bash
-# In Redox
-cp /scheme/9p.hostshare/chmod /usr/bin/
-cp /scheme/9p.hostshare/ln /usr/bin/
-# etc.
+cp /opt/other/redox/share/tool /opt/other/redox/mount/usr/bin/
 ```
 
 Or mount the image and copy directly:
 ```bash
 # On host
-./stamp-and-mount.sh
+./mount.sh
+
 cp share/{chmod,ln,head,tail,wc,pwd,true,false,sleep} mount/usr/bin/
-umount mount
+# Since our Redox instances are read-only, we can leave it mounted. 
+# no need for umount /opt/other/redox/mount
 ```
 
 ## Source Location

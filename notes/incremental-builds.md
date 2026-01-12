@@ -164,10 +164,11 @@ cd build/aarch64/cranelift-initfs
 ./initfs-tools-target/release/redox-initfs-ar --max-size 134217728 --output initfs.img initfs/ /tmp/bootstrap-cranelift-stripped
 
 # 9. Mount and inject
-../../../stamp-and-mount.sh
+/opt/other/redox/mount.sh
 cp initfs.img /opt/other/redox/mount/boot/initfs
 sync
-umount /opt/other/redox/mount
+# Since our Redox instances are read-only, we can leave it mounted. 
+# no need for umount /opt/other/redox/mount
 
 # 10. Test
 ./run-dev.sh

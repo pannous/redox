@@ -11,6 +11,7 @@ include = ["../desktop.toml"]
 
 # Package settings
 [packages]
+redox-ssh = {}
 # example = {}
 
 # Add Ion configuration to fix prompt and localization errors
