@@ -11,6 +11,7 @@ COMPONENTS=(
     "rust"
     "rustc_codegen_cranelift"
     "recipes/core/kernel/source"
+    "recipes/core/kernel/source/rmm"
     "recipes/core/relibc/source"
     "recipes/core/redoxfs/source"
     "recipes/core/base/source"
