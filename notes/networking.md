@@ -1,5 +1,18 @@
+## Networking  Status (2026-01-12)
+
+root:/scheme/9p.hostshare# ping 127.0.0.1
+PING 127.0.0.1 (127.0.0.1) 40(68) bytes of data.
+
+Afterwards, it hangs (ctrl+c Doesn't help. )
+
+In principle, things could work. We also had curl working once. But stuff seems to be buggy or currently broken. 
+While searching for the root cause, it's easier to mess up the whole system. So let's investigate very carefully by using all the locking mechanisms that the system provides, checking all the processes, and so on. 
+
+Also note that when copying new versions to the share, they might be conflicting with already running drivers and processes. 
+
 
 ## HTTPS Support Status (2026-01-12)
+
 
 ### Current State
 - HTTP curl exists (ureq-based, no TLS)
@@ -41,8 +54,47 @@
 1. **Kernel scheme delivery bug** - requests from login shell don't reach smolnetd
 2. **ring C compilation** - rustls needs ring which requires C cross-compile
 
+Last suggested path forward needs to be revised?
 ### Path Forward
 1. Debug kernel scheme request delivery (maybe add kernel logging)
 2. Check if there's a daemon crate issue with scheme inheritance
 3. Try running smolnetd manually from login shell to see if that works
 
+We are currently uncertain which of the components causes the problem. Don't jump to conclusions. 
+Let us debug systematically. 
+## kill not working on blocked processes (2026-01-12)
+
+`kill` and `kill -9` do not work on processes in UB (Uninterruptible Blocked) state.
+These processes are stuck in kernel syscalls (scheme operations) and signals cannot reach them.
+
+Example: smolnetd shows UB status and cannot be killed:
+```
+47    0     0     0     UB    #0               00:00:00.00 6 MB    /usr/bin/smolnetd
+```
+
+**Solution:** Reboot is the only way. To prevent auto-start, modify init.rc before reboot.
+
+- cat /scheme/netcfg/route hangs and corrupts shell
+
+## Debugging Summary (2026-01-12)
+
+### What works:
+- ping 127.0.0.1 ✓ (loopback handled internally by smol-tcp)
+- smolnetd-new receives scheme requests when started from login shell
+- QEMU network now configured properly (run-dev.sh fix)
+
+### What doesn't work:
+- ping 10.0.2.2 (external) - packet "queued" but no reply
+- dhcpd - sends DHCP discover but no response
+- cat /scheme/netcfg/route - hangs and corrupts shell
+
+### Findings:
+1. run-dev.sh was missing network device when HOST_SSH_PORT=0 (now fixed)
+2. virtio-netd driver has no log output (empty log file)
+3. smolnetd logs "icmp: echo request queued" but packet may not be transmitted
+4. Issue likely in smoltcp -> virtio-net transmission path
+
+### Next steps:
+- Add debug logging to smoltcp device.send() path
+- Check if virtio-net driver is receiving TX requests
+- Verify ARP resolution is happening (needed before ICMP can go out)

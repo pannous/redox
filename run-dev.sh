@@ -36,8 +36,11 @@ CPU="-accel hvf -cpu host -smp 4" # NOW WORKS! Fixed with ISB barriers (2026-01-
 NETDEV_ARGS=()
 if [[ "$HOST_SSH_PORT" != "0" ]]; then
     NETDEV_ARGS+=(-netdev user,id=net0,hostfwd=tcp::"$HOST_SSH_PORT"-:22)
-    NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
+else
+    # Enable network without port forwarding
+    NETDEV_ARGS+=(-netdev user,id=net0)
 fi
+NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
 
 # Socket mode: for scripted/heredoc usage
 if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
