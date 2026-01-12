@@ -69,13 +69,7 @@ run_cmd() {
 
 # Default tests if no args
 if [[ $# -eq 0 ]]; then
-    # echo "=== echo hello ==="
-    # run_cmd "echo hello" 2
-    # echo ""
-
-    # echo "=== /usr/bin/date ==="
-    # run_cmd "/usr/bin/date" 12
-    # echo ""
+    : # No default tests
 else
     for cmd in "$@"; do
         echo "=== $cmd ==="
