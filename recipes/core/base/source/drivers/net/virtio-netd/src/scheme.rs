@@ -107,17 +107,32 @@ impl<'a> NetworkAdapter for VirtioNet<'a> {
     }
 
     fn write_packet(&mut self, buffer: &[u8]) -> syscall::Result<usize> {
-        let header = unsafe { Dma::<VirtHeader>::zeroed()?.assume_init() };
+        // Fire-and-forget TX: Use Box::leak to extend DMA buffer lifetimes.
+        // This leaks memory but avoids blocking. For production, implement descriptor recycling.
+        let header = match Dma::<VirtHeader>::zeroed() {
+            Ok(h) => Box::leak(Box::new(unsafe { h.assume_init() })),
+            Err(e) => {
+                log::error!("virtio-netd: DMA header alloc failed: {:?}", e);
+                return Err(e.into());
+            }
+        };
 
-        let mut payload = unsafe { Dma::<[u8]>::zeroed_slice(buffer.len())?.assume_init() };
+        let payload = match Dma::<[u8]>::zeroed_slice(buffer.len()) {
+            Ok(p) => Box::leak(Box::new(unsafe { p.assume_init() })),
+            Err(e) => {
+                log::error!("virtio-netd: DMA payload alloc failed: {:?}", e);
+                return Err(e.into());
+            }
+        };
         payload.copy_from_slice(buffer);
 
         let chain = ChainBuilder::new()
-            .chain(Buffer::new(&header))
-            .chain(Buffer::new_unsized(&payload))
+            .chain(Buffer::new(header))
+            .chain(Buffer::new_unsized(payload))
             .build();
 
-        futures::executor::block_on(self.tx.send(chain));
+        // Fire-and-forget: drop the completion future, don't block waiting for TX done
+        let _ = self.tx.send(chain);
         Ok(buffer.len())
     }
 }

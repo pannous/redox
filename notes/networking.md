@@ -86,8 +86,27 @@ Example: smolnetd shows UB status and cannot be killed:
 - First packet transmission (ARP) completes successfully
 
 ### What doesn't work:
-- ping 10.0.2.2 (external) - ARP works, but ICMP packet write BLOCKS
-- Second packet TX blocks forever in virtio-netd driver
+- ping 10.0.2.2 shows 100% packet loss BUT packets are being sent and received
+- ICMP reply received by smolnetd but not delivered to ping application
+
+### TX Blocking Fix (2026-01-12)
+
+**Root Cause:** The virtio-netd TX blocking was caused by the `futures::executor::block_on()` waiting for
+the TX completion future that never resolved.
+
+**Fix Applied:**
+1. Changed `write_packet()` to fire-and-forget TX (don't wait for completion)
+2. Use `Box::leak()` to extend DMA buffer lifetimes since we don't wait for completion
+3. Simplified IRQ thread to not do acknowledgment (race condition with shared IRQ)
+
+**Files Modified:**
+- `recipes/core/base/source/drivers/net/virtio-netd/src/scheme.rs` - Fire-and-forget TX
+- `recipes/core/base/source/drivers/virtio-core/src/transport.rs` - Simplified spawn_irq_thread
+
+**Result:** Both ARP (42 bytes) and ICMP (104 bytes) packets now send successfully without blocking.
+
+**Remaining Issue:** ICMP echo reply is received by smolnetd but not delivered to ping application.
+This appears to be a separate issue in smolnetd's ICMP handling, not the virtio-netd driver.
 
 ### Root Cause Found (2026-01-12)
 
@@ -135,3 +154,228 @@ DEBUG: eth0 about to write 104 bytes
 2. Check if separate IRQ vectors for RX/TX help
 3. Try non-blocking TX (fire-and-forget with leak, for testing)
 4. Check virtio-core Queue completion handling
+
+---
+
+## Architecture Deep Dive (2026-01-12)
+
+### smolnetd Component Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         smolnetd                                 │
+├─────────────────────────────────────────────────────────────────┤
+│  Schemes: /scheme/{ip,udp,tcp,icmp,netcfg}                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
+│  │   smoltcp    │    │    Router    │    │  RouteTable  │       │
+│  │  Interface   │◄───│   Device     │◄───│   (lookup)   │       │
+│  └──────┬───────┘    └──────┬───────┘    └──────────────┘       │
+│         │                   │                                    │
+│  ┌──────▼───────┐    ┌──────▼───────┐                           │
+│  │   Loopback   │    │ EthernetLink │                           │
+│  │    Device    │    │    (eth0)    │                           │
+│  └──────────────┘    └──────┬───────┘                           │
+│                             │                                    │
+└─────────────────────────────┼────────────────────────────────────┘
+                              │
+                    ┌─────────▼─────────┐
+                    │  /scheme/network  │
+                    │   .pci-*-virtio   │
+                    └─────────┬─────────┘
+                              │
+                    ┌─────────▼─────────┐
+                    │   virtio-netd     │
+                    │     driver        │
+                    └─────────┬─────────┘
+                              │
+                    ┌─────────▼─────────┐
+                    │    QEMU virtio    │
+                    │   network device  │
+                    └───────────────────┘
+```
+
+### Key Code Paths
+
+#### Outbound Packet Flow (ping 10.0.2.2):
+1. `ping` opens `/scheme/icmp/echo/10.0.2.2`
+2. smolnetd's ICMP scheme handler creates socket
+3. `ping` writes ICMP echo request
+4. smoltcp Interface queues packet for transmission
+5. Router::poll() processes TX buffer
+6. Router looks up route in `route_table` (NOT iface.routes!)
+7. If route found → EthernetLink::send(next_hop, packet)
+8. EthernetLink checks neighbor_cache for MAC address
+9. If MAC unknown → queue packet, send ARP request
+10. On ARP reply → send queued packets
+11. EthernetLink::send_to() writes to network file
+12. virtio-netd receives write, calls tx.send()
+13. **BLOCKS HERE** - tx.send() future never completes
+
+#### The Two Route Tables (CRITICAL INSIGHT)
+smolnetd has TWO separate routing mechanisms:
+1. `iface.routes_mut()` - smoltcp's internal routing (for Interface)
+2. `route_table` - Custom RouteTable used by Router for lookups
+
+**The bug was**: Default route was only added to #1, but Router uses #2!
+
+```rust
+// OLD CODE - only added to iface
+iface.routes_mut().add_default_ipv4_route(default_gw)?;
+
+// MISSING - also needed in route_table!
+route_table.borrow_mut().insert_rule(Rule::new(
+    IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+    Some(IpAddress::Ipv4(default_gw)),
+    eth0_name,
+    cidr.address(),
+));
+```
+
+### RouteTable Lookup Logic
+File: `recipes/core/base/source/netstack/src/router/route_table.rs`
+
+```rust
+pub fn lookup_rule(&self, dst: &IpAddress) -> Option<&Rule> {
+    self.rules
+        .iter()
+        .rev()  // Check from most specific to least specific
+        .find(|rule| rule.filter.contains_addr(dst))
+}
+```
+
+Rules are sorted by prefix_len (most specific last), so:
+- 10.0.2.0/24 (prefix_len=24) checked first
+- 0.0.0.0/0 (prefix_len=0) checked last (default route)
+
+### ARP State Machine
+File: `recipes/core/base/source/netstack/src/link/ethernet.rs`
+
+```rust
+enum ArpState {
+    Discovered,                    // Idle, MAC cache valid
+    Discovering {                  // Waiting for ARP reply
+        target: Ipv4Address,
+        tries: u8,                 // Max 3 tries
+        silent_until: Instant,     // 1 second between retries
+    }
+}
+```
+
+When sending to unknown MAC:
+1. Packet queued in `waiting_packets` buffer
+2. State → Discovering
+3. ARP request sent (broadcast)
+4. On ARP reply: MAC cached, queued packets sent
+5. After 3 failed tries: packets dropped
+
+### virtio-netd TX Blocking Issue
+
+File: `recipes/core/base/source/drivers/net/virtio-netd/src/scheme.rs`
+```rust
+fn write_packet(&mut self, buffer: &[u8]) -> syscall::Result<usize> {
+    let header = unsafe { Dma::<VirtHeader>::zeroed()?.assume_init() };
+    let mut payload = unsafe { Dma::<[u8]>::zeroed_slice(buffer.len())?.assume_init() };
+    payload.copy_from_slice(buffer);
+
+    let chain = ChainBuilder::new()
+        .chain(Buffer::new(&header))
+        .chain(Buffer::new_unsized(&payload))
+        .build();
+
+    futures::executor::block_on(self.tx.send(chain));  // BLOCKS!
+    Ok(buffer.len())
+}
+```
+
+File: `recipes/core/base/source/drivers/virtio-core/src/transport.rs`
+```rust
+impl<'a> Future for PendingRequest<'a> {
+    fn poll(...) -> Poll<Self::Output> {
+        // Registers waker for completion notification
+        self.queue.waker.lock().unwrap()
+            .insert(self.first_descriptor, cx.waker().clone());
+
+        let used_head = self.queue.used.head_index();
+
+        // If used_head unchanged, request not yet completed
+        if used_head == self.queue.used_head.load(Ordering::SeqCst) {
+            return Poll::Pending;  // Wait for device interrupt
+        }
+        // ... process completion
+    }
+}
+```
+
+**Why first packet works, second blocks:**
+- First TX: Queue empty, send succeeds, device processes, interrupt delivered
+- Second TX: After first completes, something goes wrong:
+  - Possible: IRQ not delivered for second completion
+  - Possible: Descriptor not recycled properly
+  - Possible: used_head not updated correctly
+
+### QEMU Network Configuration
+
+File: `run-dev.sh`
+```bash
+# Fixed: Always add network device (was only added when HOST_SSH_PORT != 0)
+NETDEV_ARGS=()
+if [[ "$HOST_SSH_PORT" != "0" ]]; then
+    NETDEV_ARGS+=(-netdev user,id=net0,hostfwd=tcp::"$HOST_SSH_PORT"-:22)
+else
+    NETDEV_ARGS+=(-netdev user,id=net0)  # Network without port forwarding
+fi
+NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
+```
+
+QEMU user-mode networking:
+- VM IP: 10.0.2.15/24
+- Gateway: 10.0.2.2
+- DNS: 10.0.2.3
+- Host access: 10.0.2.2 (also acts as gateway)
+
+### Debugging Techniques Used
+
+1. **eprintln! debugging** - Direct stderr output (bypasses logging issues)
+2. **Logging to /scheme/logging/** - Persistent logs for drivers
+3. **Step-by-step packet tracing** - ARP request → reply → queued packet send
+4. **Build scripts** - `/tmp/build-netstack4.sh` for quick iteration:
+   ```bash
+   RUSTFLAGS="-Zcodegen-backend=${CRANELIFT} -Crelocation-model=static \
+              -Clto=no -Clink-arg=-L${SYSROOT} -Clink-arg=-z \
+              -Clink-arg=muldefs -Cpanic=abort"
+   cargo +nightly build --target aarch64-unknown-redox-clif.json \
+         --release -Zbuild-std=core,alloc,std,panic_abort
+   ```
+
+### Files Reference
+
+| File | Purpose |
+|------|---------|
+| `netstack/src/scheme/mod.rs` | smolnetd initialization, routing setup |
+| `netstack/src/router/mod.rs` | Router device, packet forwarding |
+| `netstack/src/router/route_table.rs` | RouteTable, Rule lookup |
+| `netstack/src/link/ethernet.rs` | EthernetLink, ARP, packet TX/RX |
+| `netstack/src/link/loopback.rs` | Loopback device (127.0.0.1) |
+| `virtio-netd/src/scheme.rs` | Network scheme, write_packet |
+| `virtio-core/src/transport.rs` | Queue, PendingRequest future |
+
+### Test Commands
+
+```bash
+# Start QEMU (from host)
+/opt/other/redox/test-in-redox.sh
+
+# In Redox - test network
+/scheme/9p.hostshare/smolnetd-debug  # Start debug version
+ping 127.0.0.1                        # Loopback (works)
+ping 10.0.2.2                         # External (blocks on second packet)
+
+# Check schemes
+ls /scheme | grep -E "ip|tcp|udp|icmp|netcfg"
+
+# Check logs
+cat /scheme/logging/net/smolnetd.log
+cat /scheme/logging/net/pci/virtio-netd.log
+```

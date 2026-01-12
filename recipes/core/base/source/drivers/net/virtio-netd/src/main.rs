@@ -104,7 +104,9 @@ fn deamon(
     // > packets, and outgoing packets are enqueued into another
     // > for transmission in that order.
     //
-    // TODO(andypython): Should we use the same IRQ vector for both?
+    // Both queues share the same IRQ (aarch64 uses INTx, not MSI-X).
+    // virtio-core's setup_queue now handles IRQ acknowledgment correctly:
+    // only the first queue's IRQ thread acknowledges to avoid race conditions.
     let rx_queue = device
         .transport
         .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
