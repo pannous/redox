@@ -10,8 +10,7 @@ name = "curl"
 path = "src/main.rs"
 
 [dependencies]
-# Use ureq for HTTP - TLS requires ring which needs C cross-compilation
-# TODO: Enable HTTPS with native-tls + openssl or wait for pure Rust crypto
+# Use ureq for simple HTTP - no async, no TLS by default
 ureq = { version = "2", default-features = false }
 
 [profile.release]

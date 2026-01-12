@@ -42,15 +42,6 @@ check_prereqs() {
         command -v mkfs.fat >/dev/null || warn "mkfs.fat not found - EFI partition creation may fail"
     fi
 
-    # Check/build redoxfs-mkfs for true de novo builds
-    REDOXFS_MKFS="$REDOX_DIR/recipes/core/redoxfs/source/target/release/redoxfs-mkfs"
-    if [[ ! -x "$REDOXFS_MKFS" ]]; then
-        log "Building redoxfs-mkfs..."
-        (cd "$REDOX_DIR/recipes/core/redoxfs/source" && \
-         CARGO_INCREMENTAL=0 cargo build --release --bin redoxfs-mkfs --no-default-features --features std 2>&1) || \
-            warn "Could not build redoxfs-mkfs - de novo mode unavailable"
-    fi
-
     log "Prerequisites OK"
 }
 
@@ -336,160 +327,72 @@ setup_redoxfs_partition() {
 
     local redoxfs_tool="$REDOX_DIR/build/fstools/bin/redoxfs"
 
-    # Option 1: Copy RedoxFS from existing image (unless --denovo mode)
-    if [[ "$DENOVO_MODE" == "true" ]]; then
-        log "De novo mode: skipping copy from existing image"
-    else
-        local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
-        if [[ ! -f "$works_img" ]]; then
-            works_img="$REDOX_DIR/build/aarch64/pure-rust.img"
-        fi
-
-        if [[ -f "$works_img" ]]; then
-            log "Copying RedoxFS partition from existing image..."
-
-            # The RedoxFS partition starts at sector 4096 in both source and dest
-            local src_redoxfs_start=4096
-            local src_redoxfs_sectors=1042432
-            local dst_redoxfs_start=4096
-
-            dd if="$works_img" of="$DENOVO_IMG" \
-                bs=512 skip=$src_redoxfs_start seek=$dst_redoxfs_start \
-                count=$src_redoxfs_sectors conv=notrunc 2>/dev/null
-
-            log "Copied RedoxFS partition from existing image"
-
-            # Mount and update kernel/initfs
-            if [[ -x "$redoxfs_tool" ]]; then
-                log "Updating kernel and initfs in RedoxFS..."
-                mkdir -p "$MOUNT_DIR"
-
-                "$redoxfs_tool" "$DENOVO_IMG" "$MOUNT_DIR" 2>/dev/null &
-                local pid=$!
-                sleep 3
-
-                if mount | grep -q "$MOUNT_DIR"; then
-                    if [[ -f "$KERNEL_PATH" ]]; then
-                        cp "$KERNEL_PATH" "$MOUNT_DIR/boot/kernel" 2>/dev/null && log "Updated kernel"
-                    fi
-                    if [[ -f "$INITFS_PATH" ]]; then
-                        cp "$INITFS_PATH" "$MOUNT_DIR/boot/initfs" 2>/dev/null && log "Updated initfs"
-                    fi
-                    sync
-                    umount "$MOUNT_DIR" 2>/dev/null || fusermount -u "$MOUNT_DIR" 2>/dev/null || true
-                    sleep 1
-                else
-                    warn "Could not mount to update - using as-is from source image"
-                fi
-                kill $pid 2>/dev/null || true
-                wait $pid 2>/dev/null || true
-            else
-                warn "redoxfs tool not available - kernel/initfs not updated"
-            fi
-
-            log "RedoxFS partition ready"
-            return
-        fi
+    # Option 1: Copy RedoxFS from existing image and update kernel/initfs
+    # This is the most reliable approach
+    local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
+    if [[ ! -f "$works_img" ]]; then
+        works_img="$REDOX_DIR/build/aarch64/pure-rust.img"
     fi
 
-    # Option 2: Create fresh RedoxFS using redoxfs-mkfs
-    if [[ -x "$REDOXFS_MKFS" ]]; then
-        log "Creating fresh RedoxFS partition with redoxfs-mkfs..."
+    if [[ -f "$works_img" ]]; then
+        log "Copying RedoxFS partition from existing image..."
 
-        # Must match GPT exactly: partition 3 is sectors 4096-1046527
-        local redoxfs_start=4096
-        local redoxfs_end=1046527
-        local redoxfs_sectors=$((redoxfs_end - redoxfs_start + 1))  # 1042432 sectors
-        local redoxfs_tmp="$SCRIPT_DIR/redoxfs-tmp.img"
-        log "RedoxFS partition: sectors $redoxfs_start-$redoxfs_end ($redoxfs_sectors sectors)"
+        # The RedoxFS partition starts at sector 4096 in both source and dest
+        # (we now match the original partition layout)
+        local src_redoxfs_start=4096
+        local src_redoxfs_sectors=1042432
+        local dst_redoxfs_start=4096  # Match source layout
 
-        # Create partition image
-        dd if=/dev/zero of="$redoxfs_tmp" bs=512 count=$redoxfs_sectors 2>/dev/null
+        dd if="$works_img" of="$DENOVO_IMG" \
+            bs=512 skip=$src_redoxfs_start seek=$dst_redoxfs_start \
+            count=$src_redoxfs_sectors conv=notrunc 2>/dev/null
 
-        # Format with redoxfs-mkfs
-        "$REDOXFS_MKFS" "$redoxfs_tmp" 2>&1 || {
-            warn "redoxfs-mkfs failed"
-            rm -f "$redoxfs_tmp"
-            return 1
-        }
+        log "Copied RedoxFS partition from existing image"
 
-        # Write back to main image
-        dd if="$redoxfs_tmp" of="$DENOVO_IMG" bs=512 seek=$redoxfs_start conv=notrunc 2>/dev/null
-        rm -f "$redoxfs_tmp"
+        # Now mount and update kernel/initfs
+        if [[ -x "$redoxfs_tool" ]]; then
+            log "Updating kernel and initfs in RedoxFS..."
+            mkdir -p "$MOUNT_DIR"
 
-        log "Empty RedoxFS created, populating..."
+            # Mount the new image's RedoxFS partition
+            # redoxfs mounts the full image and finds RedoxFS automatically
+            "$redoxfs_tool" "$DENOVO_IMG" "$MOUNT_DIR" 2>/dev/null &
+            local pid=$!
+            sleep 3
 
-        # Mount and populate
-        mkdir -p "$MOUNT_DIR"
-        "$redoxfs_tool" "$DENOVO_IMG" "$MOUNT_DIR" 2>/dev/null &
-        local pid=$!
-        sleep 3
-
-        if mount | grep -q "$MOUNT_DIR"; then
-            # Create directory structure for shell boot
-            mkdir -p "$MOUNT_DIR/boot"
-            mkdir -p "$MOUNT_DIR/bin"
-            mkdir -p "$MOUNT_DIR/etc/init.d"
-            mkdir -p "$MOUNT_DIR/usr/bin"
-            mkdir -p "$MOUNT_DIR/root"
-            mkdir -p "$MOUNT_DIR/tmp"
-            mkdir -p "$MOUNT_DIR/scheme"
-
-            # Copy kernel and initfs
-            if [[ -f "$KERNEL_PATH" ]]; then
-                cp "$KERNEL_PATH" "$MOUNT_DIR/boot/kernel"
-                log "Installed kernel"
-            fi
-            if [[ -f "$INITFS_PATH" ]]; then
-                cp "$INITFS_PATH" "$MOUNT_DIR/boot/initfs"
-                log "Installed initfs"
-            fi
-
-            # Create minimal init.d scripts
-            echo "# Minimal base" > "$MOUNT_DIR/etc/init.d/00_base"
-            # Just run ion - it inherits stdio from init
-            echo "ion" > "$MOUNT_DIR/etc/init.d/30_console"
-            log "Created init.d scripts"
-
-            # Build ALL packages from config using build-packages.sh
-            local pkg_builder="$SCRIPT_DIR/build-packages.sh"
-            local pkg_config="${DENOVO_CONFIG:-$REDOX_DIR/config/minimal.toml}"
-
-            if [[ -x "$pkg_builder" ]]; then
-                log "Building all packages from $pkg_config..."
-                "$pkg_builder" all "$pkg_config" "$MOUNT_DIR" || {
-                    warn "Package build had some failures, continuing..."
-                }
-            else
-                warn "Package builder not found at $pkg_builder"
-                # Fallback to works image for essential binaries
-                local works_img="$REDOX_DIR/build/aarch64/pure-rust.works.img"
-                local works_mnt="$SCRIPT_DIR/works-mnt"
-                if [[ -f "$works_img" ]]; then
-                    mkdir -p "$works_mnt"
-                    "$redoxfs_tool" "$works_img" "$works_mnt" 2>/dev/null &
-                    local wpid=$!
-                    sleep 3
-                    if [[ -d "$works_mnt/usr/bin" ]]; then
-                        cp "$works_mnt/usr/bin/ion" "$MOUNT_DIR/usr/bin/" 2>/dev/null && log "Copied ion"
-                    fi
-                    umount "$works_mnt" 2>/dev/null || true
-                    kill $wpid 2>/dev/null || true
+            if mount | grep -q "$MOUNT_DIR"; then
+                if [[ -f "$KERNEL_PATH" ]]; then
+                    cp "$KERNEL_PATH" "$MOUNT_DIR/boot/kernel" 2>/dev/null && log "Updated kernel"
                 fi
-            fi
+                if [[ -f "$INITFS_PATH" ]]; then
+                    cp "$INITFS_PATH" "$MOUNT_DIR/boot/initfs" 2>/dev/null && log "Updated initfs"
+                fi
 
-            sync
-            umount "$MOUNT_DIR" 2>/dev/null || fusermount -u "$MOUNT_DIR" 2>/dev/null || true
-            sleep 1
-            log "Fresh RedoxFS populated"
+                # Sync and unmount
+                sync
+                umount "$MOUNT_DIR" 2>/dev/null || fusermount -u "$MOUNT_DIR" 2>/dev/null || true
+                sleep 1
+            else
+                warn "Could not mount to update - using as-is from source image"
+            fi
+            kill $pid 2>/dev/null || true
+            wait $pid 2>/dev/null || true
         else
-            warn "Could not mount fresh RedoxFS"
+            warn "redoxfs tool not available - kernel/initfs not updated"
+            warn "The image will boot with the original kernel/initfs"
         fi
-        kill $pid 2>/dev/null || true
-        wait $pid 2>/dev/null || true
-    else
-        error "No source image and redoxfs-mkfs not available"
+
+        log "RedoxFS partition ready"
+        return
     fi
+
+    # Option 2: Try to create new RedoxFS (requires redoxfs-mkfs or programmatic creation)
+    warn "No source image available to copy RedoxFS from"
+    warn "Creating empty RedoxFS is not yet implemented"
+    warn "Options:"
+    warn "  1. Ensure pure-rust.works.img exists"
+    warn "  2. Build redoxfs-mkfs tool"
+    warn "  3. Use installer tool"
 }
 
 # Alternative: Copy from existing image
@@ -545,17 +448,17 @@ test_boot() {
     log "Image size: $(du -h "$DENOVO_IMG" | cut -f1)"
     log "Starting QEMU..."
 
-    log "-accel hvf -cpu host \" works now!"
+    log "-accel hvf -cpu host \" doesn't work in denovo either"
         # -accel tcg,thread=multi -cpu cortex-a72 \
         # -M virt,highmem=off -accel hvf -cpu host \
-    CACHE="cache=unsafe,snapshot=on"
+
     qemu-system-aarch64 \
         -M virt \
-        -accel hvf -cpu host \
+        -accel tcg,thread=multi -cpu cortex-a72 \
         -smp 4 \
         -m 2G \
         -bios "$REDOX_DIR/tools/firmware/edk2-aarch64-code.fd" \
-        -drive file="$DENOVO_IMG",format=raw,id=hd0,if=none,$CACHE, \
+        -drive file="$DENOVO_IMG",format=raw,id=hd0,if=none,cache=writeback \
         -device virtio-blk-pci,drive=hd0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$REDOX_DIR/share",security_model=none \
@@ -571,8 +474,6 @@ main() {
     echo "=========================================="
     echo "De Novo Pure-Rust Redox Image Builder"
     echo "=========================================="
-
-    DENOVO_MODE="true"  # Default: true de novo (no copying from existing images)
 
     case "${1:-}" in
         --full)
@@ -599,7 +500,6 @@ main() {
             ;;
         --copy)
             # Copy existing image and inject Cranelift components
-            DENOVO_MODE="false"
             check_prereqs
             build_cranelift --skip-build
             verify_artifacts
@@ -613,32 +513,17 @@ main() {
         --extract-bootloader)
             extract_bootloader
             ;;
-        --packages)
-            # Build packages using build-packages.sh
-            local config="${2:-$REDOX_DIR/config/minimal.toml}"
-            local dest="${3:-$REDOX_DIR/mount}"
-            log "Building packages from $config to $dest"
-            "$SCRIPT_DIR/build-packages.sh" all "$config" "$dest"
-            ;;
-        --list-packages)
-            # List packages from config
-            local config="${2:-$REDOX_DIR/config/minimal.toml}"
-            "$SCRIPT_DIR/build-packages.sh" list "$config"
-            ;;
         *)
-            echo "Usage: $0 [--full|--quick|--copy|--test|--packages|--list-packages]"
+            echo "Usage: $0 [--full|--quick|--copy|--test|--extract-bootloader]"
             echo ""
             echo "Options:"
-            echo "  --full    Build Cranelift components + create fresh image (default de novo)"
-            echo "  --quick   Use existing artifacts, create fresh image (de novo)"
-            echo "  --copy    Copy from existing image (NOT de novo, for fallback)"
+            echo "  --full    Build everything from scratch with Cranelift"
+            echo "  --quick   Use existing Cranelift artifacts, create new image"
+            echo "  --copy    Copy existing image and inject Cranelift kernel/initfs"
             echo "  --test    Test boot the denovo.img"
             echo "  --extract-bootloader  Just extract bootloader from existing image"
-            echo "  --packages [config] [dest]   Build/fetch packages from config"
-            echo "  --list-packages [config]     List packages from config"
             echo ""
-            echo "Default mode creates truly empty RedoxFS using redoxfs-mkfs."
-            echo "Use --copy only if de novo build fails."
+            echo "Recommended first run: $0 --copy"
             exit 1
             ;;
     esac

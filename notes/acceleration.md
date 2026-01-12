@@ -100,15 +100,3 @@ qemu-system-aarch64 -M virt -accel hvf -cpu host -m 2G \
 ```
 
 Note: Using `if=none` + `-device` is more reliable than `if=virtio` in QEMU 10.x
-
-## 2026-01-12 De novo builds now work with HVF
-
-Root cause of "works in modified image but not de novo" identified:
-The fixes were applied to the working image's kernel binary but NOT committed to source.
-
-Fixed in commit ebf6f79105f:
-1. TTBR barrier - was documented but missing from rmm source
-2. sync_icache - was using per-cacheline DC CVAU + IC IVAU that faults on
-   unmapped addresses (FAR_EL1 = 0x11000). Changed to simple dsb+isb barrier.
-
-Both fixes now in rmm/src/arch/aarch64.rs
