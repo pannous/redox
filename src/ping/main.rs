@@ -185,12 +185,41 @@ fn main() -> Result<()> {
     // Print the line similar to standard ping output
     println!("PING {remote_host} ({remote_host}) {data_size}({total_size}) bytes of data.");
 
+    // DEBUG: Test if kernel schemes work
+    eprintln!("ping: testing kernel scheme open (sys:uname)");
+    match Fd::open("/scheme/sys/uname", flag::O_RDONLY, 0) {
+        Ok(fd) => {
+            eprintln!("ping: sys:uname open SUCCESS fd={}", fd.raw());
+            drop(fd);
+        }
+        Err(e) => eprintln!("ping: sys:uname open FAILED: {}", e),
+    }
+
+    // DEBUG: List available schemes
+    eprintln!("ping: listing schemes...");
+    match Fd::open("/scheme/", flag::O_RDONLY | flag::O_DIRECTORY, 0) {
+        Ok(fd) => {
+            let mut buf = vec![0u8; 4096];
+            match fd.read(&mut buf) {
+                Ok(n) => {
+                    let s = String::from_utf8_lossy(&buf[..n]);
+                    eprintln!("ping: schemes ({}): {}", n, s.trim());
+                }
+                Err(e) => eprintln!("ping: read schemes failed: {}", e),
+            }
+        }
+        Err(e) => eprintln!("ping: open /scheme/ failed: {}", e),
+    }
+    eprintln!("ping: kernel scheme test done");
+
     // Create the path to the ICMP echo file for the remote host
     let icmp_path = format!("/scheme/icmp/echo/{remote_host}");
+    eprintln!("ping: opening {}", icmp_path);
 
     // Open the ICMP echo file in read-write, non-blocking mode
     let echo_fd = Fd::open(&icmp_path, flag::O_RDWR | flag::O_NONBLOCK, 0)
         .map_err(|_| anyhow!("Can't open path {}", icmp_path))?;
+    eprintln!("ping: ICMP open SUCCESS fd={}", echo_fd.raw());
 
     // Create the path to the monotonic clock file
     let time_path = format!("/scheme/time/{}", flag::CLOCK_MONOTONIC);
@@ -214,7 +243,9 @@ fn main() -> Result<()> {
     // Send the first ping immediately
     let current_time = libredox::call::clock_gettime(libredox::flag::CLOCK_MONOTONIC)
         .context("Failed to get the current time")?;
+    eprintln!("ping: sending first ping at time {}s", current_time.tv_sec);
     ping.send_ping(&current_time)?;
+    eprintln!("ping: first ping sent");
 
     // Schedule the next time event
     let mut buf = [0_u8; mem::size_of::<TimeSpec>()];
@@ -222,20 +253,31 @@ fn main() -> Result<()> {
 
     time.tv_sec = current_time.tv_sec + interval;
     time.tv_nsec = current_time.tv_nsec;
+    eprintln!("ping: scheduling next event at {}s", time.tv_sec);
     ping.time_file
         .write(&buf)
         .context("Failed to write to time file")?;
+    eprintln!("ping: timer scheduled");
 
     // Start the event loop
+    eprintln!("ping: entering event loop");
     for event_res in event_queue {
+        eprintln!("ping: got event");
         match event_res {
             Ok(event) => {
                 let done = match event.user_data {
-                    EventSource::Echo => ping.on_echo_event(),
-                    EventSource::Time => ping.on_time_event(),
+                    EventSource::Echo => {
+                        eprintln!("ping: Echo event received");
+                        ping.on_echo_event()
+                    }
+                    EventSource::Time => {
+                        eprintln!("ping: Time event received");
+                        ping.on_time_event()
+                    }
                 };
 
                 if done?.is_some() {
+                    eprintln!("ping: done, breaking");
                     break;
                 }
             }
