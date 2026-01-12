@@ -16,7 +16,10 @@
       "Bash(git push)",
       "Bash(git -C /opt/other/redox log --oneline --since=\"2026-01-09\" --until=\"2026-01-11\" -- .)",
       "Bash(tmux has-session:*)",
-      "Bash(cargo:*)"
+      "Bash(cargo:*)",
+      "Bash(./build-ion-cranelift.sh)",
+      "Bash(./build-cranelift.sh:*)",
+      "Bash(RELIBC_FEATURES=\"\" ./build-cranelift.sh:*)"
     ]
   },
   "hooks": {
