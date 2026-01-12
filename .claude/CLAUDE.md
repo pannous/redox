@@ -12,16 +12,21 @@ We build ONLY for aarch64
 ⚠️ Make a backup of our current image:
 `cp build/aarch64/pure-rust.img build/aarch64/pure-rust.img.bak` before each session !
 
+# recipes
+To include a recipe in your Redox build, add it to the filesystem config file config/aarch64/desktop.toml 
+
 ## Injecting Files into Redox
 
 ### Method 1: 9P Share
-• we want to use direct host file system integration ./share via virtio-9p as often as possible. 
+• we want to use direct host file system integration ./share via virtio-9p as often as possible.
 Host files in /opt/other/redox/share/ appear at /scheme/9p.hostshare/ in Redox.
 # On host:
 cp my-tool /opt/other/redox/share/
 # In Redox:
 /scheme/9p.hostshare/my-tool
 Good for: Testing binaries, scripts, quick iterations, persisting across reboots
+
+⚠️ **chmod doesn't work on 9P share** - set permissions on host (`chmod +x share/bin`), on mount, or copy to /tmp in Redox first
 
 ### Method 2: Mount img
 /opt/other/redox/stamp-and-mount.sh  # Mounts + stamps initrc with git hash & date

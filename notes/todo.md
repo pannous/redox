@@ -1,3 +1,7 @@
+chmod not on 9p but OK on ~ => move bins there! or do on HOST!
+root:/scheme/9p.hostshare# ./bin/chmod 777 chmod-test
+
+
 Creating files on the share with currently creates the wrong permissions on the host system. 
 echo test > test
 cat test
@@ -55,3 +59,32 @@ Path            Size      Used      Free Use%
 
 root:/scheme/9p.hostshare# echo ja >> ok
 Overwrites the content instead of appending. 
+
+
+⏺ Bash(cd /opt/other/redox/tools/firmware && \
+      cp edk2-aarch64-code.fd edk2-aarch64-code.fd.orig && \…)
+  ⎿  -rw-r--r--  1 me  wheel  67108864 Jan 11 19:47 edk2-aarch64-code.fd
+     -rw-r--r--  1 me  wheel  67108864 Jan 11 19:47 edk2-aarch64-vars.fd
+     -rw-r--r--  1 me  wheel   2097152 Jan  6 14:47 QEMU_EFI.fd
+
+⏺ Now both are 64MB. Try again:
+
+⏺ Bash(cd /opt/other/redox && timeout 5 ./run-dev.sh 2>&1 || true)
+  ⎿  4-core HVF + cache=unsafe,snapshot=on | /scheme/9p.hostshare/ for persistence
+     Using: /opt/other/redox/build/aarch64/pure-rust.img
+     Socket mode: ./run-dev.sh -s
+     … +2 lines (ctrl+o to expand)
+
+⏺ QEMU starts now. The UEFI firmware is loading.
+
+  Now run ./run-dev.sh and when you see the countdown:
+  1. Press Esc to enter setup
+  2. Boot Maintenance Manager → Boot Options → Set Timeout Value
+  3. Enter 0 → Save → Exit
+
+  This setting persists in edk2-aarch64-vars.fd - you only need to do it once.
+## rmm sync_icache fix (2026-01-12)
+- cloned rmm from gitlab.redox-os.org/redox-os/rmm into recipes/core/kernel/source/rmm/
+- added sync_icache() to AArch64Arch in src/arch/aarch64.rs
+- required for kernel build (kernel calls RmmA::sync_icache for instruction cache coherence after mprotect)
+
