@@ -212,3 +212,18 @@ There is a ./notes/ folder, whenever you find something interesting that may be 
 
 Whenever one of the processes or skills caused some friction, then update the relevant skill with what to avoid next time. 
 Or if you find doing some task repetitively, ask me to create an appropriate skill. 
+## Ion Shell FD Leak Fix (2026-01-13)
+
+Fixed "Too many open files" error that occurred during prompt expansion.
+
+**Root cause:** Every prompt generation tried to execute "PROMPT" as a command, which:
+1. Created a pipe (2 fds)
+2. Opened /dev/null (1 fd) 
+3. Forked a process (even though PROMPT was just a variable, not a function)
+
+**Fixes applied:**
+1. `src/binary/prompt.rs`: Check if PROMPT is a Function before calling `shell.command()`. If it's just a variable, expand it directly without creating pipes/forks.
+
+2. `src/lib/shell/mod.rs`: In `run_pipeline()`, only clone stdin for the first pipeline item and stdout/stderr for the last item (instead of cloning all 3 for every item).
+
+3. `build-ion-cranelift.sh`: Updated to use sysroot at `/opt/other/redox/build/aarch64/sysroot/lib` instead of relibc target directory.
