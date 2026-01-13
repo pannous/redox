@@ -1,0 +1,33 @@
+diff --git a/build.rs b/build.rs
+index 1234567..abcdef0 100644
+--- a/vendor/wasmtime/build.rs
++++ b/vendor/wasmtime/build.rs
+@@ -85,6 +85,11 @@ fn build_c_helpers() {
+     build.define(&format!("CFG_TARGET_OS_{os}"), None);
+     build.define(&format!("CFG_TARGET_ARCH_{arch}"), None);
+     build.define("VERSIONED_SUFFIX", Some(versioned_suffix!()));
++    // Skip C helpers on Redox OS - no libc headers available during cross-compilation
++    if os == "redox" {
++        return;
++    }
++
+     if std::env::var("CARGO_FEATURE_DEBUG_BUILTINS").is_ok() {
+         build.define("FEATURE_DEBUG_BUILTINS", None);
+     } else if cfg("windows") {
+
+diff --git a/src/runtime/vm/sys/unix/unwind.rs b/src/runtime/vm/sys/unix/unwind.rs
+index 1234567..abcdef0 100644
+--- a/vendor/wasmtime/src/runtime/vm/sys/unix/unwind.rs
++++ b/vendor/wasmtime/src/runtime/vm/sys/unix/unwind.rs
+@@ -17,7 +17,10 @@ cfg_if::cfg_if! {
+     // to do nothing which won't break any tests it just means that
+     // runtime-generated backtraces won't have the same level of fidelity they
+     // do on other targets.
+-    if #[cfg(target_arch = "arm")] {
++    //
++    // Similarly on Redox OS we don't have access to libunwind/libgcc during
++    // cross-compilation, so stub these out as well.
++    if #[cfg(any(target_arch = "arm", target_os = "redox"))] {
+         unsafe extern "C" fn __register_frame(_: *const u8) {}
+         unsafe extern "C" fn __deregister_frame(_: *const u8) {}
+         unsafe extern "C" fn wasmtime_using_libunwind() -> bool {
