@@ -64,18 +64,32 @@ curl -h
 
 ## Investigation (2026-01-13)
 
-Added trace!() logging to relibc DNS lookup code in:
+### Attempted relibc Rebuild with Tracing
+
+Added `trace!()` logging to relibc DNS lookup code in:
 - `/opt/other/redox/recipes/core/relibc/source/src/header/netdb/lookup.rs`
 
-However, relibc has dependency conflicts preventing rebuild:
-- Different versions of redox_syscall crate in dependency graph
-- Needs dependency resolution before relibc can be rebuilt
+**Blocked by dependency conflicts:**
+- `redox_syscall` 0.6.0 vs 0.7.0 mismatch between relibc and sub-crates
+- `redox_event` 0.4.x uses `EventFlags: u32`, but `redox_syscall` 0.6.0 uses `EventFlags: usize`
+- Type incompatibility prevents compilation
+- Git master patch was causing API breakage (`syscall::open` no longer exists at crate root)
+- **Resolution needed**: Update entire Redox dependency graph to compatible versions
 
-Testing showed:
-- `ping pannous.com` also crashes (not just curl)
-- Both tools hang/crash at DNS resolution
-- Crash is immediate (before any trace output) → null ptr deref at 0x0
-- **Conclusion**: This is a Cranelift codegen bug, similar to the documented varargs bug
+### DNS Testing Results
+
+Tested with existing curl binary:
+- `curl http://pannous.com` → **crashes** with null ptr deref at 0x0
+- `ping pannous.com` → **works!** DNS resolution succeeds (81.169.181.160)
+- `curl http://1.1.1.1` → connects but **hangs** (timer scheme bug)
+
+**Key Finding:** DNS resolution actually works in ping! The crash in curl is specific to curl's DNS code path, not relibc's DNS functions.
+
+### Conclusion
+
+The issue is **NOT** in relibc's DNS resolution (ping proves it works). The crash is in curl's specific usage of DNS APIs, likely:
+1. A Cranelift codegen bug in curl's compiled code
+2. Or incorrect usage of DNS APIs in curl's simple implementation
 
 ## Next Steps
 
