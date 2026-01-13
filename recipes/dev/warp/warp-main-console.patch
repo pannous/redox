@@ -1,0 +1,57 @@
+diff --git a/src/main.rs b/src/main.rs
+index 84d00e3c..7cc3556e 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -186,6 +186,8 @@ fn usage() {
+     println!("  warp help            Show this help");
+ }
+ 
++// Console with rustyline (full editing, history)
++#[cfg(feature = "rustyline")]
+ fn console() {
+     use rustyline::error::ReadlineError;
+     use rustyline::DefaultEditor;
+@@ -230,6 +232,43 @@ fn console() {
+     let _ = rl.save_history(&history_path);
+ }
+ 
++// Simple console without rustyline (basic stdin reading)
++#[cfg(not(feature = "rustyline"))]
++fn console() {
++    use std::io::{BufRead, Write};
++
++    println!("Interactive console (Ctrl+D to exit, type 'exit' or 'quit' to quit)");
++
++    let stdin = io::stdin();
++    let mut stdin = stdin.lock();
++    let stdout = io::stdout();
++    let mut stdout = stdout.lock();
++
++    loop {
++        // Print prompt
++        print!("🐝 ");
++        let _ = stdout.flush();
++
++        // Read line
++        let mut line = String::new();
++        match stdin.read_line(&mut line) {
++            Ok(0) => break, // EOF
++            Ok(_) => {
++                let input = line.trim();
++                if input.is_empty() { continue; }
++                if input == "exit" || input == "quit" { break; }
++
++                let result = eval(input);
++                println!("» {}", result.serialize());
++            }
++            Err(e) => {
++                eprintln!("Error reading input: {}", e);
++                break;
++            }
++        }
++    }
++}
++
+ fn dirs_home() -> std::path::PathBuf {
+     env::var("HOME").map(std::path::PathBuf::from)
+         .unwrap_or_else(|_| std::path::PathBuf::from("."))
