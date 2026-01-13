@@ -1,24 +1,45 @@
-## Post-hoc Image Modifications
+# Post-hoc Modifications to Redox Image
 
-Tools manually copied to the image that are NOT yet in the build pipeline.
+These files were added/modified after initial build:
 
-### nc (netcat)
+## 2026-01-13: WASM Support
 
+### Added Files
+
+1. **`/usr/bin/wasmi-run`** (4.5MB)
+   - Pure Rust WebAssembly interpreter
+   - Built from recipes/dev/wasmi
+   - Source: /tmp/wasmi-runner/target/aarch64-unknown-redox/release/wasmi-run
+   - Located in: mount/usr/bin/wasmi-run
+
+2. **`/etc/ion/wasm.ion`**
+   - Ion shell helper for WASM execution
+   - Provides `wasm` function
+   - Source: mount/etc/ion/wasm.ion
+   - Usage: `source /etc/ion/wasm.ion; wasm program.wasm`
+
+### Test Files (in share/)
+
+- `test42.wasm` - Returns integer 42
+- `simple.wasm` - Basic nop module
+- `add.wasm` - Arithmetic module
+- `wasm-exec-README.md` - Documentation
+- `wasmi-run` - Latest binary (same as /usr/bin/wasmi-run)
+
+### Notes
+
+- Files in mount/ are part of the Redox filesystem image
+- Files in share/ are accessible via 9P at /scheme/9p.hostshare/
+- chmod doesn't work on 9P filesystem (see CLAUDE.md)
+
+## Rebuild Instructions
+
+To include wasmi in a fresh build:
 ```bash
-cp /scheme/9p.hostshare/nc /usr/bin/
+# Build will include wasmi from recipe
+./build-cranelift.sh all
+
+# Or install manually:
+cp /tmp/wasmi-runner/target/aarch64-unknown-redox/release/wasmi-run mount/usr/bin/
+cp mount/etc/ion/wasm.ion /path/to/mount/etc/ion/
 ```
-
-Pre-built static binary for network debugging.
-
----
-
-Note: simple-coreutils (chmod, ln, head, tail, wc, pwd, true, false, sleep, more, less) moved to build pipeline - see `notes/simple-coreutils.md`
-2026-01-12 14:59 - Disabled smolnetd and dhcpd in /usr/lib/init.d/10_net (both commented out)
-2026-01-12 16:36 - Updated virtio-netd with IRQ acknowledgment fix (recipes/core/base/source/drivers/virtio-core/src/transport.rs)
-2026-01-12 16:25 - **TX Blocking Fix**: Updated virtio-netd driver at /usr/lib/drivers/virtio-netd (NOT /usr/bin/)
-                  - Fire-and-forget TX with Box::leak() for DMA buffers
-                  - Simplified IRQ thread without acknowledgment
-                  - Packets now send without blocking
-
-## 2026-01-12 - Enable trace logging for smolnetd
-Modified /opt/other/redox/mount/usr/lib/init.d/10_net to add 'export RUST_LOG=trace' before smolnetd startup.
