@@ -21,7 +21,7 @@ use liner::{Buffer, Context, KeyBindings};
 use std::{
     cell::{Cell, RefCell},
     fs::{self, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Write},
     os::unix::io::AsRawFd,
     path::Path,
     rc::Rc,
