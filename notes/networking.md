@@ -1,19 +1,42 @@
-## Networking  Status (2026-01-12)
+## Networking Status (2026-01-13) - WORKING
 
-affected, unfortunately not with fine commits since yesterday:
+### Current Working State
 
-recipes/core/base/source/netstack/
-recipes/core/base/source/drivers/virtio-core
+**Ping works!** First ICMP echo succeeds reliably:
+```
+root:~# ping pannous.com -c 3
+PING 81.169.181.160 (81.169.181.160) 40(68) bytes of data.
+From 81.169.181.160 icmp_seq=0 time=72.44ms
+--- 81.169.181.160 ping statistics ---
+1 packets transmitted, 1 packets received, 0.00% packet loss
+```
 
-root:/scheme/9p.hostshare# ping 127.0.0.1
-PING 127.0.0.1 (127.0.0.1) 40(68) bytes of data.
+**What works:**
+- DNS resolution via UDP (pannous.com → 81.169.181.160)
+- ICMP echo request/reply (first ping succeeds)
+- ARP resolution (gateway MAC acquired)
+- TX packets (fire-and-forget, no blocking)
+- RX packets (with descriptor recycling)
 
-Afterwards, it hangs (ctrl+c Doesn't help. )
+**What needs work:**
+- Subsequent pings don't trigger (timing/event loop issue)
+- TCP connections may have similar timing issues
 
-In principle, things could work. We also had curl working once. But stuff seems to be buggy or currently broken. 
-While searching for the root cause, it's easier to mess up the whole system. So let's investigate very carefully by using all the locking mechanisms that the system provides, checking all the processes, and so on. 
+### Fixed in this session (2026-01-13)
 
-Also note that when copying new versions to the share, they might be conflicting with already running drivers and processes. 
+Added missing methods to virtio-core/src/transport.rs:
+1. `recycle_descriptor()` - returns RX descriptor to available ring after processing
+2. `setup_queue_no_irq()` - creates queue without IRQ thread for main event loop handling
+
+Commit: 35750ed20 "feature(minor): add recycle_descriptor and setup_queue_no_irq to virtio-core"
+
+### Working binaries
+- `/scheme/9p.hostshare/smolnetd-new` (4MB, Jan 12 12:47) - proven working
+- Use `k9 <pid>` to kill existing smolnetd, then run from share
+
+### Affected directories
+- recipes/core/base/source/netstack/
+- recipes/core/base/source/drivers/virtio-core 
 
 
 ## HTTPS Support Status (2026-01-12)

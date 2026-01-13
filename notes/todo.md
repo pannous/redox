@@ -71,3 +71,6 @@ Abort
 root:~# bash
 relibc getrlimit(7, 0x7ffffffffb80): not implemented
 bash-5.2# 
+
+for i in 1 2 3 4 5; do echo loop $i; done
+for i in 1 2 3 4 5; do echo loop \$i; done
