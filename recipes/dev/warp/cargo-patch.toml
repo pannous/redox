@@ -1,0 +1,16 @@
+# Add this section to Cargo.toml to use patched target-lexicon
+# This allows building for aarch64-unknown-redox-clif target
+
+[patch.crates-io]
+target-lexicon = { path = "vendor/target-lexicon" }
+
+# Make dependencies optional to reduce C dependencies
+[features]
+default = ["WASMTIME", "dep:ureq", "dep:rustyline"]
+minimal = []
+WASMTIME = ["dep:wasmtime"]
+
+[dependencies]
+wasmtime = { version = "40.0.0", default-features = false, features = ["cranelift", "gc", "gc-drc", "runtime", "wat"], optional = true }
+ureq = { version = "3.1.4", optional = true }
+rustyline = { version = "15", optional = true }
