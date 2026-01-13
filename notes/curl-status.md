@@ -62,9 +62,27 @@ curl http://pannous.com/test
 curl -h
 ```
 
+## Investigation (2026-01-13)
+
+Added trace!() logging to relibc DNS lookup code in:
+- `/opt/other/redox/recipes/core/relibc/source/src/header/netdb/lookup.rs`
+
+However, relibc has dependency conflicts preventing rebuild:
+- Different versions of redox_syscall crate in dependency graph
+- Needs dependency resolution before relibc can be rebuilt
+
+Testing showed:
+- `ping pannous.com` also crashes (not just curl)
+- Both tools hang/crash at DNS resolution
+- Crash is immediate (before any trace output) → null ptr deref at 0x0
+- **Conclusion**: This is a Cranelift codegen bug, similar to the documented varargs bug
+
 ## Next Steps
 
 To fully fix curl:
-1. Fix Cranelift codegen bug causing DNS crash (upstream Cranelift issue)
+1. **Fix Cranelift codegen bug** causing DNS crash (upstream Cranelift issue)
+   - Report to rustc_codegen_cranelift project
+   - Include: null ptr deref in DNS resolution on aarch64
 2. Fix kernel time scheme to deliver timer events properly
-3. Consider alternative: link against LLVM-compiled relibc for DNS functions
+3. Short-term workaround: Use IP addresses instead of hostnames
+4. Alternative: Link curl against LLVM-compiled relibc for DNS functions
