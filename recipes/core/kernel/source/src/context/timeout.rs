@@ -41,16 +41,13 @@ pub fn register(
     time: TimeSpec,
     token: &mut CleanLockToken,
 ) {
-    let time_nanos = (time.tv_sec as u128 * time::NANOS_PER_SEC) + (time.tv_nsec as u128);
-    println!("timeout::register scheme={:?} event={} clock={} time_nanos={}", scheme_id, event_id, clock, time_nanos);
     let mut registry = registry(token.token());
     registry.push_back(Timeout {
         scheme_id,
         event_id,
         clock,
-        time: time_nanos,
+        time: (time.tv_sec as u128 * time::NANOS_PER_SEC) + (time.tv_nsec as u128),
     });
-    println!("timeout::register done, registry len={}", registry.len());
 }
 
 /// Result of checking a single timeout entry
