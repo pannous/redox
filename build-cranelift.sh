@@ -358,7 +358,7 @@ build_relibc() {
 
     # Build relibc (Rust code only - pure Rust math via libm crate)
     # NOTE: With rust-math feature, openlibm (C) is not needed!
-    local relibc_features="${RELIBC_FEATURES:-rust-math}"
+    local relibc_features="${RELIBC_FEATURES:-}"
     local relibc_feature_args=()
     if [ -n "$relibc_features" ]; then
         relibc_feature_args=(--features "$relibc_features")
