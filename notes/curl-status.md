@@ -87,9 +87,46 @@ Tested with existing curl binary:
 
 ### Conclusion
 
-The issue is **NOT** in relibc's DNS resolution (ping proves it works). The crash is in curl's specific usage of DNS APIs, likely:
-1. A Cranelift codegen bug in curl's compiled code
-2. Or incorrect usage of DNS APIs in curl's simple implementation
+The issue was **NOT** in relibc's DNS resolution (ping proves it works). The crash was in curl's incorrect usage of `TcpStream::connect_timeout()`.
+
+## Fix Applied (2026-01-13)
+
+**Root Cause Found:**
+curl was using `TcpStream::connect_timeout(&addr.parse().expect(...), timeout)` on line 82-84.
+
+The problem:
+- `connect_timeout()` requires a `&SocketAddr` (pre-resolved IP address)
+- We were passing a hostname string like `"pannous.com:80"`
+- `addr.parse::<SocketAddr>()` fails when given a hostname (only accepts IPs)
+- The `.expect()` should panic, but Cranelift's panic handling has a bug causing null pointer crash
+
+**The Fix:**
+Changed line 84 from:
+```rust
+let mut stream = match TcpStream::connect_timeout(&addr.parse().expect("Invalid address"), Duration::from_secs(30))
+```
+
+To:
+```rust
+let mut stream = match TcpStream::connect(&addr)
+```
+
+**Why this works:**
+- `TcpStream::connect()` takes `&str` or anything implementing `ToSocketAddrs`
+- `ToSocketAddrs` handles DNS resolution automatically
+- The hostname is properly resolved before connecting
+
+**Testing Results:** ✅ **FIXED!**
+```bash
+# Successful tests:
+curl http://pannous.com/test     → DNS resolves, connects, 404 (expected)
+curl http://pannous.com          → DNS resolves, downloads full HTML page!
+curl http://81.169.181.160       → Works (as before)
+```
+
+**Remaining Issue:**
+- Reads hang waiting for server close (timer scheme bug - separate issue)
+- Workaround: Use Ctrl-C to stop after content is received
 
 ## Next Steps
 
