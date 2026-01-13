@@ -102,3 +102,83 @@ Created a custom HTTP client using std::net::TcpStream:
 - Handle HTTPS redirects (repo redirects HTTP→HTTPS)
 - Test package download once pkg runs
 
+
+## 2026-01-13: HTTPS Support Implemented ✅
+
+### Solution: Pure-Rust TLS via rustls-rustcrypto
+
+Implemented HTTPS support using **rustls-rustcrypto** - a pure-Rust cryptography provider
+for rustls that uses RustCrypto primitives instead of ring (which requires C compilation).
+
+### curl v0.2.0 - Now with HTTPS
+- **Source**: `recipes/core/base/source/curl/`
+- **Size**: ~9.7MB (includes TLS libs)
+- **Dependencies**: rustls, rustls-rustcrypto, webpki-roots
+- **Features**:
+  - HTTP and HTTPS support
+  - DNS resolution (via ToSocketAddrs)
+  - Verbose mode (-v)
+  - Headers-only mode (-I)
+
+### simple-pkg v0.2.0 - Now with HTTPS
+- **Source**: `recipes/core/base/source/simple-pkg/`
+- **Size**: ~13MB (includes TLS + tar/gzip libs)
+- **Dependencies**: ureq 3.x with rustls-no-provider, rustls-rustcrypto
+- **Features**:
+  - HTTPS package fetching from static.redox-os.org
+  - Local package installation
+  - Search, install, list commands
+
+### Test Results (2026-01-13)
+```
+# curl HTTPS test - SUCCESS
+curl -v https://httpbin.org/ip
+* TLS handshake with httpbin.org...
+* TLS handshake complete
+{"origin": "95.163.169.88"}
+
+# curl google.com - SUCCESS
+curl https://www.google.com
+[Google homepage HTML returned]
+
+# pkg search - SUCCESS
+pkg search ion
+Fetching: https://static.redox-os.org/pkg/aarch64-unknown-redox/repo.toml
+```
+
+### Key Implementation Details
+
+1. **TLS Configuration (curl)**:
+   ```rust
+   let crypto = Arc::new(rustls_rustcrypto::provider());
+   let config = ClientConfig::builder_with_provider(crypto)
+       .with_safe_default_protocol_versions().expect("...")
+       .with_root_certificates(root_store)
+       .with_no_client_auth();
+   ```
+
+2. **TLS Configuration (pkg/ureq)**:
+   ```rust
+   let tls_config = TlsConfig::builder()
+       .provider(TlsProvider::Rustls)
+       .root_certs(RootCerts::WebPki)
+       .unversioned_rustls_crypto_provider(Arc::new(rustls_rustcrypto::provider()))
+       .build();
+   ```
+
+### Why rustls-rustcrypto?
+- **Pure Rust**: No C code, no cross-compilation needed
+- **Cranelift compatible**: Works with our pure-Rust toolchain
+- **Good coverage**: Supports TLS 1.2 and 1.3 with common cipher suites
+- **Trade-off**: Slower than ring, but works everywhere Rust compiles
+
+### Files Modified
+- `recipes/core/base/source/curl/Cargo.toml` - Added rustls deps
+- `recipes/core/base/source/curl/src/main.rs` - TLS integration
+- `recipes/core/base/source/simple-pkg/Cargo.toml` - ureq + rustls deps
+- `recipes/core/base/source/simple-pkg/src/main.rs` - TLS agent config
+
+### Binaries Installed
+- `/usr/bin/curl` - 9.7MB (HTTP + HTTPS)
+- `/usr/bin/pkg` - 13MB (HTTP + HTTPS + tar/gzip)
+
