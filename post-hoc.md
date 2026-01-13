@@ -36,3 +36,38 @@ Note: kibi editor is available at /usr/bin/kibi as alternative
 - Source: recipes/core/coreutils/source/src/bin/kill.rs
 - Built with Cranelift and installed to /usr/bin/kill in image
 
+
+## 2026-01-13: pkg Package System Testing
+
+### Issue Found
+The `pkg` package manager cannot fetch packages from the official Redox repository.
+
+### Root Causes
+1. **DNS not configured** - Fixed by adding `/etc/resolv.conf` with Google DNS (8.8.8.8, 8.8.4.4)
+2. **TCP_NODELAY socket option not implemented**:
+   - reqwest HTTP client tries to set TCP_NODELAY (level=IPPROTO_TCP=6, opt=1)
+   - relibc's setsockopt only handles SOL_SOCKET level options
+   - IPPROTO_TCP level options fall through and print error
+   - Located at: recipes/core/relibc/source/src/platform/redox/socket.rs:953-1012
+3. **HTTPS not working**:
+   - Official repo at http://static.redox-os.org redirects to HTTPS (301)
+   - curl fails with "invalid port value" on HTTPS URLs
+   - pkg/reqwest cannot handle HTTPS connections
+
+### What Works
+- Basic networking (ping)
+- DNS resolution (after adding resolv.conf)
+- HTTP with curl (example.com works)
+
+### What Doesn't Work
+- HTTPS connections
+- pkg search/install from official repository
+
+### To Fix pkg System
+1. Implement HTTPS support in networking stack, OR
+2. Provide HTTP-only package repository, OR
+3. Implement TCP socket options (TCP_NODELAY, etc.) in relibc + netstack
+
+### Files Modified
+- mount/etc/resolv.conf - Added DNS configuration
+
