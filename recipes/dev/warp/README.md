@@ -1,0 +1,72 @@
+# Warp Recipe for Redox OS
+
+## About Warp
+
+Warp is a WebAssembly-first programming language and data format written in Rust.
+- GitHub: https://github.com/pannous/warp
+- Uses wasmtime runtime with Cranelift backend
+- Supports WebAssembly GC (Garbage Collection)
+
+## Build Status
+
+⚠️ **Currently cannot be built for Redox** due to cross-compilation limitations.
+
+### Issues
+
+1. **Wasmtime dependency**: Wasmtime includes `target-lexicon` which doesn't recognize the custom `aarch64-unknown-redox-clif` target
+2. **Ring/TLS dependencies**: The `ring` cryptography crate (used by `ureq` via `rustls`) requires C headers and compiler for cross-compilation
+3. **Deep integration**: Wasmtime is deeply integrated throughout the codebase, making it difficult to conditionally compile out
+
+### What Works
+
+- ✅ Recipe structure created at `recipes/dev/warp/recipe.toml`
+- ✅ Source cloned from GitHub
+- ✅ Builds successfully for host (aarch64-apple-darwin)
+- ✅ Host binary tested and working
+
+### Build Commands
+
+```bash
+# Build for host (works)
+cd recipes/dev/warp/source
+CARGO_INCREMENTAL=0 cargo build --release
+
+# Run on host
+./target/release/warp --version
+# Output: Wasp 🐝 0.1.1
+```
+
+### Future Work
+
+To make this work on Redox, we would need:
+
+1. **Option A**: Patch target-lexicon to recognize the custom Cranelift target
+   - Modify `target-lexicon` to handle `aarch64-unknown-redox-clif`
+   - Upstream or vendor the patched version
+
+2. **Option B**: Port to wasmi runtime
+   - Replace wasmtime with wasmi (pure Rust WebAssembly interpreter)
+   - wasmi cross-compiles more easily
+   - Already have wasmi recipe in Redox
+
+3. **Option C**: Add conditional compilation
+   - Make wasmtime optional via feature flags
+   - Provide fallback or stub implementations
+   - Requires extensive code changes
+
+4. **Option D**: Setup proper cross-compilation environment
+   - Build relibc headers/libs for x86_64-unknown-redox
+   - Setup C toolchain for ring crate
+   - More complex but enables full functionality
+
+## Recipe File
+
+```toml
+[source]
+git = "https://github.com/pannous/warp"
+
+[build]
+template = "cargo"
+```
+
+For now, this serves as a template recipe showing the structure. The actual build will require one of the approaches above.
