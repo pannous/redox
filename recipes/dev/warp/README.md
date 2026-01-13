@@ -46,9 +46,9 @@ CARGO_INCREMENTAL=0 cargo build --release
 
 ## Patch Details
 
-### target-lexicon Patch
+### 1. target-lexicon Patch
 
-Created in `vendor/target-lexicon/build.rs`:
+Strips the `-clif` suffix from target triples in `vendor/target-lexicon/build.rs`:
 
 ```rust
 // Strip custom suffixes like "-clif" used by Cranelift backends
@@ -59,10 +59,30 @@ if target.ends_with("-clif") {
 
 This allows cargo to build dependencies for `aarch64-unknown-redox-clif` by parsing it as `aarch64-unknown-redox`.
 
-The patch is integrated via `Cargo.toml`:
+### 2. wasmtime Patches
+
+**build.rs** - Skip C compilation on Redox:
+```rust
+// Skip C helpers on Redox OS - no libc headers available
+if os == "redox" {
+    return;
+}
+```
+
+**src/runtime/vm/sys/unix/unwind.rs** - Stub unwinding functions for Redox:
+```rust
+if #[cfg(any(target_arch = "arm", target_os = "redox"))] {
+    unsafe extern "C" fn __register_frame(_: *const u8) {}
+    unsafe extern "C" fn __deregister_frame(_: *const u8) {}
+    unsafe extern "C" fn wasmtime_using_libunwind() -> bool { false }
+}
+```
+
+All patches integrated via `Cargo.toml`:
 ```toml
 [patch.crates-io]
 target-lexicon = { path = "vendor/target-lexicon" }
+wasmtime = { path = "vendor/wasmtime" }
 ```
 
 ### Future Work
