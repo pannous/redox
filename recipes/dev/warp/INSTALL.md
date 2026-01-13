@@ -1,5 +1,37 @@
 # Warp Library Installation for Redox
 
+## Quick Start
+
+### 1. Clone and Setup
+
+```bash
+cd recipes/dev/warp
+# Source is already cloned from https://github.com/pannous/warp
+
+# Apply patches automatically
+./apply-patches.sh
+```
+
+The `apply-patches.sh` script will:
+- Vendor `target-lexicon` from your cargo registry
+- Vendor `wasmtime` from your cargo registry
+- Apply Redox-specific patches for cross-compilation
+- Verify patches are applied correctly
+
+**Note**: This script is idempotent - safe to run multiple times. It will skip patching if already applied.
+
+### 2. Build
+
+```bash
+cd source
+CARGO_INCREMENTAL=0 cargo build \
+  --target /opt/other/redox/tools/aarch64-unknown-redox-clif.json \
+  -Zbuild-std=core,alloc,std \
+  --release \
+  --no-default-features \
+  --features WASMTIME
+```
+
 ## Build Status: ✅ SUCCESS
 
 The warp WebAssembly library has been successfully built for Redox OS!
