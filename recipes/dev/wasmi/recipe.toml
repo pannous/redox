@@ -1,0 +1,6 @@
+[source]
+git = "https://github.com/wasmi-labs/wasmi.git"
+tag = "v0.40.1"
+
+[build]
+template = "cargo"
