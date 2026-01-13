@@ -124,16 +124,8 @@ impl GenericTimer {
     }
 }
 
-use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-static TIMER_IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
-
 impl InterruptHandler for GenericTimer {
     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
-        let count = TIMER_IRQ_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
-        if count % 500 == 0 {
-            println!("timer_irq count={}", count);
-        }
-
         self.clear_irq();
         {
             *time::OFFSET.lock() += self.clk_freq as u128;
