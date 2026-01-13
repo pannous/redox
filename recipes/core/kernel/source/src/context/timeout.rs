@@ -68,17 +68,14 @@ static TRIGGER_CALL_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub fn trigger(token: &mut CleanLockToken) {
     let call_count = TRIGGER_CALL_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
+
+    // Print every 500 calls to verify trigger is being called
+    if call_count % 500 == 0 {
+        println!("timeout::trigger call={}", call_count);
+    }
+
     let mono = time::monotonic();
     let real = time::realtime();
-
-    // Print every 100 calls (once per second at 100Hz timer)
-    let registry_len = {
-        let registry = registry(token.token());
-        registry.len()
-    };
-    if call_count % 100 == 0 && registry_len > 0 {
-        println!("timeout::trigger call={} mono={} registry_len={}", call_count, mono, registry_len);
-    }
 
     let mut i = 0;
     loop {
