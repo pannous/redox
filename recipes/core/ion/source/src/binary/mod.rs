@@ -31,22 +31,31 @@ use xdg::BaseDirectories;
 /// Check if cursor is not at column 1 and print partial line indicator if so.
 /// This mimics zsh's behavior of showing "%" when output doesn't end with newline.
 fn print_partial_line_indicator() {
+    use nix::sys::termios::{tcgetattr, tcsetattr, SetArg, LocalFlags, SpecialCharacterIndices};
     use std::os::unix::io::FromRawFd;
 
-    // Query cursor position with DSR (Device Status Report)
-    // Response format: ESC [ row ; col R
     let mut stdout = io::stdout();
     let stdin_fd = io::stdin().as_raw_fd();
 
     // Save terminal attributes and set raw mode for reading response
-    let old_termios = match termios_raw_mode(stdin_fd) {
-        Some(t) => t,
-        None => return, // Not a terminal or error
+    let old_termios = match tcgetattr(stdin_fd) {
+        Ok(t) => t,
+        Err(_) => return, // Not a terminal or error
     };
 
-    // Send cursor position query
+    // Set raw mode: disable canonical mode and echo, set timeout
+    let mut raw = old_termios.clone();
+    raw.local_flags.remove(LocalFlags::ICANON | LocalFlags::ECHO);
+    raw.control_chars[SpecialCharacterIndices::VMIN as usize] = 0;
+    raw.control_chars[SpecialCharacterIndices::VTIME as usize] = 1; // 100ms timeout
+
+    if tcsetattr(stdin_fd, SetArg::TCSANOW, &raw).is_err() {
+        return;
+    }
+
+    // Send cursor position query (DSR - Device Status Report)
     if stdout.write_all(b"\x1b[6n").is_err() || stdout.flush().is_err() {
-        restore_termios(stdin_fd, &old_termios);
+        let _ = tcsetattr(stdin_fd, SetArg::TCSANOW, &old_termios);
         return;
     }
 
@@ -76,10 +85,10 @@ fn print_partial_line_indicator() {
     std::mem::forget(stdin_raw);
 
     // Restore terminal mode
-    restore_termios(stdin_fd, &old_termios);
+    let _ = tcsetattr(stdin_fd, SetArg::TCSANOW, &old_termios);
 
     // Parse response: ESC [ row ; col R
-    if let Some(col) = parse_cursor_response(&response[..len]) {
+    if let Some(col) = parse_cursor_column(&response[..len]) {
         if col > 1 {
             // Cursor not at column 1 - previous output had no trailing newline
             // Print indicator (reverse video %) and newline
@@ -89,9 +98,8 @@ fn print_partial_line_indicator() {
     }
 }
 
-fn parse_cursor_response(response: &[u8]) -> Option<u16> {
+fn parse_cursor_column(response: &[u8]) -> Option<u16> {
     // Format: ESC [ row ; col R
-    // Find the semicolon and 'R'
     let s = std::str::from_utf8(response).ok()?;
     let start = s.find('[')?;
     let end = s.find('R')?;
@@ -100,57 +108,6 @@ fn parse_cursor_response(response: &[u8]) -> Option<u16> {
     let _row: u16 = parts.next()?.parse().ok()?;
     let col: u16 = parts.next()?.parse().ok()?;
     Some(col)
-}
-
-#[cfg(target_os = "redox")]
-fn termios_raw_mode(fd: i32) -> Option<libc::termios> {
-    use libc::{tcgetattr, tcsetattr, termios, TCSANOW, ICANON, ECHO};
-    unsafe {
-        let mut old: termios = std::mem::zeroed();
-        if tcgetattr(fd, &mut old) != 0 {
-            return None;
-        }
-        let mut raw = old;
-        raw.c_lflag &= !(ICANON | ECHO);
-        raw.c_cc[libc::VMIN] = 0;
-        raw.c_cc[libc::VTIME] = 1; // 100ms timeout
-        if tcsetattr(fd, TCSANOW, &raw) != 0 {
-            return None;
-        }
-        Some(old)
-    }
-}
-
-#[cfg(not(target_os = "redox"))]
-fn termios_raw_mode(fd: i32) -> Option<libc::termios> {
-    unsafe {
-        let mut old: libc::termios = std::mem::zeroed();
-        if libc::tcgetattr(fd, &mut old) != 0 {
-            return None;
-        }
-        let mut raw = old;
-        raw.c_lflag &= !(libc::ICANON | libc::ECHO);
-        raw.c_cc[libc::VMIN] = 0;
-        raw.c_cc[libc::VTIME] = 1;
-        if libc::tcsetattr(fd, libc::TCSANOW, &raw) != 0 {
-            return None;
-        }
-        Some(old)
-    }
-}
-
-#[cfg(target_os = "redox")]
-fn restore_termios(fd: i32, termios: &libc::termios) {
-    unsafe {
-        libc::tcsetattr(fd, libc::TCSANOW, termios);
-    }
-}
-
-#[cfg(not(target_os = "redox"))]
-fn restore_termios(fd: i32, termios: &libc::termios) {
-    unsafe {
-        libc::tcsetattr(fd, libc::TCSANOW, termios);
-    }
 }
 
 pub const MAN_ION: &str = r#"ion 1.0.0-alpha
