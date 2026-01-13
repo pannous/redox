@@ -88,13 +88,18 @@ fn print_partial_line_indicator() {
     let _ = tcsetattr(stdin_fd, SetArg::TCSANOW, &old_termios);
 
     // Parse response: ESC [ row ; col R
+    // Debug: show what we got
+    eprintln!("[DEBUG] cursor response: {:?} len={}", &response[..len], len);
     if let Some(col) = parse_cursor_column(&response[..len]) {
+        eprintln!("[DEBUG] cursor col={}", col);
         if col > 1 {
             // Cursor not at column 1 - previous output had no trailing newline
             // Print indicator (reverse video %) and newline
             let _ = stdout.write_all(b"\x1b[7m%\x1b[0m\n");
             let _ = stdout.flush();
         }
+    } else {
+        eprintln!("[DEBUG] failed to parse cursor response");
     }
 }
 
