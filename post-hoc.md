@@ -71,3 +71,34 @@ The `pkg` package manager cannot fetch packages from the official Redox reposito
 ### Files Modified
 - mount/etc/resolv.conf - Added DNS configuration
 
+
+## 2026-01-13: Replacing reqwest with std::net HTTP client
+
+### Issue
+- reqwest/hyper/mio fails with EMFILE when trying to initialize
+- Root cause: mio tries to set up event notification via `/scheme/event` but gets EMFILE
+- This is an API incompatibility, not FD exhaustion
+
+### Solution Implemented
+Created a custom HTTP client using std::net::TcpStream:
+1. Built `simple-http` library with HTTP GET and download functionality
+2. Tested successfully in Redox - can fetch http://example.com
+3. Integrated into pkg by:
+   - Created `simple_backend.rs` implementing `DownloadBackend` trait
+   - Removed reqwest dependency from pkg-lib Cargo.toml
+   - Replaced reqwest::Url usage with simple URL parsing functions
+   - Modified `repo_manager.rs` and `callback/indicatif.rs`
+4. Successfully compiled pkg with new HTTP backend
+
+### Status
+- ✅ Custom HTTP client works in Redox
+- ✅ pkg compiles with custom backend
+- ❌ pkg binary crashes on execution (UNHANDLED EXCEPTION)
+  - Crash occurs at runtime, not during init
+  - Possible causes: ABI issue, indicatif progress bar, or backend bug
+
+### Next Steps
+- Debug pkg crash (may need to disable indicatif or add more error handling)
+- Handle HTTPS redirects (repo redirects HTTP→HTTPS)
+- Test package download once pkg runs
+
