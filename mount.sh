@@ -29,3 +29,6 @@ echo "Mounted at: $MOUNT_POINT"
 
 # echo "Run 'umount $MOUNT_POINT' when done"
 echo "⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we NEVER NEED TO UNMOUNT. "
+
+# echo "redox-mount-works/"
+# /opt/other/redox/build/fstools/bin/redoxfs /opt/other/redox/build/aarch64/pure-rust.WORKS.img /opt/other/redox/redox-mount-works/
