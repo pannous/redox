@@ -13,9 +13,15 @@ Warp is a WebAssembly-first programming language and data format written in Rust
 
 ### Issues
 
-1. **Wasmtime dependency**: Wasmtime includes `target-lexicon` which doesn't recognize the custom `aarch64-unknown-redox-clif` target
+1. ~~**Wasmtime dependency**: Wasmtime includes `target-lexicon` which doesn't recognize the custom `aarch64-unknown-redox-clif` target~~ **SOLVED** - Patched target-lexicon to strip `-clif` suffix
 2. **Ring/TLS dependencies**: The `ring` cryptography crate (used by `ureq` via `rustls`) requires C headers and compiler for cross-compilation
-3. **Deep integration**: Wasmtime is deeply integrated throughout the codebase, making it difficult to conditionally compile out
+3. **Wasmtime C dependencies**: Wasmtime itself has C code (`helpers.c`) that requires C headers
+4. **Deep integration**: Wasmtime is deeply integrated throughout the codebase, making it difficult to conditionally compile out
+
+### Progress
+
+✅ **target-lexicon patch created** - The custom `-clif` suffix is now handled by a patched version of target-lexicon in `vendor/target-lexicon/`
+❌ **Still blocked by C dependencies** - Both `ring` (cryptography) and `wasmtime` (runtime) require C compilation
 
 ### What Works
 
