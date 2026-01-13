@@ -132,19 +132,44 @@ The following patch files are included:
    patch -p1 < ../../target-lexicon.patch
    ```
 
-2. **cargo-config.toml** - Cargo configuration for Redox targets
+2. **wasmtime-redox.patch** - Patches wasmtime to skip C code and stub unwind functions
+   ```bash
+   mkdir -p vendor
+   cp -r ~/.cargo/registry/src/*/wasmtime-40.0.0 vendor/wasmtime
+   cd vendor/wasmtime
+   patch -p1 < ../../wasmtime-redox.patch
+   ```
+
+3. **cargo-config.toml** - Cargo configuration for Redox targets
    ```bash
    cp cargo-config.toml source/.cargo/config.toml
    ```
 
-3. **cargo-patch.toml** - Cargo.toml additions for patches and optional features
+4. **cargo-patch.toml** - Cargo.toml additions for patches and optional features
    ```bash
-   # Append to source/Cargo.toml
-   cat cargo-patch.toml >> source/Cargo.toml
+   # Merge with source/Cargo.toml [patch.crates-io] and [features] sections
    ```
 
-Even with these patches, the build still requires:
-- C compiler with Redox headers for `ring` crate
-- C compiler for `wasmtime` helper functions
+## Build Command
 
-For now, this serves as a template recipe showing the structure and documenting the attempted solutions.
+With all patches applied:
+```bash
+CARGO_INCREMENTAL=0 cargo build \
+  --target /opt/other/redox/tools/aarch64-unknown-redox-clif.json \
+  -Zbuild-std=core,alloc,std \
+  --release \
+  --no-default-features \
+  --features WASMTIME
+```
+
+## Remaining Issue
+
+The build now gets very far but is blocked by missing signal handling functions in Redox's libc:
+- `sigaltstack()` - Set alternate signal stack
+- `SS_DISABLE` - Signal stack flag
+- `stack_t` - Signal stack structure
+
+These are used by wasmtime for signal-based trap handling. Solutions:
+1. Add these functions to Redox's relibc
+2. Patch wasmtime to use different trap handling on Redox
+3. Disable signal-based trapping (may impact performance)
