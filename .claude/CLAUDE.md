@@ -56,11 +56,10 @@ in test-in-redox.sh you can specify commands, or you can do yourself:
 tmux send-keys -t redox-dev "$cmd" Enter
 tmux capture-pane -t redox-dev -p -S -10 2>&1 | tail -10
 
-modifying logging in 
-mount/usr/lib/init.d/00_base etc
-
-
 # LOGGING
+use the proper debug log macros trace! debug! warn! info!
+modify logging level eg in mount/usr/lib/init.d/10_net export RUST_LOG trace
+
 you can check driver logs in redox under /scheme/logging/ e.g.
 root:~# ls /scheme/logging/fs/pci/
 virtio-9pd.log
