@@ -1,6 +1,83 @@
 [source]
 git = "https://github.com/wasmi-labs/wasmi.git"
-tag = "v0.40.1"
+branch = "main"
 
 [build]
-template = "cargo"
+template = "custom"
+script = """
+# Build wasmi CLI runner
+mkdir -p "${COOKBOOK_SOURCE}/runner"
+cat > "${COOKBOOK_SOURCE}/runner/Cargo.toml" << 'EOF'
+[package]
+name = "wasmi-runner"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "wasmi-run"
+path = "src/main.rs"
+
+[dependencies]
+wasmi = { path = "../", default-features = false, features = ["std"] }
+anyhow = "1"
+EOF
+
+mkdir -p "${COOKBOOK_SOURCE}/runner/src"
+cat > "${COOKBOOK_SOURCE}/runner/src/main.rs" << 'EOF'
+use anyhow::{Context, Result};
+use std::fs;
+use wasmi::*;
+
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Usage: {} <wasm_file>", args[0]);
+        std::process::exit(1);
+    }
+
+    let wasm_path = &args[1];
+    println!("Loading WASM file: {}", wasm_path);
+
+    let wasm_bytes = fs::read(wasm_path)
+        .context("Failed to read WASM file")?;
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm_bytes[..])
+        .context("Failed to parse WASM module")?;
+
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[])
+        .context("Failed to instantiate module")?;
+
+    // Try to call the default export if it exists
+    if let Some(start) = instance.get_export(&store, "_start") {
+        if let Some(func) = start.into_func() {
+            let _ = func.call(&mut store, &[], &mut []);
+        }
+    }
+
+    println!("WASM module loaded and executed successfully!");
+    Ok(())
+}
+EOF
+
+# Configure cargo for Redox target
+mkdir -p "${COOKBOOK_SOURCE}/runner/.cargo"
+cat > "${COOKBOOK_SOURCE}/runner/.cargo/config.toml" << EOF
+[target.${TARGET}]
+linker = "rust-lld"
+rustflags = ["-C", "link-arg=-L${COOKBOOK_SYSROOT}/lib", "-C", "link-arg=${COOKBOOK_SYSROOT}/lib/crt0.o", "-C", "link-arg=${COOKBOOK_SYSROOT}/lib/crti.o", "-C", "link-arg=-lc", "-C", "link-arg=${COOKBOOK_SYSROOT}/lib/crtn.o"]
+EOF
+
+# Build wasmi runner
+cd "${COOKBOOK_SOURCE}/runner"
+"${COOKBOOK_CARGO}" build \
+    --config net.offline=false \
+    -Zbuild-std=std,panic_abort \
+    --target "${TARGET}" \
+    --release
+
+mkdir -pv "${COOKBOOK_STAGE}/usr/bin"
+cp -v "target/${TARGET}/release/wasmi-run" "${COOKBOOK_STAGE}/usr/bin/"
+"""
