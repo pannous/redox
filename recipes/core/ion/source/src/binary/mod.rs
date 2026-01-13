@@ -28,84 +28,41 @@ use std::{
 };
 use xdg::BaseDirectories;
 
-/// Check if cursor is not at column 1 and print partial line indicator if so.
-/// This mimics zsh's behavior of showing "%" when output doesn't end with newline.
+/// Print partial line indicator if output didn't end with newline.
+/// Uses zsh's technique: print indicator, fill line with spaces, CR to clear.
+/// This approach doesn't require cursor position query.
 fn print_partial_line_indicator() {
-    use nix::sys::termios::{tcgetattr, tcsetattr, SetArg, LocalFlags, SpecialCharacterIndices};
-    use nix::unistd::read as nix_read;
-
     let mut stdout = io::stdout();
-    let stdin_fd = io::stdin().as_raw_fd();
 
-    // Save terminal attributes and set raw mode for reading response
-    let old_termios = match tcgetattr(stdin_fd) {
-        Ok(t) => t,
-        Err(_) => return, // Not a terminal or error
-    };
+    // Technique: Print reverse-video %, then spaces to fill line, then CR + spaces + CR
+    // If cursor was at column 1: % appears on empty line, gets overwritten by spaces
+    // If cursor was NOT at column 1: % appears after partial output, visible on that line
 
-    // Set raw mode: disable canonical mode and echo, set timeout
-    let mut raw = old_termios.clone();
-    raw.local_flags.remove(LocalFlags::ICANON | LocalFlags::ECHO);
-    raw.control_chars[SpecialCharacterIndices::VMIN as usize] = 0;
-    raw.control_chars[SpecialCharacterIndices::VTIME as usize] = 1; // 100ms timeout
+    // Width of indicator sequence (use reasonable default)
+    const WIDTH: usize = 80;
 
-    if tcsetattr(stdin_fd, SetArg::TCSANOW, &raw).is_err() {
-        return;
-    }
+    // Build the sequence: reverse-% + spaces + CR + spaces + CR
+    // This ensures we end up at column 1 with any partial line indicator visible
+    let mut buf = Vec::with_capacity(WIDTH * 2 + 20);
 
-    // Send cursor position query (DSR - Device Status Report)
-    if stdout.write_all(b"\x1b[6n").is_err() || stdout.flush().is_err() {
-        let _ = tcsetattr(stdin_fd, SetArg::TCSANOW, &old_termios);
-        return;
-    }
+    // Reverse video % (partial line indicator)
+    buf.extend_from_slice(b"\x1b[7m%\x1b[0m");
 
-    // Read response with timeout using raw nix read
-    let mut response = [0u8; 32];
-    let mut len = 0;
+    // Fill rest of line with spaces (WIDTH-1 because % took 1 column)
+    buf.extend(std::iter::repeat(b' ').take(WIDTH - 1));
 
-    // Read until 'R' or buffer full or timeout
-    for _ in 0..32 {
-        let mut byte = [0u8; 1];
-        match nix_read(stdin_fd, &mut byte) {
-            Ok(1) => {
-                response[len] = byte[0];
-                len += 1;
-                if byte[0] == b'R' {
-                    break;
-                }
-            }
-            _ => break,
-        }
-    }
+    // Carriage return to go back to column 1
+    buf.push(b'\r');
 
-    // Restore terminal mode
-    let _ = tcsetattr(stdin_fd, SetArg::TCSANOW, &old_termios);
+    // Spaces to overwrite the % if we were at column 1
+    // (If we weren't at col 1, we're now on a new line and spaces are harmless)
+    buf.extend(std::iter::repeat(b' ').take(WIDTH));
 
-    // Parse response: ESC [ row ; col R
-    eprintln!("[DEBUG] cursor response: {:?} len={}", &response[..len], len);
-    if let Some(col) = parse_cursor_column(&response[..len]) {
-        eprintln!("[DEBUG] cursor col={}", col);
-        if col > 1 {
-            // Cursor not at column 1 - previous output had no trailing newline
-            // Print indicator (reverse video %) and newline
-            let _ = stdout.write_all(b"\x1b[7m%\x1b[0m\n");
-            let _ = stdout.flush();
-        }
-    } else {
-        eprintln!("[DEBUG] failed to parse cursor response");
-    }
-}
+    // Final CR to position at column 1
+    buf.push(b'\r');
 
-fn parse_cursor_column(response: &[u8]) -> Option<u16> {
-    // Format: ESC [ row ; col R
-    let s = std::str::from_utf8(response).ok()?;
-    let start = s.find('[')?;
-    let end = s.find('R')?;
-    let coords = &s[start + 1..end];
-    let mut parts = coords.split(';');
-    let _row: u16 = parts.next()?.parse().ok()?;
-    let col: u16 = parts.next()?.parse().ok()?;
-    Some(col)
+    let _ = stdout.write_all(&buf);
+    let _ = stdout.flush();
 }
 
 pub const MAN_ION: &str = r#"ion 1.0.0-alpha
