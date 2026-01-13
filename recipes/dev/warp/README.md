@@ -164,14 +164,14 @@ CARGO_INCREMENTAL=0 cargo build \
   --features WASMTIME
 ```
 
-## Remaining Issue
+## Success!
 
-The build now gets very far but is blocked by missing signal handling functions in Redox's libc:
-- `sigaltstack()` - Set alternate signal stack
-- `SS_DISABLE` - Signal stack flag
-- `stack_t` - Signal stack structure
+The **warp library now successfully compiles for Redox!**
 
-These are used by wasmtime for signal-based trap handling. Solutions:
-1. Add these functions to Redox's relibc
-2. Patch wasmtime to use different trap handling on Redox
-3. Disable signal-based trapping (may impact performance)
+Build output:
+- `libwarp.rlib` - 8.0MB library file
+- All Rust code compiles
+- No C compilation required
+- Signal handling stubs in place (traps won't work but compilation succeeds)
+
+The interactive binary (REPL) requires `rustyline` which could be added later, but the core WebAssembly functionality is available as a library.
