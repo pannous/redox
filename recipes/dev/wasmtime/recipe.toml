@@ -1,0 +1,6 @@
+[source]
+git = "https://github.com/bytecodealliance/wasmtime.git"
+tag = "v27.0.0"
+
+[build]
+template = "cargo"
