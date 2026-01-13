@@ -1,4 +1,4 @@
-## Networking Status (2026-01-13) - WORKING
+## Networking Status (2026-01-13) - MOSTLY WORKING
 
 ### Current Working State
 
@@ -6,7 +6,7 @@
 ```
 root:~# ping pannous.com -c 3
 PING 81.169.181.160 (81.169.181.160) 40(68) bytes of data.
-From 81.169.181.160 icmp_seq=0 time=72.44ms
+From 81.169.181.160 icmp_seq=0 time=65.735ms
 --- 81.169.181.160 ping statistics ---
 1 packets transmitted, 1 packets received, 0.00% packet loss
 ```
@@ -17,10 +17,52 @@ From 81.169.181.160 icmp_seq=0 time=72.44ms
 - ARP resolution (gateway MAC acquired)
 - TX packets (fire-and-forget, no blocking)
 - RX packets (with descriptor recycling)
+- smolnetd processes scheme requests correctly
+- First ping/first packet in any session works
 
 **What needs work:**
-- Subsequent pings don't trigger (timing/event loop issue)
+- Subsequent pings don't trigger (KERNEL TIME SCHEME BUG - see below)
 - TCP connections may have similar timing issues
+
+### KERNEL TIME SCHEME BUG (2026-01-13)
+
+**Root Cause Identified**: The kernel time scheme (`/scheme/time/`) is NOT delivering
+timer events after the initial event queue setup.
+
+**Evidence:**
+1. smolnetd with TIME EVENT debug prints:
+   - Initial event processing shows "TIME EVENT received!" (during startup)
+   - After "entering polling loop", NO more TIME EVENT messages appear
+   - smolnetd schedules timer for 100ms, but it never fires
+
+2. ping utility behavior:
+   - Opens `/scheme/time/4` (CLOCK_MONOTONIC = 4)
+   - Sends first ping immediately (before event loop)
+   - Writes future TimeSpec to time_file to schedule next ping at now + 1 second
+   - First ping response arrives (65ms RTT)
+   - EventQueue blocks waiting for next event
+   - Timer event NEVER arrives - ping hangs forever
+
+**What we know:**
+- smolnetd receives scheme events (Open, Write, Read, Fevent, etc.) correctly
+- The time scheme EXISTS (`ls /scheme/` shows `time`)
+- Opening `/scheme/time/4` succeeds
+- Writing to time file (to schedule alarm) appears to succeed
+- But the READ event (timer fired) is NEVER delivered
+
+**Likely kernel bug location:**
+- kernel/src/scheme/time.rs - timer event delivery mechanism
+- kernel's event queue handling for kernel-provided schemes
+- Possibly: events only work during initialization, not in steady-state polling
+
+**Workaround Options:**
+1. Busy-poll with short timeouts instead of relying on timer events
+2. Use a different mechanism for timing (if available)
+3. Fix the kernel time scheme implementation
+
+**Files to investigate:**
+- Redox kernel source for time scheme implementation
+- Event delivery mechanism for kernel schemes vs user schemes
 
 ### Fixed in this session (2026-01-13)
 
