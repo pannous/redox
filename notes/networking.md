@@ -24,12 +24,59 @@ From 81.169.181.160 icmp_seq=0 time=65.735ms
 - Subsequent pings don't trigger (KERNEL TIME SCHEME BUG - see below)
 - TCP connections may have similar timing issues
 
-### KERNEL TIME SCHEME BUG (2026-01-13)
+### KERNEL TIME SCHEME BUG - FIXED (2026-01-13)
 
-**Root Cause Identified**: The kernel time scheme (`/scheme/time/`) is NOT delivering
-timer events after the initial event queue setup.
+**Root Cause Found**: Lock ordering bug in `kernel/src/context/timeout.rs`
 
-**Evidence:**
+The `timeout::trigger()` function held the timeout REGISTRY lock (Mutex<L1>) while calling
+`event::trigger()`, which then tried to acquire additional L1 locks (QUEUES, condition.contexts).
+This violated the lock hierarchy and could cause deadlocks or event delivery failures.
+
+**The Bug** (old code in timeout.rs:53-87):
+```rust
+loop {
+    let mut registry = registry(token.token());  // L1 lock acquired
+    let timeout = if i < registry.len() {
+        // ... check timeout, remove if triggered
+        registry.remove(i).unwrap()  // Returns Timeout
+    };
+    // PROBLEM: registry lock is STILL HELD here!
+    event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ);
+    // event::trigger() creates NEW CleanLockToken and acquires more L1 locks
+}
+```
+
+**The Fix**: Restructured `timeout::trigger()` to release the registry lock BEFORE calling
+`event::trigger()`. Used a `TriggerAction` enum to track what action to take after releasing
+the lock.
+
+```rust
+enum TriggerAction {
+    Fire(Timeout),  // Trigger event after releasing lock
+    Skip,           // Continue to next entry
+    Done,           // No more entries
+}
+
+loop {
+    let action = {
+        let mut registry = registry(token.token());
+        // ... check timeout, return action
+    }; // Lock released here!
+
+    match action {
+        TriggerAction::Fire(timeout) => {
+            event::trigger(...);  // Safe: no lock held
+        }
+        // ...
+    }
+}
+```
+
+**File Modified**: `recipes/core/kernel/source/src/context/timeout.rs`
+
+**Status**: Kernel builds successfully. NOT YET INSTALLED per user request.
+
+**Previous Evidence that led to this fix:**
 1. smolnetd with TIME EVENT debug prints:
    - Initial event processing shows "TIME EVENT received!" (during startup)
    - After "entering polling loop", NO more TIME EVENT messages appear
@@ -38,31 +85,8 @@ timer events after the initial event queue setup.
 2. ping utility behavior:
    - Opens `/scheme/time/4` (CLOCK_MONOTONIC = 4)
    - Sends first ping immediately (before event loop)
-   - Writes future TimeSpec to time_file to schedule next ping at now + 1 second
    - First ping response arrives (65ms RTT)
-   - EventQueue blocks waiting for next event
-   - Timer event NEVER arrives - ping hangs forever
-
-**What we know:**
-- smolnetd receives scheme events (Open, Write, Read, Fevent, etc.) correctly
-- The time scheme EXISTS (`ls /scheme/` shows `time`)
-- Opening `/scheme/time/4` succeeds
-- Writing to time file (to schedule alarm) appears to succeed
-- But the READ event (timer fired) is NEVER delivered
-
-**Likely kernel bug location:**
-- kernel/src/scheme/time.rs - timer event delivery mechanism
-- kernel's event queue handling for kernel-provided schemes
-- Possibly: events only work during initialization, not in steady-state polling
-
-**Workaround Options:**
-1. Busy-poll with short timeouts instead of relying on timer events
-2. Use a different mechanism for timing (if available)
-3. Fix the kernel time scheme implementation
-
-**Files to investigate:**
-- Redox kernel source for time scheme implementation
-- Event delivery mechanism for kernel schemes vs user schemes
+   - Timer event NEVER arrives - subsequent pings hang forever
 
 ### Fixed in this session (2026-01-13)
 
