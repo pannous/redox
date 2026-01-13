@@ -21,7 +21,9 @@ Warp is a WebAssembly-first programming language and data format written in Rust
 ### Progress
 
 ✅ **target-lexicon patch created** - The custom `-clif` suffix is now handled by a patched version of target-lexicon in `vendor/target-lexicon/`
-❌ **Still blocked by C dependencies** - Both `ring` (cryptography) and `wasmtime` (runtime) require C compilation
+✅ **ring eliminated** - Built with `--no-default-features --features WASMTIME` to exclude ureq/rustls/ring
+✅ **wasmtime C code eliminated** - Patched wasmtime build.rs to skip C helpers on Redox, added Redox stubs for unwind functions
+❌ **Blocked by missing libc functions** - Redox's libc doesn't have `sigaltstack`, `SS_DISABLE`, `stack_t` needed for signal handling
 
 ### What Works
 
