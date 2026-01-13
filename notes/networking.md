@@ -89,15 +89,13 @@ Commit: 35750ed20 "feature(minor): add recycle_descriptor and setup_queue_no_irq
 - recipes/core/base/source/drivers/virtio-core 
 
 
-## HTTPS Support Status (2026-01-12)
+## HTTPS Support Status (2026-01-13) - WORKING ✅
 
 
 ### Current State
-- HTTP curl exists (ureq-based, no TLS)
-- Network stack (smolnetd) partially works but has critical bug
-- TLS would require either:
-  - native-tls with OpenSSL (libs exist in image)
-  - rustls + ring (needs C cross-compiler for ring)
+- **HTTPS curl works** - using rustls-rustcrypto (pure Rust)
+- **HTTPS pkg works** - can fetch from static.redox-os.org
+- TLS implemented via rustls-rustcrypto (no C code needed)
 
 ### Kernel Scheme Delivery Bug (2026-01-12)
 
