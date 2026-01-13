@@ -1,51 +1,38 @@
 use std::fs;
 
-fn count_open_fds() -> usize {
-    let mut count = 0;
-    // Check FDs from 0 to 200
-    for i in 0..200 {
-        if let Ok(_) = fs::metadata(format!("/scheme/sys/context/{}/fd/{}", 
-                                             std::process::id(), i)) {
-            count += 1;
-        }
-    }
-    count
-}
-
-fn list_open_fds() {
-    println!("Open file descriptors:");
-    for i in 0..50 {
-        let path = format!("/scheme/sys/context/{}/fd/{}", std::process::id(), i);
-        if let Ok(link) = fs::read_link(&path) {
-            println!("  FD {}: {:?}", i, link);
-        }
-    }
-}
-
 fn main() {
-    let pid = std::process::id();
-    println!("PID: {}", pid);
+    println!("Checking what files reqwest might need...");
     
-    println!("\n=== Before reqwest initialization ===");
-    list_open_fds();
-    let before = count_open_fds();
-    println!("Open FDs: {}", before);
+    // Check common files that HTTP clients need
+    let files_to_check = vec![
+        "/dev/urandom",
+        "/dev/random",
+        "/scheme/rand",
+        "/scheme/randd",
+        "/etc/ssl/certs",
+        "/etc/ssl/cert.pem",
+        "/etc/ca-certificates",
+        "/usr/share/ca-certificates",
+    ];
     
-    println!("\n=== Creating reqwest client ===");
-    match reqwest::blocking::Client::builder().build() {
-        Ok(client) => {
-            println!("✓ Client created successfully!");
-            let after = count_open_fds();
-            println!("Open FDs after: {}", after);
-            println!("Diff: +{}", after - before);
+    for path in files_to_check {
+        match fs::metadata(path) {
+            Ok(meta) => println!("✓ {} exists ({})", path, 
+                if meta.is_dir() { "dir" } else { "file" }),
+            Err(e) => println!("✗ {} missing: {}", path, e),
         }
+    }
+    
+    println!("\nAttempting to create reqwest client...");
+    
+    match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build() 
+    {
+        Ok(_) => println!("✓ Success!"),
         Err(e) => {
-            println!("✗ Failed to create client: {}", e);
-            println!("\n=== After failure ===");
-            list_open_fds();
-            let after = count_open_fds();
-            println!("Open FDs after failure: {}", after);
-            println!("Diff: +{}", after - before);
+            println!("✗ Failed: {}", e);
+            println!("  Error debug: {:?}", e);
         }
     }
 }
