@@ -1,0 +1,19 @@
+diff --git a/build.rs b/build.rs
+index 1234567..abcdef0 100644
+--- a/vendor/target-lexicon/build.rs
++++ b/vendor/target-lexicon/build.rs
+@@ -47,7 +47,13 @@ fn main() {
+     let out_dir = PathBuf::from(
+         env::var_os("OUT_DIR").expect("The OUT_DIR environment variable must be set"),
+     );
+-    let target = env::var("TARGET").expect("The TARGET environment variable must be set");
++    let mut target = env::var("TARGET").expect("The TARGET environment variable must be set");
++
++    // Strip custom suffixes like "-clif" used by Cranelift backends
++    if target.ends_with("-clif") {
++        target = target.strip_suffix("-clif").unwrap().to_string();
++    }
++
+     let triple =
+         Triple::from_str(&target).unwrap_or_else(|_| panic!("Invalid target name: '{}'", target));
+     let out = File::create(out_dir.join("host.rs")).expect("error creating host.rs");
