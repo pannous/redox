@@ -42,13 +42,34 @@ CARGO_INCREMENTAL=0 cargo build --release
 # Output: Wasp 🐝 0.1.1
 ```
 
+## Patch Details
+
+### target-lexicon Patch
+
+Created in `vendor/target-lexicon/build.rs`:
+
+```rust
+// Strip custom suffixes like "-clif" used by Cranelift backends
+if target.ends_with("-clif") {
+    target = target.strip_suffix("-clif").unwrap().to_string();
+}
+```
+
+This allows cargo to build dependencies for `aarch64-unknown-redox-clif` by parsing it as `aarch64-unknown-redox`.
+
+The patch is integrated via `Cargo.toml`:
+```toml
+[patch.crates-io]
+target-lexicon = { path = "vendor/target-lexicon" }
+```
+
 ### Future Work
 
 To make this work on Redox, we would need:
 
-1. **Option A**: Patch target-lexicon to recognize the custom Cranelift target
-   - Modify `target-lexicon` to handle `aarch64-unknown-redox-clif`
-   - Upstream or vendor the patched version
+1. ~~**Option A**: Patch target-lexicon to recognize the custom Cranelift target~~ **DONE**
+   - ✅ Modified `target-lexicon` to handle `aarch64-unknown-redox-clif`
+   - ✅ Vendored the patched version
 
 2. **Option B**: Port to wasmi runtime
    - Replace wasmtime with wasmi (pure Rust WebAssembly interpreter)
