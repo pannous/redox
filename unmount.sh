@@ -12,4 +12,4 @@ ps -axo pid,command | rg '/opt/other/redox/mount'
 # sudo killall -SIGKILL redoxfs ⚠️ can break img HASH
 # PID = $(lsof +D /opt/other/redox/mount/ | awk 'NR==2 {print $2}')
 # kill $PID
-umount /opt/other/redox/mount/ || diskutil unmount force /opt/other/redox/mount || hdiutil detach /opt/other/redox/redox-force
+umount /opt/other/redox/mount/ || diskutil unmount force /opt/other/redox/mount || hdiutil detach /opt/other/redox/mount -force

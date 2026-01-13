@@ -21,6 +21,11 @@ data = """
 echo 'example via config/kaa.toml file'
 """
 
+# [[files]]
+# path = "/usr/bin/tool"
+# data = "file:share/tool"
+# mode = 0o755
+
 
 [[files]]
 path = "/root/share"
