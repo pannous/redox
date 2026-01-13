@@ -26,69 +26,51 @@ rtt min/avg/max = 79.441/102.040/124.542 ms
 - Timer events delivered correctly
 - Multiple consecutive pings work
 
-### KERNEL TIME SCHEME BUG - FIXED (2026-01-13)
+### KERNEL TIMER BUG - FIXED (2026-01-13)
 
-**Root Cause Found**: Lock ordering bug in `kernel/src/context/timeout.rs`
+**Root Cause Found**: Wrong timer IRQ registered in ACPI GTDT initialization
 
-The `timeout::trigger()` function held the timeout REGISTRY lock (Mutex<L1>) while calling
-`event::trigger()`, which then tried to acquire additional L1 locks (QUEUES, condition.contexts).
-This violated the lock hierarchy and could cause deadlocks or event delivery failures.
+On aarch64 with QEMU (no VHE), the kernel uses the virtual timer (CNTV_*) instead of the
+physical timer (CNTP_*). However, the ACPI GTDT code always registered the IRQ for the
+physical timer (`non_secure_el1_timer_gsiv = 30`), not the virtual timer.
 
-**The Bug** (old code in timeout.rs:53-87):
+This meant:
+1. Timer hardware was programmed correctly (virtual timer)
+2. But the IRQ handler was registered for the wrong interrupt (physical timer)
+3. Timer interrupts were NEVER delivered
+4. `timeout::trigger()` was never called
+5. Timer events were never sent to userspace
+6. Subsequent pings hung forever waiting for timer events
+
+**The Fixes**:
+
+1. **GTDT timer IRQ selection** (src/acpi/gtdt.rs):
 ```rust
-loop {
-    let mut registry = registry(token.token());  // L1 lock acquired
-    let timeout = if i < registry.len() {
-        // ... check timeout, remove if triggered
-        registry.remove(i).unwrap()  // Returns Timeout
-    };
-    // PROBLEM: registry lock is STILL HELD here!
-    event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ);
-    // event::trigger() creates NEW CleanLockToken and acquires more L1 locks
-}
+// OLD: Always used physical timer IRQ
+let gsiv = gtdt.non_secure_el1_timer_gsiv;
+
+// NEW: Use correct IRQ based on timer mode
+let gsiv = if timer.use_virtual_timer {
+    gtdt.virtual_el1_timer_gsiv
+} else {
+    gtdt.non_secure_el1_timer_gsiv
+};
 ```
 
-**The Fix**: Restructured `timeout::trigger()` to release the registry lock BEFORE calling
-`event::trigger()`. Used a `TriggerAction` enum to track what action to take after releasing
-the lock.
+2. **Lock ordering in timeout::trigger()** (src/context/timeout.rs):
+   - Restructured to release registry lock before calling `event::trigger()`
+   - Used `TriggerAction` enum to track action after releasing lock
 
-```rust
-enum TriggerAction {
-    Fire(Timeout),  // Trigger event after releasing lock
-    Skip,           // Continue to next entry
-    Done,           // No more entries
-}
+**Files Modified**:
+- `recipes/core/kernel/source/src/acpi/gtdt.rs` - Timer IRQ selection
+- `recipes/core/kernel/source/src/context/timeout.rs` - Lock ordering fix
 
-loop {
-    let action = {
-        let mut registry = registry(token.token());
-        // ... check timeout, return action
-    }; // Lock released here!
+**Commit**: `a1105841 fix(aarch64): use correct timer IRQ for virtual timer mode`
 
-    match action {
-        TriggerAction::Fire(timeout) => {
-            event::trigger(...);  // Safe: no lock held
-        }
-        // ...
-    }
-}
-```
-
-**File Modified**: `recipes/core/kernel/source/src/context/timeout.rs`
-
-**Status**: Kernel builds successfully. NOT YET INSTALLED per user request.
-
-**Previous Evidence that led to this fix:**
-1. smolnetd with TIME EVENT debug prints:
-   - Initial event processing shows "TIME EVENT received!" (during startup)
-   - After "entering polling loop", NO more TIME EVENT messages appear
-   - smolnetd schedules timer for 100ms, but it never fires
-
-2. ping utility behavior:
-   - Opens `/scheme/time/4` (CLOCK_MONOTONIC = 4)
-   - Sends first ping immediately (before event loop)
-   - First ping response arrives (65ms RTT)
-   - Timer event NEVER arrives - subsequent pings hang forever
+**Debugging insights**:
+- Boot showed `use_virtual_timer = true` but `generic_timer gsiv = 30` (physical IRQ)
+- Adding debug prints to `timeout::trigger()` showed it was NEVER called
+- The timeout registry kept growing (3000+ entries) because timeouts were never processed
 
 ### Fixed in this session (2026-01-13)
 
