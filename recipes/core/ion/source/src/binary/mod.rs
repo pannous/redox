@@ -32,7 +32,7 @@ use xdg::BaseDirectories;
 /// This mimics zsh's behavior of showing "%" when output doesn't end with newline.
 fn print_partial_line_indicator() {
     use nix::sys::termios::{tcgetattr, tcsetattr, SetArg, LocalFlags, SpecialCharacterIndices};
-    use std::os::unix::io::FromRawFd;
+    use nix::unistd::read as nix_read;
 
     let mut stdout = io::stdout();
     let stdin_fd = io::stdin().as_raw_fd();
@@ -59,17 +59,14 @@ fn print_partial_line_indicator() {
         return;
     }
 
-    // Read response with timeout
+    // Read response with timeout using raw nix read
     let mut response = [0u8; 32];
     let mut len = 0;
-
-    // Use raw fd for reading to avoid buffering issues
-    let mut stdin_raw = unsafe { std::fs::File::from_raw_fd(stdin_fd) };
 
     // Read until 'R' or buffer full or timeout
     for _ in 0..32 {
         let mut byte = [0u8; 1];
-        match stdin_raw.read(&mut byte) {
+        match nix_read(stdin_fd, &mut byte) {
             Ok(1) => {
                 response[len] = byte[0];
                 len += 1;
@@ -81,14 +78,10 @@ fn print_partial_line_indicator() {
         }
     }
 
-    // Don't close stdin!
-    std::mem::forget(stdin_raw);
-
     // Restore terminal mode
     let _ = tcsetattr(stdin_fd, SetArg::TCSANOW, &old_termios);
 
     // Parse response: ESC [ row ; col R
-    // Debug: show what we got
     eprintln!("[DEBUG] cursor response: {:?} len={}", &response[..len], len);
     if let Some(col) = parse_cursor_column(&response[..len]) {
         eprintln!("[DEBUG] cursor col={}", col);
