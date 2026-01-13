@@ -63,9 +63,22 @@ enum TriggerAction {
     Done,
 }
 
+use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+static TRIGGER_CALL_COUNT: AtomicU64 = AtomicU64::new(0);
+
 pub fn trigger(token: &mut CleanLockToken) {
+    let call_count = TRIGGER_CALL_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
     let mono = time::monotonic();
     let real = time::realtime();
+
+    // Print every 100 calls (once per second at 100Hz timer)
+    let registry_len = {
+        let registry = registry(token.token());
+        registry.len()
+    };
+    if call_count % 100 == 0 && registry_len > 0 {
+        println!("timeout::trigger call={} mono={} registry_len={}", call_count, mono, registry_len);
+    }
 
     let mut i = 0;
     loop {
@@ -85,6 +98,7 @@ pub fn trigger(token: &mut CleanLockToken) {
                 };
 
                 if should_trigger {
+                    println!("timeout::trigger FIRING event={} time={} mono={}", registry[i].event_id, registry[i].time, mono);
                     TriggerAction::Fire(registry.remove(i).unwrap())
                 } else {
                     i += 1;
