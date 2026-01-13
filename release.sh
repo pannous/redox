@@ -54,6 +54,7 @@ log "Creating GitHub release"
 gh release create "$TAG" "$UPLOAD" \
     --title "Pure Rust Redox OS $VERSION" \
     --notes "$NOTES" \
-    --prerelease
+    --prerelease --clobber
+      # gh release upload pure-rust-2026.01.13 build/aarch64/pure-rust.iso.gz --clobber
 
 success "Released: https://github.com/pannous/redox/releases/tag/$TAG"
