@@ -83,7 +83,7 @@ cp -r "$WASMTIME_SRC" "$VENDOR_DIR/wasmtime"
 # Apply wasmtime patch
 echo "Applying wasmtime-redox.patch..."
 cd "$VENDOR_DIR/wasmtime"
-patch -p1 < "$SCRIPT_DIR/wasmtime-redox.patch"
+patch -p3 < "$SCRIPT_DIR/wasmtime-redox.patch"
 echo "✓ wasmtime patched"
 
 cd "$SOURCE_DIR"
