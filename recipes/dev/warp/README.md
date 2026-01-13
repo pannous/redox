@@ -96,4 +96,33 @@ git = "https://github.com/pannous/warp"
 template = "cargo"
 ```
 
-For now, this serves as a template recipe showing the structure. The actual build will require one of the approaches above.
+## Applying the Patches
+
+The following patch files are included:
+
+1. **target-lexicon.patch** - Patches target-lexicon to handle `-clif` suffix
+   ```bash
+   # After cloning warp source:
+   cd recipes/dev/warp/source
+   mkdir -p vendor
+   cp -r ~/.cargo/registry/src/*/target-lexicon-0.13.4 vendor/target-lexicon
+   cd vendor/target-lexicon
+   patch -p1 < ../../target-lexicon.patch
+   ```
+
+2. **cargo-config.toml** - Cargo configuration for Redox targets
+   ```bash
+   cp cargo-config.toml source/.cargo/config.toml
+   ```
+
+3. **cargo-patch.toml** - Cargo.toml additions for patches and optional features
+   ```bash
+   # Append to source/Cargo.toml
+   cat cargo-patch.toml >> source/Cargo.toml
+   ```
+
+Even with these patches, the build still requires:
+- C compiler with Redox headers for `ring` crate
+- C compiler for `wasmtime` helper functions
+
+For now, this serves as a template recipe showing the structure and documenting the attempted solutions.
