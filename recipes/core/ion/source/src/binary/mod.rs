@@ -384,6 +384,8 @@ impl<'a> InteractiveShell<'a> {
             if let Err(err) = io::stderr().flush() {
                 println!("ion: failed to flush stderr: {}", err);
             }
+            // Show partial line indicator if previous output didn't end with newline
+            print_partial_line_indicator();
             match self.readln(prep_for_exit) {
                 Some(lines) => {
                     for command in lines
