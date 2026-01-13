@@ -227,3 +227,27 @@ Fixed "Too many open files" error that occurred during prompt expansion.
 2. `src/lib/shell/mod.rs`: In `run_pipeline()`, only clone stdin for the first pipeline item and stdout/stderr for the last item (instead of cloning all 3 for every item).
 
 3. `build-ion-cranelift.sh`: Updated to use sysroot at `/opt/other/redox/build/aarch64/sysroot/lib` instead of relibc target directory.
+
+## curl DNS Crash FIXED! (2026-01-13)
+
+**Problem**: curl crashed with null pointer dereference when using hostnames
+
+**Root Cause**: curl used `TcpStream::connect_timeout()` incorrectly
+- `connect_timeout()` requires pre-resolved `SocketAddr` (IP address)
+- curl passed hostname string `"pannous.com:80"`
+- `addr.parse::<SocketAddr>()` failed for hostname
+- Cranelift panic handler bug caused null ptr crash instead of clean panic
+
+**Fix**: Changed to `TcpStream::connect(&addr)` 
+- `connect()` handles DNS via `ToSocketAddrs` trait
+- Hostname properly resolved before connecting
+
+**Result**: ✅ curl now works with hostnames!
+- `curl http://pannous.com` → downloads HTML successfully
+- DNS resolution works perfectly
+- Note: reads still hang due to timer scheme bug (separate issue)
+
+**Files Changed**:
+- recipes/core/base/source/curl/src/main.rs (line 82-95)
+- recipes/core/base/source/curl/build-curl.sh (updated RELIBC path)
+
