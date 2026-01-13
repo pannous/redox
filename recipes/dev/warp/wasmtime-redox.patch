@@ -31,3 +31,47 @@ index 1234567..abcdef0 100644
          unsafe extern "C" fn __register_frame(_: *const u8) {}
          unsafe extern "C" fn __deregister_frame(_: *const u8) {}
          unsafe extern "C" fn wasmtime_using_libunwind() -> bool {
+
+diff --git a/src/runtime/vm/sys/unix/signals.rs b/src/runtime/vm/sys/unix/signals.rs
+index 1234567..abcdef0 100644
+--- a/vendor/wasmtime/src/runtime/vm/sys/unix/signals.rs
++++ b/vendor/wasmtime/src/runtime/vm/sys/unix/signals.rs
+@@ -326,6 +326,12 @@ unsafe fn load_trap_registers(cx: *mut libc::c_void) -> TrapRegisters {
+                 pc: cx.uc_mcontext.arm_pc as usize,
+                 fp: cx.uc_mcontext.arm_fp as usize,
+             }
++        } else if #[cfg(target_os = "redox")] {
++            // Signal handling not fully implemented on Redox yet
++            // Return dummy values - traps won't work but compilation succeeds
++            TrapRegisters {
++                pc: 0,
++                fp: 0,
++            }
+         } else {
+             compile_error!("unsupported platform");
+             panic!();
+@@ -398,6 +404,10 @@ unsafe fn store_handler_in_ucontext(cx: *mut libc::c_void, handler: &Handler) {
+             cx.uc_mcontext.__gregs[libc::REG_SP] = handler.sp as _;
+             cx.uc_mcontext.__gregs[libc::REG_A0] = 0;
+             cx.uc_mcontext.__gregs[libc::REG_A0 + 1] = 0;
++        } else if #[cfg(target_os = "redox")] {
++            // Signal handling not fully implemented on Redox yet
++            // This is a no-op - traps won't work but compilation succeeds
++            let _ = (cx, handler);
+         } else {
+             compile_error!("unsupported platform");
+             panic!();
+@@ -486,6 +496,12 @@ pub fn lazy_per_thread_init() -> Result<()> {
+ // there's not much we can do.
+ #[cfg(unix)]
+ pub fn lazy_per_thread_init() -> Result<()> {
++    // Redox doesn't support sigaltstack yet, so skip this
++    #[cfg(target_os = "redox")]
++    {
++        return Ok(());
++    }
++
++    #[cfg(not(target_os = "redox"))]
+     thread_local! {
+         static STACK: RefCell<Option<Stack>> = const { RefCell::new(None) };
+     }

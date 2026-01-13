@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pkg = { path = "../recipes/core/pkgutils/source/pkg-lib" }
+pkg = { package = "redox-pkg", path = "../recipes/core/pkgutils/source/pkg-lib" }
