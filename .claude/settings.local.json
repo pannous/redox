@@ -19,7 +19,8 @@
       "Bash(cargo:*)",
       "Bash(./build-ion-cranelift.sh)",
       "Bash(./build-cranelift.sh:*)",
-      "Bash(RELIBC_FEATURES=\"\" ./build-cranelift.sh:*)"
+      "Bash(RELIBC_FEATURES=\"\" ./build-cranelift.sh:*)",
+      "Bash(chmod:*)"
     ]
   },
   "hooks": {

@@ -61,7 +61,7 @@ cp -r "$TARGET_LEXICON_SRC" "$VENDOR_DIR/target-lexicon"
 # Apply target-lexicon patch
 echo "Applying target-lexicon.patch..."
 cd "$VENDOR_DIR/target-lexicon"
-patch -p1 < "$SCRIPT_DIR/target-lexicon.patch"
+patch -p3 < "$SCRIPT_DIR/target-lexicon.patch"
 echo "✓ target-lexicon patched"
 
 echo ""
