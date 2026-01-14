@@ -42,7 +42,10 @@ impl<'a> VirtioNet<'a> {
                 .chain(Buffer::new_unsized(&rx_buffers[i]).flags(DescriptorFlags::WRITE_ONLY))
                 .build();
 
-            let _ = rx.send(chain);
+            // RX buffers are recycled via recycle_descriptor(), so we can ignore the future
+            if rx.send(chain).is_none() {
+                log::warn!("virtio-netd: failed to add RX buffer {} - no descriptors", i);
+            }
         }
 
         Ok(Self {
