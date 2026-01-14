@@ -64,7 +64,9 @@ impl Drop for VirtGpuFramebuffer<'_> {
                 .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
                 .build();
 
-            self.queue.send(command).await;
+            self.queue.send(command)
+                .expect("virtio-gpud: no descriptors for resource unref")
+                .await;
         });
     }
 }
