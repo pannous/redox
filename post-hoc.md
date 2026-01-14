@@ -182,3 +182,44 @@ Fetching: https://static.redox-os.org/pkg/aarch64-unknown-redox/repo.toml
 - `/usr/bin/curl` - 9.7MB (HTTP + HTTPS)
 - `/usr/bin/pkg` - 13MB (HTTP + HTTPS + tar/gzip)
 
+
+## 2026-01-14: Fixed virtio-netd Crash on Large Downloads
+
+### Issue
+Large HTTPS downloads would cause virtio-netd to crash with:
+```
+panicked at 'called `Option::unwrap()` on a `None` value'
+```
+
+### Root Cause
+The TX descriptor stack was being exhausted because:
+1. `write_packet()` in virtio-netd used fire-and-forget TX (dropped the `PendingRequest` future)
+2. Descriptors are only recycled when `PendingRequest::poll()` is called
+3. With many packets in flight, all descriptors were in use
+4. `Queue::send()` at line 198 called `descriptor_stack.pop().unwrap()` which panicked
+
+### Fix Applied
+Modified `virtio-core/src/transport.rs`:
+1. Added `reclaim_completed()` method to recycle completed TX descriptors by scanning the used ring
+2. Changed `Queue::send()` to return `Option<PendingRequest>` instead of panicking
+3. `send()` now calls `reclaim_completed()` before checking descriptor availability
+4. Added `available_descriptors()` helper method
+
+Updated all callers:
+- `virtio-netd/src/scheme.rs` - Returns EWOULDBLOCK if no descriptors
+- `virtio-blkd/src/scheme.rs` - Uses `.expect()` (blocking operations)
+- `virtio-gpud/src/scheme.rs` - Uses `.expect()` (blocking operations)
+- `virtio-9pd/src/client.rs` - Returns error if no descriptors
+
+### Files Modified
+- `drivers/virtio-core/src/transport.rs` - Core fix
+- `drivers/net/virtio-netd/src/scheme.rs` - Handle Option return
+- `drivers/storage/virtio-blkd/src/scheme.rs` - Handle Option return
+- `drivers/graphics/virtio-gpud/src/scheme.rs` - Handle Option return
+- `drivers/fs/virtio-9pd/src/client.rs` - Handle Option return
+
+### Testing
+- HTTPS requests complete without crashing
+- System remains responsive after large downloads
+- No kernel panic on high network throughput
+
