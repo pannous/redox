@@ -188,32 +188,24 @@ fn search_packages(query: &str) {
 fn install_package(name: &str) {
     let repo_url = format!("{}/repo.toml", PKG_SERVER);
 
-    let hash = match fetch_url(&repo_url) {
+    let _hash = match fetch_url(&repo_url) {
         Ok(data) => {
             let content = String::from_utf8_lossy(&data);
             let packages = parse_repo(&content);
-            packages.into_iter()
-                .find(|(n, _)| n == name)
-                .map(|(_, h)| h)
+            if !packages.iter().any(|(n, _)| n == name) {
+                eprintln!("Package '{}' not found in repository", name);
+                process::exit(1);
+            }
         }
         Err(e) => {
             eprintln!("Error fetching repo: {}", e);
-            None
-        }
-    };
-
-    let pkg_url = match hash {
-        Some(h) => {
-            // Format: {server}/{name}/{hash}.tar.gz
-            format!("{}/{}/{}.tar.gz", PKG_SERVER, name, h)
-        }
-        None => {
-            eprintln!("Package '{}' not found in repository", name);
             process::exit(1);
         }
     };
 
-    fetch_and_install(&pkg_url, name);
+    // Redox packages are .pkgar format, directly named
+    let pkg_url = format!("{}/{}.pkgar", PKG_SERVER, name);
+    fetch_and_install_pkgar(&pkg_url, name);
 }
 
 fn fetch_and_install(url: &str, name: &str) {
