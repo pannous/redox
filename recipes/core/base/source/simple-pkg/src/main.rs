@@ -208,6 +208,124 @@ fn install_package(name: &str) {
     fetch_and_install_pkgar(&pkg_url, name);
 }
 
+fn fetch_and_install_pkgar(url: &str, name: &str) {
+    eprintln!("Downloading {} from {}", name, url);
+
+    let data = match fetch_url(url) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error fetching package: {}", e);
+            process::exit(1);
+        }
+    };
+
+    eprintln!("Downloaded {} bytes", data.len());
+
+    let dest_dir = format!("{}/{}", PKG_DIR, name);
+    fs::create_dir_all(&dest_dir).ok();
+
+    eprintln!("Extracting pkgar to {}...", dest_dir);
+
+    match extract_pkgar(&data, &dest_dir) {
+        Ok(count) => eprintln!("Successfully installed {} ({} files)", name, count),
+        Err(e) => {
+            eprintln!("Error extracting: {}", e);
+            // Save for manual extraction
+            let tmp_path = format!("/tmp/{}.pkgar", name);
+            if fs::write(&tmp_path, &data).is_ok() {
+                eprintln!("Package saved to: {}", tmp_path);
+            }
+        }
+    }
+}
+
+/// Extract pkgar format (Redox package archive)
+fn extract_pkgar(data: &[u8], dest: &str) -> Result<usize, String> {
+    const HEADER_SIZE: usize = 136;
+    const ENTRY_SIZE: usize = 308;
+
+    if data.len() < HEADER_SIZE {
+        return Err("File too small for pkgar header".to_string());
+    }
+
+    // Parse header - skip signature/key/hash, just get count
+    let count = u64::from_le_bytes(
+        data[128..136].try_into().map_err(|_| "Invalid header")?
+    ) as usize;
+
+    eprintln!("Package has {} entries", count);
+
+    let entries_start = HEADER_SIZE;
+    let entries_end = entries_start + count * ENTRY_SIZE;
+
+    if data.len() < entries_end {
+        return Err("File truncated in entry table".to_string());
+    }
+
+    // Parse entries and extract files
+    let mut extracted = 0;
+    for i in 0..count {
+        let entry_offset = entries_start + i * ENTRY_SIZE;
+        let entry = &data[entry_offset..entry_offset + ENTRY_SIZE];
+
+        // Entry format: blake3[32] + offset[8] + size[8] + mode[4] + path[256]
+        let file_offset = u64::from_le_bytes(
+            entry[32..40].try_into().map_err(|_| "Invalid entry offset")?
+        ) as usize;
+        let file_size = u64::from_le_bytes(
+            entry[40..48].try_into().map_err(|_| "Invalid entry size")?
+        ) as usize;
+        let mode = u32::from_le_bytes(
+            entry[48..52].try_into().map_err(|_| "Invalid entry mode")?
+        );
+
+        // Extract null-terminated path
+        let path_bytes = &entry[52..308];
+        let path_len = path_bytes.iter().position(|&b| b == 0).unwrap_or(256);
+        let path = std::str::from_utf8(&path_bytes[..path_len])
+            .map_err(|_| "Invalid UTF-8 in path")?;
+
+        if path.is_empty() {
+            continue;
+        }
+
+        let full_path = format!("{}/{}", dest, path);
+
+        // Check if it's a directory (size 0 and path ends with / or mode indicates dir)
+        let is_dir = file_size == 0 && (path.ends_with('/') || (mode & 0o40000) != 0);
+
+        if is_dir {
+            fs::create_dir_all(&full_path).ok();
+        } else {
+            // Create parent directories
+            if let Some(parent) = Path::new(&full_path).parent() {
+                fs::create_dir_all(parent).ok();
+            }
+
+            // Extract file content
+            if file_offset + file_size <= data.len() {
+                let content = &data[file_offset..file_offset + file_size];
+                if let Err(e) = fs::write(&full_path, content) {
+                    eprintln!("Warning: Failed to write {}: {}", path, e);
+                    continue;
+                }
+
+                // Set executable bit if needed
+                #[cfg(unix)]
+                if (mode & 0o111) != 0 {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perms = std::fs::Permissions::from_mode(mode);
+                    fs::set_permissions(&full_path, perms).ok();
+                }
+
+                extracted += 1;
+            }
+        }
+    }
+
+    Ok(extracted)
+}
+
 fn fetch_and_install(url: &str, name: &str) {
     eprintln!("Installing {} from {}", name, url);
 
