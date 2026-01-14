@@ -37,7 +37,9 @@ impl BlkExtension for Queue<'_> {
             .build();
 
         // XXX: Subtract 1 because the of status byte.
-        let written = self.send(chain).await as usize - 1;
+        let written = self.send(chain)
+            .expect("virtio-blkd: no descriptors available for read")
+            .await as usize - 1;
         assert_eq!(*status, 0);
 
         target[..written].copy_from_slice(&result);
