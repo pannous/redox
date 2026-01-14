@@ -184,7 +184,9 @@ impl VirtGpuAdapter<'_> {
             .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.control_queue.send(command).await;
+        self.control_queue.send(command)
+            .expect("virtio-gpud: no descriptors for get_display_info")
+            .await;
         assert!(response.header.ty == CommandTy::RespOkDisplayInfo);
 
         Ok(response)
