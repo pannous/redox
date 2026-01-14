@@ -169,7 +169,9 @@ impl VirtGpuAdapter<'_> {
             .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.control_queue.send(command).await;
+        self.control_queue.send(command)
+            .expect("virtio-gpud: no descriptors for fenced request")
+            .await;
         Ok(header)
     }
 
