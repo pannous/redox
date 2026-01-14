@@ -249,7 +249,9 @@ impl VirtGpuAdapter<'_> {
 
         futures::executor::block_on(async {
             let command = ChainBuilder::new().chain(Buffer::new(&request)).build();
-            self.cursor_queue.send(command).await;
+            self.cursor_queue.send(command)
+                .expect("virtio-gpud: no descriptors for cursor move")
+                .await;
         });
     }
 }

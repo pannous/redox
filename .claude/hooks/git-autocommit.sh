@@ -18,11 +18,11 @@ log() {
 
 # Check if there are changes to commit
 has_changes() {
-    # Check main repo and submodules
-    if ! ./git-all.sh diff --quiet HEAD 2>/dev/null; then
+    if [ -n "$(./git-all.sh status --porcelain 2>/dev/null)" ]; then
         return 0
     fi
-    if [ -n "$(./git-all.sh status --porcelain 2>/dev/null)" ]; then
+    # Check main repo and submodules
+    if ! ./git-all.sh diff --quiet HEAD 2>/dev/null; then
         return 0
     fi
     return 1
