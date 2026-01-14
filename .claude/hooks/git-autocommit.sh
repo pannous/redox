@@ -49,9 +49,10 @@ case "$EVENT" in
     PostToolUse)
         # Extract tool name from JSON input
         TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
-        if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "NotebookEdit" ]]; then
-            do_commit "wip: auto-save after $TOOL_NAME"
-        fi
+        echo "no wip autocommit for tool $TOOL_NAME" 
+        # if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "NotebookEdit" ]]; then
+        #     do_commit "wip: auto-save after $TOOL_NAME"
+        # fi
         ;;
     Stop)
         do_commit "wip: session checkpoint"
