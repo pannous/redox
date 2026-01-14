@@ -1,4 +1,0 @@
-#ifndef _RELIBC_BITS_SCHED_H
-#define _RELIBC_BITS_SCHED_H
-
-#endif  /* _RELIBC_BITS_SCHED_H */
