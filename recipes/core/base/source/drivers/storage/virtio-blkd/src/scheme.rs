@@ -69,7 +69,9 @@ impl BlkExtension for Queue<'_> {
             .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.send(chain).await as usize;
+        self.send(chain)
+            .expect("virtio-blkd: no descriptors available for write")
+            .await;
         assert_eq!(*status, 0);
 
         target.len()
