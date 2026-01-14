@@ -5,7 +5,7 @@
 #![doc(rust_logo)]
 #![feature(proc_macro_diagnostic)]
 #![feature(rustdoc_internals)]
-#![feature(track_path)]
+// #![feature(track_path)] // removed for cross-compilation
 // tidy-alphabetical-end
 
 use proc_macro::TokenStream;

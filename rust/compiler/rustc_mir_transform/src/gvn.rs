@@ -831,7 +831,7 @@ impl<'body, 'tcx> VnState<'body, 'tcx> {
             }
         }
 
-        if projection.is_owned() {
+        if matches!(projection, std::borrow::Cow::Owned(_)) {
             place.projection = self.tcx.mk_place_elems(&projection);
         }
 

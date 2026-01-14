@@ -8,7 +8,7 @@ use fluent_syntax::ast::{
     Attribute, Entry, Expression, Identifier, InlineExpression, Message, Pattern, PatternElement,
 };
 use fluent_syntax::parser::ParserError;
-use proc_macro::tracked_path::path;
+// tracked_path removed for cross-compilation
 use proc_macro::{Diagnostic, Level, Span};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -100,7 +100,7 @@ pub(crate) fn fluent_messages(input: proc_macro::TokenStream) -> proc_macro::Tok
 
     let crate_name = Ident::new(&crate_name, resource_str.span());
 
-    path(absolute_ftl_path.to_str().unwrap());
+    // path(absolute_ftl_path.to_str().unwrap()); // tracked_path removed
     let resource_contents = match read_to_string(absolute_ftl_path) {
         Ok(resource_contents) => resource_contents,
         Err(e) => {

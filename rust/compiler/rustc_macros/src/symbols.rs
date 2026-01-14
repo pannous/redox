@@ -251,18 +251,10 @@ fn symbols_with_errors(input: TokenStream) -> (TokenStream, Vec<syn::Error>) {
             Value::SameAsName | Value::String(_) | Value::Unsupported(_) => continue,
         };
 
-        if !proc_macro::is_available() {
-            errors.error(
-                Span::call_site(),
-                "proc_macro::tracked_env is not available in unit test".to_owned(),
-            );
-            break;
-        }
-
-        let value = match proc_macro::tracked_env::var(env_var.value()) {
+        let value = match std::env::var(env_var.value()) {
             Ok(value) => value,
             Err(err) => {
-                errors.list.push(syn::Error::new_spanned(expr, err));
+                errors.list.push(syn::Error::new_spanned(expr, format!("{}", err)));
                 continue;
             }
         };
