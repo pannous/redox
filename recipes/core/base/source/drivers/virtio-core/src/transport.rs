@@ -274,10 +274,10 @@ impl<'a> Queue<'a> {
         self.available.set_head_idx(index as u16 + 1);
         self.notification_bell.ring(self.queue_index);
 
-        PendingRequest {
+        Some(PendingRequest {
             queue: self.sref.upgrade().unwrap(),
             first_descriptor: first_descriptor as u32,
-        }
+        })
     }
 
     /// Returns the number of descriptors in the descriptor table of this queue.
