@@ -1,0 +1,13 @@
+[package]
+name = "cargo-lite"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal offline Rust build tool for Redox"
+
+[[bin]]
+name = "cargo-lite"
+path = "src/main.rs"
+
+[dependencies]
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+serde = { version = "1.0", features = ["derive"] }
