@@ -223,3 +223,34 @@ Updated all callers:
 - System remains responsive after large downloads
 - No kernel panic on high network throughput
 
+
+## 2026-01-14: Fixed TCP_NODELAY setsockopt Warning
+
+### Issue
+Every HTTPS request showed warning:
+```
+setsockopt(15, 6, 1, 0x7fffffff23f8, 4) - unknown option
+```
+
+### Root Cause
+relibc's setsockopt() only handled SOL_SOCKET level options. IPPROTO_TCP (6)
+level options like TCP_NODELAY (1) fell through to the warning message.
+
+### Fix Applied
+Modified `relibc/src/platform/redox/socket.rs`:
+- Added handling for IPPROTO_TCP level options
+- TCP_NODELAY silently accepted (Redox TCP doesn't use Nagle's algorithm)
+- Unknown TCP options logged but don't fail
+
+Also fixed `relibc/src/platform/redox/event.rs`:
+- EventFlags type conversion was broken between redox_event and redox_syscall
+- Changed to direct bit conversion instead of From trait
+
+### Files Modified
+- `recipes/core/relibc/source/src/platform/redox/socket.rs`
+- `recipes/core/relibc/source/src/platform/redox/event.rs`
+
+### Testing
+- curl and pkg HTTPS requests no longer show setsockopt warning
+- pkg search works cleanly
+
