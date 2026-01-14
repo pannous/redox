@@ -201,7 +201,9 @@ impl VirtGpuAdapter<'_> {
             .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.control_queue.send(command).await;
+        self.control_queue.send(command)
+            .expect("virtio-gpud: no descriptors for get_edid")
+            .await;
         assert!(response.header.ty == CommandTy::RespOkEdid);
 
         Ok(response)
