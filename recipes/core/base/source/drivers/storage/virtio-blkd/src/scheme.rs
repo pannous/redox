@@ -92,7 +92,9 @@ impl BlkExtension for Queue<'_> {
             .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.send(chain).await;
+        self.send(chain)
+            .expect("virtio-blkd: no descriptors available for flush")
+            .await;
         assert_eq!(*status, 0);
     }
 }
