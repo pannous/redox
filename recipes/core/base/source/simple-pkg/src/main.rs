@@ -154,9 +154,24 @@ fn install_local(path: &str) {
 
     eprintln!("Installing {} from {}...", name, path);
 
-    match extract_tar_gz(&path, &dest_dir) {
-        Ok(_) => eprintln!("Successfully installed {}", name),
-        Err(e) => eprintln!("Error extracting: {}", e),
+    // Detect format by extension
+    if path.ends_with(".pkgar") {
+        // Read pkgar file and extract
+        match fs::read(&path) {
+            Ok(data) => {
+                match extract_pkgar(&data, &dest_dir) {
+                    Ok(count) => eprintln!("Successfully installed {} ({} files)", name, count),
+                    Err(e) => eprintln!("Error extracting pkgar: {}", e),
+                }
+            }
+            Err(e) => eprintln!("Error reading pkgar: {}", e),
+        }
+    } else {
+        // Assume tar.gz format
+        match extract_tar_gz(&path, &dest_dir) {
+            Ok(_) => eprintln!("Successfully installed {}", name),
+            Err(e) => eprintln!("Error extracting: {}", e),
+        }
     }
 }
 
