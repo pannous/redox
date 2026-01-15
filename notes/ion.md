@@ -1,17 +1,14 @@
-  Want me to restart qemu to test with the injected ion at /usr/bin/ion?
+## DONE: liner EAGAIN error fix (2026-01-15)
 
-./exe
-. ./exe
-source ./exe
+Root cause: `change_blocking()` used O_RDWR (access mode) to clear O_NONBLOCK.
+O_RDWR is not a status flag, so this did nothing.
 
-/scheme/9p.hostshare/bin/ion-enoexec
+Fix: Get flags with F_GETFL, clear O_NONBLOCK bit, set with F_SETFL.
+See `recipes/core/ion/source/src/binary/readln.rs`
 
-❯ It works great for our new use cases, but it has some other issues that aren't related to your work, I think, but due   
-  to the mess-up of another agent. Maybe you can fix that.                                                                
-                                                                                                                          
-  /scheme/9p.hostshare/ion-enoexec                                                                                        
-  >>> ion: liner: Try again (os error 11)                                                                                 
-  ion: prompt expansion failed: pipeline execution error: could not clone the pipe: Too many open files (os error 24)     
-  >>> ion: liner: Try again (os error 11)                                                                                 
-  ion: prompt expansion failed: pipeline execution error: could not clone the pipe: Too many open files (os error 24)  *  
-  10000 Be careful with the tokens.                                                                           
+Committed: 27449fc9 in ion source repo
+
+## Ion shell notes
+
+source command / . works for executing scripts
+/scheme/9p.hostshare/script.ion to run from 9p share
