@@ -18,5 +18,14 @@ const STACK_PER_RECURSION: usize = 16 * 1024 * 1024; // 16MB
 /// Should not be sprinkled around carelessly, as it causes a little bit of overhead.
 #[inline]
 pub fn ensure_sufficient_stack<R>(f: impl FnOnce() -> R) -> R {
-    stacker::maybe_grow(RED_ZONE, STACK_PER_RECURSION, f)
+    // On Redox, stacker/psm stack switching doesn't work yet, so just call directly.
+    // This may cause stack overflows for complex code but works for simple cases.
+    #[cfg(target_os = "redox")]
+    {
+        f()
+    }
+    #[cfg(not(target_os = "redox"))]
+    {
+        stacker::maybe_grow(RED_ZONE, STACK_PER_RECURSION, f)
+    }
 }

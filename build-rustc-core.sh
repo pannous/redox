@@ -24,6 +24,7 @@ export CFG_VERSION="1.86.0-dev"
 export CFG_RELEASE_NUM="1.86.0"
 export RUSTC_INSTALL_BINDIR="bin"
 export CFG_LIBDIR_RELATIVE="lib"
+export CFG_COMPILER_HOST_TRIPLE="aarch64-unknown-redox"
 
 export RUSTFLAGS="-Zcodegen-backend=${CRANELIFT} \
   -Crelocation-model=static \
