@@ -116,14 +116,79 @@ for aarch64 codegen. The actual issue is elsewhere.
 - FP also shows this pattern: `ffff8000_5XXXf_720`
 - Suggests stack or static data corruption, not code generation issue
 
+### Investigation (2026-01-15): Kernel Debug & Root Cause
+
+**Added kernel crash debug output** at `recipes/core/kernel/source/src/arch/aarch64/interrupt/exception.rs`
+- Prints all registers (X0-X30, SP, PC, ESR, FAR) on synchronous exceptions
+- Shows full stack trace
+
+**Key Finding: Crash is a Rust Panic, NOT Garbage Pointers**
+
+The crash at ELR_EL1=0x0a2980e0 is an intentional `udf #49439` instruction inside `abort()`.
+This is Rust's panic=abort mechanism executing properly!
+
+Stack trace reveals:
+```
+abort() → udf #49439
+  ← ___rust_abort
+  ← rust_panic
+  ← ___rust_start_panic
+  ← FatalError::raise (rustc_span::fatal_error)
+  ← FatalAbort::emit_producing_guarantee (rustc_errors)
+  ← CrateError::report / CannotFindCrate (rustc_metadata::locator)
+  ← CStore::resolve_crate / process_extern_crate
+```
+
+**Root Cause**: rustc crashes because it **cannot find required crates** (core, std, etc.)
+
+### Sysroot Attempt (2026-01-15)
+
+Created sysroot at `/opt/other/redox/share/sysroot/lib/rustlib/aarch64-unknown-redox/lib/` with:
+- libcore.rlib, liballoc.rlib, libstd.rlib
+- libcompiler_builtins.rlib, libpanic_abort.rlib
+- Plus 15+ other required rlibs
+
+**Result**: Still crashes - now with `TyCtxt::require_lang_item` error
+
+**Why sysroot didn't work**:
+1. Copied rlibs have mismatched metadata/SVH (stable version hash)
+2. rustc expects specific metadata format matching its own version
+3. The rlibs were built with a different rustc configuration
+
+### Actual Status
+
+| Command | Result |
+|---------|--------|
+| `rustc --version` | ✓ Works |
+| `rustc --help` | ✗ Crashes (needs crate metadata) |
+| `rustc --print sysroot` | ✗ Crashes (triggers resolver) |
+| `rustc --print target-list` | ✗ Crashes |
+| `rustc --sysroot PATH file.rs` | ✗ Crashes (metadata mismatch) |
+
+**The panic is expected behavior** - rustc cannot find its standard library.
+
 ### Next Steps
-1. ~~Investigate Cranelift adrp codegen~~ - Not the issue (is_pic must stay true)
-2. **Test LLVM backend** - compile rustc with LLVM instead of Cranelift to isolate issue
-3. **Add kernel debug** - print registers at crash to understand corruption source
-4. **Memory map analysis** - verify no overlap between code/data/stack
-5. Build standard library for Redox target
-6. Create sysroot with std/core/alloc
+
+1. **Cross-compile sysroot from host** using the same rustc configuration
+   - Use `cargo build -Zbuild-std` to build core/alloc/std for aarch64-unknown-redox
+   - Ensure metadata matches the cross-compiled rustc
+
+2. **Bootstrap approach**
+   - First compile a no_std program that doesn't need std
+   - Use that to build core/alloc iteratively
+
+3. **Alternative: Use LLVM backend**
+   - Test if LLVM-compiled rustc works better
+   - Would bypass Cranelift-specific issues
+
+### Key Insight
+
+The "garbage pointer" theory was WRONG. The crash is deterministic:
+- Rust panic → abort() → udf trap → kernel exception
+- This is proper error handling, not memory corruption
+- The fix is providing the right sysroot, not debugging codegen
 
 ### Binary Location
 - Unstripped: `/opt/other/redox/rust/target/aarch64-unknown-redox-clif/release/rustc-main` (349MB)
 - Stripped: `/opt/other/redox/share/rustc` (174MB)
+- Sysroot attempt: `/opt/other/redox/share/sysroot/`
