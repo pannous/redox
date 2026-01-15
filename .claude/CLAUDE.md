@@ -95,6 +95,9 @@ cargo --config net.offline=false update
 ./build-cranelift.sh all      # Full build
 ./build-cranelift.sh shell    # Enter build shell
 
+# Recovery
+Do not copy pure-rust.works.img to pure-rust.img before you try manual recovery of broken files by copying from mounted pure-rust.works.img
+
 # Caveats
 2>&1 doesn't work in ion scripts - use files 
 chmod doesn't work in 9p
