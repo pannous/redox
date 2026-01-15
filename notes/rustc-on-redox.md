@@ -93,11 +93,34 @@ The crash is caused by a **garbage function pointer** being called:
 - `rustc --print sysroot` ✗ Crashes
 - `RUSTC_THREADS=1 rustc -Zthreads=1 ...` ✗ Still crashes
 
+### Investigation (2026-01-15): is_pic Flag
+
+**Hypothesis tested**: The crash is caused by a PIC/PIE mismatch - Cranelift hardcodes `is_pic=true`
+while the target spec says `position-independent-executables: false`.
+
+**Findings**:
+1. Cranelift's `is_pic` is hardcoded to `true` for AOT at `rustc_codegen_cranelift/src/lib.rs:266`
+2. Setting `is_pic=false` requires implementing missing relocations in cranelift-object:
+   - `Aarch64AdrPrelPgHi21` (R_AARCH64_ADR_PREL_PG_HI21)
+   - `Aarch64AddAbsLo12Nc` (R_AARCH64_ADD_ABS_LO12_NC)
+3. **REGRESSION**: With `is_pic=false`, even `rustc --version` crashes!
+4. The crash addresses are RANDOM each run (0x4f96f000, 0x59caf000, 0x50a8f000...)
+5. **Cranelift 0.127.2 breaks --version** - must stay on 0.127.0
+
+**Conclusion**: The crash is NOT caused by the is_pic setting. Cranelift requires PIC mode
+for aarch64 codegen. The actual issue is elsewhere.
+
+**Pattern observed**:
+- Crash always involves a return address (x30) or function pointer loaded from stack/memory
+- The garbage address has format 0x5XXXfXX0 (page-aligned)
+- FP also shows this pattern: `ffff8000_5XXXf_720`
+- Suggests stack or static data corruption, not code generation issue
+
 ### Next Steps
-1. **Investigate Cranelift adrp codegen** - check if there's a known bug with PC-relative addressing
+1. ~~Investigate Cranelift adrp codegen~~ - Not the issue (is_pic must stay true)
 2. **Test LLVM backend** - compile rustc with LLVM instead of Cranelift to isolate issue
-3. **Check relocations** - verify all relocations are applied correctly at load time
-4. **Add kernel debug** - print FAR_EL1 and ESR_EL1 to see exact fault address/type
+3. **Add kernel debug** - print registers at crash to understand corruption source
+4. **Memory map analysis** - verify no overlap between code/data/stack
 5. Build standard library for Redox target
 6. Create sysroot with std/core/alloc
 
