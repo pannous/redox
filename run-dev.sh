@@ -2,7 +2,7 @@
 set -e
 
 # echo password | pbcopy
-
+# before GUI
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
