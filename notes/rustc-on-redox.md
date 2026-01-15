@@ -155,17 +155,18 @@ Created sysroot at `/opt/other/redox/share/sysroot/lib/rustlib/aarch64-unknown-r
 2. rustc expects specific metadata format matching its own version
 3. The rlibs were built with a different rustc configuration
 
-### Actual Status
+### Actual Status (UPDATED)
 
 | Command | Result |
 |---------|--------|
 | `rustc --version` | ✓ Works |
-| `rustc --help` | ✗ Crashes (needs crate metadata) |
-| `rustc --print sysroot` | ✗ Crashes (triggers resolver) |
-| `rustc --print target-list` | ✗ Crashes |
+| `rustc --help` | ✓ Works |
+| `rustc --print sysroot` | ✓ Works (shows `/`) |
+| `rustc --print target-list` | ✓ Works (includes `aarch64-unknown-redox`) |
+| `rustc file.rs` | ✗ Crashes (needs sysroot with std) |
 | `rustc --sysroot PATH file.rs` | ✗ Crashes (metadata mismatch) |
 
-**The panic is expected behavior** - rustc cannot find its standard library.
+**Many operations work!** Only actual compilation fails due to missing sysroot.
 
 ### Next Steps
 
