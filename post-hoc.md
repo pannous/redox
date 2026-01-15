@@ -254,3 +254,4 @@ Also fixed `relibc/src/platform/redox/event.rs`:
 - curl and pkg HTTPS requests no longer show setsockopt warning
 - pkg search works cleanly
 
+2026-01-15T16:02:02Z - Replaced /usr/bin/ion with fixed version (chdir symlink following)
