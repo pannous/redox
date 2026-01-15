@@ -77,3 +77,31 @@ window should display the framebuffer content. To verify visually:
 1. Run `./run-dev.sh -g` (direct GUI mode)
 2. Press Enter at resolution selection
 3. Check if text appears in the QEMU window
+
+## Address Clarification (2026-01-15)
+The virtual address `0x16000` is CORRECT. It's not "too low" - it's simply where
+the kernel's mmap allocator placed the mapping:
+- `mmap_min` defaults to `PAGE_SIZE` (0x1000)
+- `find_free` starts allocating from `mmap_min` upwards
+- First physmap allocation lands at 0x16000 (page 22)
+
+The kernel correctly maps physical `0xBEE80000` to virtual `0x16000`:
+```
+vesad: 800x600 stride 800 at 0xBEE80000
+kernel::scheme::memory:INFO -- physmap: phys=0xbee80000 size=0x1d5000 -> virt=0x16000
+vesad: FrameBuffer phys=0xbee80000 virt=0x16000 size=480000
+```
+
+## Separate Issue: pcid crash on aarch64
+During testing, pcid panics with:
+```
+thread 'main' panicked at drivers/pcid/src/cfg_access/fallback.rs:89:9:
+not yet implemented: Pci::CfgAccess::read on this architecture
+```
+
+This is UNRELATED to the physmap fix. The crash occurs because:
+1. ACPI PCI config access fails: "No such device"
+2. FDT (device tree) access fails: "BufferTooSmall"
+3. Fallback to PCI 3.0 config space, which has `todo!()` for non-x86
+
+This is an existing aarch64 compatibility issue that needs separate investigation.
