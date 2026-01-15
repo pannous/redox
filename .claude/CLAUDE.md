@@ -99,8 +99,15 @@ cargo --config net.offline=false update
 Do not copy pure-rust.works.img to pure-rust.img before you try manual recovery of broken files by copying from mounted pure-rust.works.img
 
 # Caveats
-2>&1 doesn't work in ion scripts - use files 
+2>&1 doesn't work in ion scripts - use files
 chmod doesn't work in 9p
+
+# ⚠️ DO NOT TOUCH: Bootloader
+The UEFI bootloader (recipes/core/bootloader/) CANNOT be built on macOS.
+- Requires Linux + LLVM (PE/COFF format for aarch64-unknown-uefi)
+- Cranelift doesn't support PE/COFF relocations for aarch64
+- Use pre-built bootloader from denovo/bootloader/EFI/BOOT/BOOTAA64.EFI
+- If bootloader breaks, restore from denovo or pure-rust.works.img
 
 
 
