@@ -22,7 +22,9 @@
       "Bash(RELIBC_FEATURES=\"\" ./build-cranelift.sh:*)",
       "Bash(chmod:*)",
       "Bash(RUSTC_WRAPPER=\"\" cargo build:*)",
-      "Bash(./build-initfs-cranelift.sh:*)"
+      "Bash(./build-initfs-cranelift.sh:*)",
+      "Bash(hdiutil attach:*)",
+      "Bash(CARGO_INCREMENTAL=0 cargo rustc:*)"
     ]
   },
   "hooks": {

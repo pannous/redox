@@ -32,3 +32,10 @@ echo "⚠️ the Main filesystem outside of share is currently configured as sna
 
 # echo "redox-mount-works/"
 # /opt/other/redox/build/fstools/bin/redoxfs /opt/other/redox/build/aarch64/pure-rust.WORKS.img /opt/other/redox/redox-mount-works/
+
+
+# ⏺ Bash(hdiutil attach -nomount /opt/other/redox/build/aarch64/pure-rust.img 2>&1)
+#   ⎿/dev/disk36            GUID_partition_scheme              
+#       /dev/disk36s1          Bios Boot Partition
+#       /dev/disk36s2          EFI
+#       /dev/disk36s3          Linux Filesystem
