@@ -46,6 +46,34 @@ fbbootlogd works because it uses its own V2DisplayMap directly. But fbcond's syn
 
 ## To Test
 ```bash
-./run-dev.sh -g   # Graphical mode with ramfb
+./run-dev.sh -tg   # Tmux + graphical mode with ramfb
+# Press Enter to select default resolution when bootloader menu appears
 # Then check boot output for vesad messages
 ```
+
+## Fix Applied (2026-01-15)
+The root cause was found in `Grant::physmap` in `kernel/src/context/memory.rs`:
+
+```rust
+// BEFORE: pages mapped read-only, breaking framebuffer writes
+mapper.map_phys(page.start_address(), frame.base(), flags.write(false))
+
+// AFTER: pages mapped with original flags (including write if requested)
+mapper.map_phys(page.start_address(), frame.base(), flags)
+```
+
+This change allows physmapped device memory (like framebuffers) to be writable immediately
+without requiring page faults to upgrade permissions.
+
+## Files Changed
+- `recipes/core/kernel/source/src/context/memory.rs` - Fixed physmap to preserve write flags
+- `recipes/core/kernel/source/src/scheme/memory.rs` - Added debug logging
+- `recipes/core/base/source/drivers/common/src/lib.rs` - Added mmap return value logging
+- `run-dev.sh` - Added `-tg` mode for tmux with graphics
+
+## Status
+Fix applied. The `vesad: sync` messages show data is being written. The QEMU GUI
+window should display the framebuffer content. To verify visually:
+1. Run `./run-dev.sh -g` (direct GUI mode)
+2. Press Enter at resolution selection
+3. Check if text appears in the QEMU window
