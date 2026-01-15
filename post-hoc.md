@@ -255,3 +255,9 @@ Also fixed `relibc/src/platform/redox/event.rs`:
 - pkg search works cleanly
 
 2026-01-15T16:02:02Z - Replaced /usr/bin/ion with fixed version (chdir symlink following)
+
+## 2026-01-15: simple-file tool
+- Added `/usr/bin/file` - pure Rust file type detection using infer crate
+- Source: `recipes/core/base/source/simple-file/`
+- Binary in mount: `/opt/other/redox/mount/usr/bin/file`
+- Also available via 9p share: `/scheme/9p.hostshare/simple-file`
