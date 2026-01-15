@@ -68,11 +68,24 @@ FP 0xffffff...: PC 0xffff800009000000
 4. Even `#![no_std]` programs crash (still need libcore resolution)
 5. `--emit=mir` crashes before reaching sysroot lookup
 
-**Possible Causes**:
-1. Stack overflow in deep query system recursion
-2. Illegal instruction from Cranelift codegen
-3. Missing syscall in query system path
-4. Memory corruption during query execution
+**Root Cause Identified**:
+The crash is caused by a **garbage function pointer** being called:
+
+```asm
+29daa14: adrp x6, 0xa28f000   ; should compute 0xa28f600
+29daa18: add x6, x6, #0x600
+29daa24: blr x6               ; but x6 = 0x59caf000 (garbage!)
+```
+
+- Expected x6 = 0xa28f600 (valid code)
+- Actual x6 = 0x59caf000 (unmapped memory)
+- Binary code range: 0x028af450 - 0x0a363dd4
+- Stack size increase (16MB, 64MB) doesn't help - NOT stack overflow
+
+**Likely Causes**:
+1. Cranelift codegen bug for adrp/add addressing on aarch64
+2. Closure/vtable pointer corruption
+3. Relocation issue in the binary
 
 **Tested Commands**:
 - `rustc --version` ✓ Works
@@ -81,10 +94,10 @@ FP 0xffffff...: PC 0xffff800009000000
 - `RUSTC_THREADS=1 rustc -Zthreads=1 ...` ✗ Still crashes
 
 ### Next Steps
-1. Build rustc with debug assertions for better crash messages
-2. Investigate if Cranelift generates illegal instructions
-3. Check if stack size limit is too small for rustc
-4. Try simpler operations (just parsing, no resolution)
+1. **Investigate Cranelift adrp codegen** - check if there's a known bug with PC-relative addressing
+2. **Test LLVM backend** - compile rustc with LLVM instead of Cranelift to isolate issue
+3. **Check relocations** - verify all relocations are applied correctly at load time
+4. **Add kernel debug** - print FAR_EL1 and ESR_EL1 to see exact fault address/type
 5. Build standard library for Redox target
 6. Create sysroot with std/core/alloc
 
