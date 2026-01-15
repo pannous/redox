@@ -261,3 +261,10 @@ Also fixed `relibc/src/platform/redox/event.rs`:
 - Source: `recipes/core/base/source/simple-file/`
 - Binary in mount: `/opt/other/redox/mount/usr/bin/file`
 - Also available via 9p share: `/scheme/9p.hostshare/simple-file`
+- Updated simple-file to POSIX-compatible version with:
+  - Proper ELF detection (64-bit LSB executable, ARM aarch64)
+  - Symlink handling with -h flag
+  - MIME type output with -i flag
+  - Aligned output formatting
+  - Support for -f (files-from), -L/-h (follow/no-follow symlinks)
+- Added to initfs build script (build-initfs-cranelift.sh)
