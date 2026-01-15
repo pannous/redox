@@ -193,3 +193,86 @@ The "garbage pointer" theory was WRONG. The crash is deterministic:
 - Unstripped: `/opt/other/redox/rust/target/aarch64-unknown-redox-clif/release/rustc-main` (349MB)
 - Stripped: `/opt/other/redox/share/rustc` (174MB)
 - Sysroot attempt: `/opt/other/redox/share/sysroot/`
+
+### Sysroot Investigation (2026-01-15 - Detailed)
+
+**Problem**: rustc crashes when trying to compile anything, even with a sysroot provided.
+
+**Attempts Made**:
+
+1. **Copied rlibs from rustc build deps directory**
+   - Source: `/opt/other/redox/rust/target/aarch64-unknown-redox-clif/release/deps/*.rlib`
+   - These were built as dependencies OF rustc, not FOR rustc to use
+   - Result: Crashes with metadata mismatch
+
+2. **Built fresh sysroot with `-Z build-std`**
+   ```bash
+   cargo +nightly-2026-01-02 build --target aarch64-unknown-redox \
+       -Z build-std=core,alloc,std,panic_abort
+   ```
+   - Result: Still crashes - version mismatch
+
+**Version Mismatch Identified**:
+| Component | Version |
+|-----------|---------|
+| Host nightly-2026-01-02 | rustc 1.94.0-nightly |
+| Redox rustc | rustc 1.86.0-dev (CFG_RELEASE) |
+
+The rlib metadata includes compiler version info. When the Redox rustc (1.86.0-dev) tries to load rlibs built by the host nightly (1.94.0), it fails due to SVH (Stable Version Hash) mismatch.
+
+**Why SVH Mismatches**:
+- SVH is computed from: source code + compiler config + target + edition
+- Even if source is identical, different compiler binaries produce different SVHs
+- The Redox rustc has modified version strings (1.86.0-dev vs 1.94.0-nightly)
+- Cranelift patches may also affect internal compiler state
+
+**rlib Metadata Example** (`-Z ls=root` on libcore):
+```
+name core-e500a4401671621e
+hash c36fcbaa783a153aa1f8d573a3cd9f82
+stable_crate_id StableCrateId(15347424121490277895)
+triple aarch64-unknown-redox-clif
+edition 2024
+```
+
+**Target Triple Issues**:
+- rlibs built for `aarch64-unknown-redox-clif` (custom JSON target)
+- Redox rustc defaults to `aarch64-unknown-redox` (host triple)
+- Using `--target aarch64-unknown-redox-clif` requires loading JSON which also crashes
+
+**What Works vs What Crashes**:
+| Operation | Default Target | Custom JSON Target |
+|-----------|---------------|-------------------|
+| `--version` | ✓ Works | N/A |
+| `--help` | ✓ Works | N/A |
+| `--print sysroot` | ✓ Works | Crashes |
+| `--print target-list` | ✓ Works | Crashes |
+| `--print target-libdir` | ✓ Works | Crashes |
+| `--emit=metadata file.rs` | Crashes | Crashes |
+
+### Solutions to Try
+
+**Option 1: Rebuild rustc with matching version** (Recommended)
+- Change `CFG_RELEASE="1.94.0-nightly"` in build-rustc-core.sh
+- This may align SVH expectations with what host nightly produces
+- Rebuild rustc (~hours)
+
+**Option 2: Build std using Redox rust source**
+- Use the exact same rust repo/patches used for Redox rustc
+- Build std from that source with matching config
+- More complex but ensures consistency
+
+**Option 3: Bootstrap on Redox** (Long-term goal)
+- Have Redox rustc compile its own standard library
+- Requires rustc to work first - chicken/egg problem
+- May work with `--emit=obj` + external linker
+
+### Current Sysroot Location
+```
+/opt/other/redox/share/sysroot/
+└── lib/rustlib/
+    ├── aarch64-unknown-redox/lib/        # 17 rlibs (from host build)
+    └── aarch64-unknown-redox-clif/lib/   # 225 rlibs (from rustc deps)
+```
+
+Target spec: `/opt/other/redox/share/target.json`
