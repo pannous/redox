@@ -10,6 +10,8 @@ if {![info exists boot_wait] || $boot_wait == ""} {
 
 # spawn ./run-dev.sh 
 spawn ./run-dev.sh -g # gui
+# sleep 1 &&
+tmux send-keys -t redox-dev Enter & # no resolution selection !
 
 if {$boot_wait > 0} {
     after [expr {$boot_wait * 1000}]
