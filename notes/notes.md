@@ -795,6 +795,28 @@ Extract bootloader from existing image - it's the only component that truly need
 - Bootloader source: `/opt/other/redox/recipes/core/bootloader/source/`
 - Target spec: `recipes/core/bootloader/source/targets/aarch64-unknown-uefi.json`
 
+### macOS Cross-Compilation Failure (2026-01-15)
+
+**Discovery:** Even with LLVM (not Cranelift), bootloaders built on macOS don't work.
+
+| Bootloader | Size | Built on | Result |
+|------------|------|----------|--------|
+| Denovo | 168KB | Linux | ✓ Works |
+| auto_mode patch | 151KB | macOS | ✗ Hangs at redoxfs |
+| No changes | 154KB | macOS | ✗ Hangs at redoxfs |
+| Old toolchain | 166KB | macOS | ✗ Hangs at redoxfs |
+
+**Symptoms:**
+- Bootloader runs fine (resolution selection works, kernel loads, init starts)
+- Hangs at: `init: running: redoxfs --uuid $REDOXFS_UUID file $REDOXFS_BLOCK`
+
+**Likely causes (speculation):**
+1. **Linker differences** - macOS uses `ld64`, Linux uses `lld`/`ld`. PE/COFF generation may differ in relocations or section layout.
+2. **Environment variable passing** - Bootloader writes `REDOXFS_UUID`, `REDOXFS_BLOCK` etc to memory for init. macOS-built bootloader may write them in a format/location init can't read.
+3. **LLVM codegen differences** - Same Rust version but different LLVM backends on macOS vs Linux.
+
+**Conclusion:** Bootloader must be built on Linux. Use pre-built from `denovo/bootloader/EFI/BOOT/BOOTAA64.EFI` or extract from `pure-rust.works.img`.
+
 
 ## 2026-01-10: Fixed sleep binary
 
