@@ -65,6 +65,22 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     sleep 1
     echo "QEMU PID: $QEMU_PID" >&2
     echo "$SOCK"  # Output socket path for scripts   
+elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
+    # Graphical mode: framebuffer window + serial in terminal
+    echo "Graphical mode: QEMU window with framebuffer terminal" >&2
+    echo "Serial console also available in this terminal" >&2
+    qemu-system-aarch64 -M virt $CPU -m 2G \
+        -rtc base=utc,clock=host \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
+        -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path="$SHARE",security_model=none \
+        "${NETDEV_ARGS[@]}" \
+        -device qemu-xhci -device usb-kbd \
+        -device ramfb \
+        -serial mon:stdio
 elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     SESSION="redox-dev"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
