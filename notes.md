@@ -251,3 +251,17 @@ Fixed "Too many open files" error that occurred during prompt expansion.
 - recipes/core/base/source/curl/src/main.rs (line 82-95)
 - recipes/core/base/source/curl/build-curl.sh (updated RELIBC path)
 
+
+## Fix: ls -lt crash (misaligned dirent pointer)
+
+**Problem**: Running `ls -lt` (or `ls -lart`) on directories with many files caused a panic:
+```
+thread 'main' panicked at std/src/sys/fs/unix.rs:790:28:
+misaligned pointer dereference: address must be a multiple of 0x8 but is 0x27c7a
+```
+
+**Root Cause**: relibc's readdir implementation returned pointers directly into a byte buffer from getdents. The d_reclen values from the filesystem didn't maintain 8-byte alignment between entries, causing subsequent dirent structs to be at unaligned offsets.
+
+**Fix**: Modified `recipes/core/relibc/source/src/header/dirent/mod.rs` to copy dirent data to an aligned buffer before returning. Commit: a8102b9b
+
+**Impact**: Fixes all directory listing with time-based sorting on any filesystem.
