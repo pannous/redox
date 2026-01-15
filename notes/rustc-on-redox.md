@@ -46,11 +46,47 @@ Added `src/header/math/mod.rs` with C ABI exports for:
 /opt/other/redox/build-rustc-core.sh
 ```
 
+### Crash Analysis (2026-01-15)
+
+**Crash Location**: `resolver_for_lowering_raw` in `rustc_query_impl` (0x6fcab34)
+
+**Stack Trace Pattern**:
+```
+FP 0xb84b350: PC 0x6fcab7c  <- resolver_for_lowering_raw
+FP 0xb84b5a0: PC 0x6f5c094
+FP 0xb84b5d0: PC 0x7346e38  <- query system (explicit_item_self_bounds or similar)
+... more query system calls ...
+FP 0xffff800...: PC 0x5106f000  <- kernel space transition
+FP 0xffffff...: PC 0xffff800009000000
+0x0: GUARD PAGE  <- crash marker
+```
+
+**Observations**:
+1. Crash happens in name resolution/query system, not just error reporting
+2. "GUARD PAGE" at address 0 suggests stack overflow or corrupted frame pointer
+3. Single-thread mode (`-Zthreads=1`) doesn't help
+4. Even `#![no_std]` programs crash (still need libcore resolution)
+5. `--emit=mir` crashes before reaching sysroot lookup
+
+**Possible Causes**:
+1. Stack overflow in deep query system recursion
+2. Illegal instruction from Cranelift codegen
+3. Missing syscall in query system path
+4. Memory corruption during query execution
+
+**Tested Commands**:
+- `rustc --version` ✓ Works
+- `rustc --emit=mir file.rs` ✗ Crashes
+- `rustc --print sysroot` ✗ Crashes
+- `RUSTC_THREADS=1 rustc -Zthreads=1 ...` ✗ Still crashes
+
 ### Next Steps
-1. Debug crash in non-version operations
-2. Build standard library for Redox target
-3. Create sysroot with std/core/alloc
-4. Test actual compilation
+1. Build rustc with debug assertions for better crash messages
+2. Investigate if Cranelift generates illegal instructions
+3. Check if stack size limit is too small for rustc
+4. Try simpler operations (just parsing, no resolution)
+5. Build standard library for Redox target
+6. Create sysroot with std/core/alloc
 
 ### Binary Location
 - Unstripped: `/opt/other/redox/rust/target/aarch64-unknown-redox-clif/release/rustc-main` (349MB)
