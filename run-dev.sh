@@ -14,6 +14,8 @@ MONSOCK="${MONSOCK:-$SOCKET_DIR/redox-dev-raw-mon.sock}"
 HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
 # HOST_SSH_PORT="${HOST_SSH_PORT:-0}" # no tunnel
 CACHE="cache=unsafe,snapshot=on"  # snapshot=off for persistence
+NOMENU="-boot menu=off,strict=on" #Doesn't prevent 2-second boot delay. 
+
 #     •   cache=none # Direct I/O, no host page cache, safest against host write-back surprises.
 #     •   cache=directsync # Direct I/O + synchronous guest writes.
 #     •   cache=writethrough # Host cache used, writes flushed to storage before completion.
@@ -69,7 +71,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
     # Graphical mode: framebuffer window + serial in terminal
     echo "Graphical mode: QEMU window with framebuffer terminal" >&2
     echo "Serial console also available in this terminal" >&2
-    qemu-system-aarch64 -M virt $CPU -m 2G \
+    qemu-system-aarch64 -M virt $CPU -m 2G  $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -90,7 +92,7 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     echo "Detach: Ctrl-b d" >&2
 
     tmux new-session -d -s "$SESSION" \
-        "qemu-system-aarch64 -M virt $CPU -m 2G \
+        "qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -108,7 +110,6 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
 else
     # Interactive mode (default)
     # cache=writeback
-    # NOMENU="-boot menu=off,strict=on" Doesn't prevent 2-second boot delay. 
     echo "Using: $RAW_IMG" >&2
     echo "Socket mode: $0 -s" >&2
     qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
