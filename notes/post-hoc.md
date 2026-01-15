@@ -43,3 +43,9 @@ To include wasmi in a fresh build:
 cp /tmp/wasmi-runner/target/aarch64-unknown-redox/release/wasmi-run mount/usr/bin/
 cp mount/etc/ion/wasm.ion /path/to/mount/etc/ion/
 ```
+
+## 2026-01-15: virtio-9pd logging reduced
+- Changed log::warn! → log::trace! for OPEN CALLED, walk_path OK, and open details in scheme.rs
+- Rebuilt initfs with build-initfs-cranelift.sh
+- Injected /tmp/initfs-cranelift.img → mount/boot/initfs
+
