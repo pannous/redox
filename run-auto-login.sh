@@ -8,7 +8,8 @@ if {![info exists boot_wait] || $boot_wait == ""} {
     set boot_wait 0
 }
 
-spawn ./run-dev.sh -g
+spawn ./run-dev.sh 
+# spawn ./run-dev.sh -g # gui
 
 if {$boot_wait > 0} {
     after [expr {$boot_wait * 1000}]
