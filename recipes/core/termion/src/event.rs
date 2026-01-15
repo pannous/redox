@@ -362,6 +362,15 @@ where
                     // numbers.
                     let nums: Vec<u8> = str_buf.split(';').map(|n| n.parse().unwrap()).collect();
 
+                    // Handle ESC [ 1 H and ESC [ 1 F as Home/End (some terminals send this)
+                    if nums.len() == 1 && nums[0] == 1 {
+                        return Some(match c {
+                            b'H' => Event::Key(Key::Home),
+                            b'F' => Event::Key(Key::End),
+                            _ => return None,
+                        });
+                    }
+
                     if !(nums.len() == 2 && nums[0] == 1) {
                         return None;
                     }

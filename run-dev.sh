@@ -79,7 +79,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         "${NETDEV_ARGS[@]}" \
         -device qemu-xhci -device usb-kbd \
-        -device ramfb,xres=800,yres=600 \
+        -device ramfb \
         -serial mon:stdio
 elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     SESSION="redox-dev"
