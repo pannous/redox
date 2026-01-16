@@ -515,6 +515,45 @@ build_simple_coreutils() {
     cd "$SCRIPT_DIR"
 }
 
+build_orbital() {
+    log "Building Orbital compositor for $ARCH with Cranelift"
+
+    local orbital_dir="$SCRIPT_DIR/recipes/gui/orbital/source"
+    if [ ! -d "$orbital_dir" ]; then
+        error "Orbital source not found. Clone it first:
+  cd recipes/gui/orbital
+  git clone https://gitlab.redox-os.org/redox-os/orbital.git source"
+    fi
+
+    cd "$orbital_dir"
+
+    # Copy target spec
+    cp "$SCRIPT_DIR/tools/${TARGET_USER}-clif.json" .
+
+    # Setup sysroot path
+    local sysroot="$SCRIPT_DIR/build/$ARCH/sysroot"
+
+    # Build orbital
+    RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
+    cargo build \
+        --target ${TARGET_USER}-clif.json \
+        --release \
+        -Z build-std=std,core,alloc,panic_abort \
+        -Zbuild-std-features=compiler_builtins/no-f16-f128
+
+    local orbital_bin="target/${TARGET_USER}-clif/release/orbital"
+    if [ -f "$orbital_bin" ]; then
+        # Strip and copy to share/
+        $STRIP -o "$SCRIPT_DIR/share/orbital" "$orbital_bin"
+        success "Orbital built and stripped to share/orbital"
+        ls -lh "$SCRIPT_DIR/share/orbital"
+    else
+        error "Orbital build failed"
+    fi
+
+    cd "$SCRIPT_DIR"
+}
+
 build_all() {
     log "Full Cranelift build for $ARCH"
 
@@ -591,6 +630,7 @@ usage() {
     echo "  relibc      Build relibc with Cranelift"
     echo "  drivers     Build base drivers with Cranelift"
     echo "  coreutils   Build simple-coreutils with Cranelift"
+    echo "  orbital     Build Orbital compositor with Cranelift"
     echo "  all         Full build (kernel + relibc + drivers + coreutils)"
     echo "  shell       Start shell with Cranelift environment"
     echo "  env         Show environment configuration"
@@ -647,6 +687,9 @@ main() {
             ;;
         coreutils|simple-coreutils)
             build_simple_coreutils
+            ;;
+        orbital)
+            build_orbital
             ;;
         all)
             build_all
