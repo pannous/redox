@@ -49,3 +49,14 @@ cp mount/etc/ion/wasm.ion /path/to/mount/etc/ion/
 - Rebuilt initfs with build-initfs-cranelift.sh
 - Injected /tmp/initfs-cranelift.img → mount/boot/initfs
 
+## 2026-01-16: inputd keymap argument crash fix
+- orblogin calls `inputd --keymaps` and `inputd -K <keymap>` to list/set keymaps
+- These arguments weren't handled, causing inputd to panic and crash orbital
+- Added stub handlers:
+  - `--keymaps`: Returns "us" as only available keymap
+  - `-K <keymap>`: Accepts but ignores (actual keymap handling is in ps2d)
+- Also added debug prints for argument tracing
+- Rebuilt initfs and injected to mount/usr/lib/initfs.img
+- Also placed updated inputd in share/ for 9p access
+- **Note**: Due to snapshot=on, need to set PATH=/scheme/9p.hostshare:$PATH before running orbital to use the new inputd
+
