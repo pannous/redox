@@ -105,3 +105,49 @@ This is UNRELATED to the physmap fix. The crash occurs because:
 3. Fallback to PCI 3.0 config space, which has `todo!()` for non-x86
 
 This is an existing aarch64 compatibility issue that needs separate investigation.
+
+## DONE: Display Black Screen Fixed (2026-01-16)
+
+### Root Cause
+The display showed all black even though vesad was writing pixels to the framebuffer because:
+
+1. **WriteCombining memory type not implemented for aarch64**: In `kernel/src/scheme/memory.rs`,
+   the `WriteCombining` memory type only sets special page flags on x86/x86_64 (line 154-157
+   has a `#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]`). On aarch64, it fell
+   through to default behavior, meaning the framebuffer was mapped as normal cached memory.
+
+2. **CPU writes went to cache, not RAM**: Since the memory was cached, CPU writes to the
+   framebuffer went to the CPU cache instead of RAM. QEMU's ramfb device reads directly
+   from RAM and never saw the writes.
+
+### The Fix
+Applied in commit `aed1fe6e9` (recipes/core/base/source):
+
+1. **Use DeviceMemory on aarch64**: Modified `vesad/src/scheme.rs` FrameBuffer::new() to use
+   `DeviceMemory` type on aarch64 instead of `WriteCombining`:
+   ```rust
+   #[cfg(target_arch = "aarch64")]
+   let memory_type = common::MemoryType::DeviceMemory;
+   #[cfg(not(target_arch = "aarch64"))]
+   let memory_type = common::MemoryType::WriteCombining;
+   ```
+
+2. **Add DSB barrier after writes**: Added a Data Synchronization Barrier after the
+   framebuffer copy to ensure writes are visible to external devices:
+   ```rust
+   #[cfg(target_arch = "aarch64")]
+   unsafe {
+       core::arch::asm!("dsb sy", options(nostack, preserves_flags));
+   }
+   ```
+
+### Verification
+Screenshot from QEMU shows terminal text is now visible:
+- Gray text (0xc0c0c0) rendering correctly
+- Boot messages visible in framebuffer window
+
+### Key Insight
+On aarch64, for device memory visible to external hardware:
+- Don't use WriteCombining (not implemented in kernel)
+- Use DeviceMemory which sets proper page table attributes
+- Add DSB SY (Data Synchronization Barrier) after writes to ensure visibility
