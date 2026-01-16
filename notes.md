@@ -267,3 +267,10 @@ misaligned pointer dereference: address must be a multiple of 0x8 but is 0x27c7a
 **Impact**: Fixes all directory listing with time-based sorting on any filesystem.
 
 📺 orbital ion works
+
+VT=3 /scheme/9p.hostshare/orbital /scheme/9p.hostshare/orblogin /scheme/9p.hostshare/launcher
+/scheme/9p.hostshare/background /ui/background.jpg
+
+  - calc - calculator (might be GUI)
+  - file - file manager (might be GUI)
+
