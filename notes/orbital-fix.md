@@ -23,10 +23,31 @@ Run QEMU with graphics: `./run-dev.sh -tg` or `./run-dev.sh -g`
 3. Ion shell spawns as login manager
 4. Main event loop entered
 
-## Remaining Issue
-Window creation crashes when trying to create a second window. The crash appears
-to be in memory allocation (ImageAligned::new) or event handling. This may be a
-Cranelift ABI issue that needs further investigation.
+## Window Creation - RESOLVED 2026-01-16
+
+The "window creation crash on second window" issue was investigated but could NOT be reproduced.
+
+### Testing Performed
+- Added debug prints to ImageAligned::new and Window::new
+- Built orbital with debug logging redirected to /scheme/9p.hostshare/orbital.log
+- Created multiple windows successfully via `cat /scheme/orbital/0/0/400/300 &`
+- All memalign calls succeeded with valid pointers
+- Created 9+ windows without any crash
+
+### Observations
+- memalign(4096, 483328) returns valid addresses (0x541000, 0x5b8000, etc.)
+- memset and slice creation complete successfully
+- Window struct construction completes without error
+
+### Possible Resolutions
+The issue may have been fixed by recent commits:
+- vesad display fix (aed1fe6e9)
+- pcid config crash fix (6a06985ba)
+- kernel physmap fixes
+Or the crash only occurs under specific conditions not yet identified.
+
+### Status: NOT REPRODUCIBLE
+No further action needed unless the issue reappears.
 
 ## Commands
 ```bash
