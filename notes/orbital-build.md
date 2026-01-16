@@ -84,6 +84,66 @@ Once crashed, must reboot to restore display.
 ### Next Steps
 1. DONE: Confirmed vesad/fbcond built with same Cranelift toolchain
 2. Add debug logging before each step in open_display()
-3. Try building orblogin/orbutils to have proper login manager
+3. DONE: Built orblogin/orbutils (see below)
 4. Test with RUST_LOG=trace to get more output
 5. Check if issue is in mmap syscall or display buffer access
+
+## Orbutils Build (2026-01-16)
+
+### Built Binaries
+Successfully built with Cranelift:
+- **launcher** (13MB stripped) - application launcher/taskbar
+- **orblogin** (6.4MB stripped) - graphical login manager
+- **background** (5.8MB stripped) - background setter
+
+Location: `/opt/other/redox/share/`
+
+### Build Setup
+Source: `recipes/gui/orbutils/source/`
+
+#### .cargo/config.toml
+```toml
+[build]
+rustflags = ["-Cpanic=abort", "-Clink-arg=-z", "-Clink-arg=muldefs"]
+
+[net]
+offline = false
+
+[patch.crates-io]
+libc = { git = "https://github.com/redox-os/liblibc.git", branch = "redox-0.2" }
+orbclient = { git = "https://github.com/redox-os/orbclient.git" }
+rustix = { git = "https://github.com/jackpot51/rustix.git", branch = "redox-ioctl" }
+redox-scheme = { path = "../../../core/base/source/redox-scheme" }
+libredox = { git = "https://gitlab.redox-os.org/redox-os/libredox.git" }
+softbuffer = { git = "https://gitlab.redox-os.org/redox-os/softbuffer", branch = "redox-0.2" }
+winit = { git = "https://gitlab.redox-os.org/redox-os/winit", branch = "redox-0.28.6" }
+```
+
+### Modifications
+- Removed `calculate` dependency from `orbutils/Cargo.toml` (uses C decimal library)
+- Copied `aarch64-unknown-redox-clif.json` target spec from orbital
+
+### Build Commands
+```bash
+cd recipes/gui/orbutils/source
+unset RUSTC_WRAPPER
+CARGO_INCREMENTAL=0 \
+DYLD_LIBRARY_PATH="$HOME/.rustup/toolchains/nightly-2026-01-02-aarch64-apple-darwin/lib" \
+RUSTFLAGS="-Zcodegen-backend=/opt/other/rustc_codegen_cranelift/dist/lib/librustc_codegen_cranelift.dylib -L /opt/other/redox/build/aarch64/sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
+cargo +nightly-2026-01-02 build \
+    --target aarch64-unknown-redox-clif.json \
+    --release \
+    -p launcher \
+    -Z build-std=std,core,alloc,panic_abort \
+    -Zbuild-std-features=compiler_builtins/no-f16-f128
+
+# For orblogin:
+cargo ... -p orbutils --bin orblogin
+# For background:
+cargo ... -p orbutils --bin background
+```
+
+### Testing Status
+- Orbital still crashes during display initialization
+- Display scheme `/scheme/display.vesa` not available after orbital crash
+- Need to investigate vesad compatibility with Cranelift-compiled orbital
