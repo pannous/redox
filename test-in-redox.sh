@@ -30,7 +30,7 @@ else
     echo "Starting QEMU in tmux..."
     pkill -f "qemu-system-aarch64.*pure-rust" 2>/dev/null || true
     sleep 1
-    ./run-dev.sh -t -d 2>/dev/null
+    ./run-dev.sh -tg -d 2>/dev/null
     sleep 3  # wait for tmux session to be created
     echo "Waiting for boot..."
     echo "In 60 seconds you can attach to session: tmux attach -t $SESSION"
