@@ -313,6 +313,9 @@ inputd -A 4  # Correct VT!
 The orbital source is gitignored (external dependency). This fix needs to be reapplied
 after any rebuild from upstream. Consider contributing upstream.
 
+**IMPORTANT**: Orbital requires a display driver (virtio-gpud for QEMU aarch64).
+The driver must be started for `/scheme/display/` to exist. Without it, orbital crashes with UNHANDLED EXCEPTION.
+
 ### Files Modified
 - recipes/gui/orbital/source/src/core/mod.rs
 - recipes/gui/orbital/source/src/main.rs
@@ -337,5 +340,30 @@ VT=3 orbital orblogin launcher --auto username password
 - Binary installed to mount/usr/bin/orblogin and share/orblogin
 
 ### Note
-The launcher binary crashes (separate issue), but orblogin auto-login itself works.
+The launcher binary previously crashed (fixed below). orblogin auto-login itself works.
 Use orblogin from share/ folder for latest version: `/scheme/9p.hostshare/orblogin`
+
+
+## 2026-01-17: Launcher font-safe version
+
+Fixed launcher to handle missing fonts gracefully (prevents crash from Font::find().unwrap()).
+
+### Changes Made
+- **Disabled fontdb system font loading** in lazy_static USVG_OPTIONS (line 149)
+  - Previously: `opt.fontdb_mut().load_system_fonts();`
+  - Now: Commented out, uses default options
+- **Made Font optional** throughout the codebase:
+  - `Bar.font: Option<Font>` instead of `Font`
+  - `Font::find(...).ok()` instead of `.unwrap()`/`.expect()`
+  - All font rendering wrapped in `if let Some(ref font) = self.font { ... }`
+  - `draw_chooser()` accepts `Option<&Font>` parameter
+
+### Files Modified
+- recipes/gui/orbutils/source/launcher/src/main.rs
+
+### Binary Location
+- `/opt/other/redox/share/launcher` (4.5MB)
+
+### Testing Status
+Not tested - blocked by orbital crash (display driver not started).
+Requires virtio-gpud or another display driver to test orbital → orblogin → launcher chain.
