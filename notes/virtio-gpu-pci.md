@@ -161,10 +161,27 @@ cd recipes/core/base/source
 ./build-initfs-cranelift.sh
 ```
 
-## Next Steps
+## Investigation Progress (2026-01-17)
 
-1. Check pcid-spawner detects virtio-gpu device
-2. Verify virtio-gpud binary is in initfs
-3. Check driver initialization logs
-4. Compare working virtio-9pd flow
-5. Test queue setup and command execution
+### Driver Spawned but Crashes
+- Driver IS spawned by pcid-spawner
+- Log shows "initiating startup sequence"
+- Sometimes gets to "display 0 (1280x800px)" - probe_device succeeds
+- But then driver crashes/exits without creating display scheme
+- Behavior is INCONSISTENT between boots
+
+### Logging Added
+- Added logging in `init()` and `GpuScheme::new()`
+- Strings are in binary but don't appear in logs
+- Suggests crash happens DURING init() or right after
+
+### Crash Point (suspected)
+After `update_displays()` logs "display 0", something fails:
+1. EDID handling if `has_edid` is true
+2. `DisplayHandle::new("virtio-gpu")`
+3. Event queue setup
+
+### Next Steps
+1. Try disabling EDID feature to see if that's the issue
+2. Add eprintln for immediate output (bypass log scheme)
+3. Check if DisplayHandle::new is failing
