@@ -70,3 +70,25 @@ Installed debug versions of orbital GUI components to /usr/bin/:
 - launcher (21M, was 13.5M)
 
 Built with -Cdebuginfo=2 for symbol tables.
+
+## 2025-01-17: Dynamic Linker Symbol Cache
+
+Replaced /usr/lib/ld.so.1 with version containing symbol cache:
+- Size: 1.4MB (was 402KB) - larger due to Cranelift code generation
+- Commit: relibc b0fd51fe "feature(minor): Add symbol resolution cache"
+- Built with: build-cranelift.sh relibc + manual ld_so linking
+
+Changes in relibc:
+- src/ld_so/linker.rs: Added CachedSymbol, SYMBOL_CACHE, modified _get_sym
+- src/ld_so/dso.rs: Added Clone derive to SymbolBinding
+
+Build commands:
+```bash
+./build-cranelift.sh relibc
+cd recipes/core/relibc/source
+CARGO_INCREMENTAL=0 cargo rustc --release --manifest-path ld_so/Cargo.toml \
+  --target aarch64-unknown-redox-clif.json -Z build-std=core,alloc \
+  -- --emit obj=target/aarch64-unknown-redox-clif/release/ld_so.o -C panic=abort
+rust-lld -flavor gnu --no-relax -T ld_so/ld_script/aarch64-unknown-redox.ld \
+  --allow-multiple-definition --gc-sections ld_so.o crti.o librelibc.a crtn.o -o ld.so.1
+```
