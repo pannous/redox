@@ -1,3 +1,9 @@
+     root:~# time ls /usr/bin | wc -l
+     1
+     real    22.097091675s
+HOW??
+
+
 wget is still SLOOOOOW!!!
 
 Creating files on the share with currently creates the wrong permissions on the host system. 
