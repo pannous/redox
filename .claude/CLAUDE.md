@@ -100,16 +100,12 @@ Do not copy pure-rust.works.img to pure-rust.img before you try manual recovery 
 
 # Caveats
 2>&1 doesn't work in ion scripts - use files
+ ls /scheme/ very often hangs (depending on device?)
+ currently try to debug WITHOUT ls /scheme/... 
 chmod doesn't work in 9p
 
-# ⚠️ DO NOT TOUCH: Bootloader
-The UEFI bootloader (recipes/core/bootloader/) CANNOT be built on macOS.
-- Requires Linux + LLVM (PE/COFF format for aarch64-unknown-uefi)
-- Cranelift doesn't support PE/COFF relocations for aarch64
-- Use pre-built bootloader from denovo/bootloader/EFI/BOOT/BOOTAA64.EFI
-- If bootloader breaks, restore from denovo or pure-rust.works.img
-
-
+# ⚠️ DO NOT TOUCH: bootloader
+see Bootloader.md if you need to
 
 # Logging
 Drivers respect `RUST_LOG` env var (set in `common/logger.rs`).
