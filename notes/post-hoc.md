@@ -71,24 +71,28 @@ Installed debug versions of orbital GUI components to /usr/bin/:
 
 Built with -Cdebuginfo=2 for symbol tables.
 
-## 2025-01-17: Dynamic Linker Symbol Cache
+## 2026-01-17: Dynamic Linker Symbol Cache (In-process)
 
-Replaced /usr/lib/ld.so.1 with version containing symbol cache:
+Initial version with in-process symbol cache:
 - Size: 1.4MB (was 402KB) - larger due to Cranelift code generation
 - Commit: relibc b0fd51fe "feature(minor): Add symbol resolution cache"
-- Built with: build-cranelift.sh relibc + manual ld_so linking
+- In-process only (CachedSymbol, SYMBOL_CACHE in linker.rs)
+
+## 2026-01-17: Shared Memory Symbol Cache (Cross-process)
+
+Enabled file-backed shared cache at /tmp/ld_symbol_cache:
+- Size: 1.4MB (same as before)
+- Commit: relibc 668b5ae1 "feature(minor): Enable shared-memory symbol cache"
+- Cross-process persistence via MAP_SHARED mmap
 
 Changes in relibc:
-- src/ld_so/linker.rs: Added CachedSymbol, SYMBOL_CACHE, modified _get_sym
-- src/ld_so/dso.rs: Added Clone derive to SymbolBinding
+- src/ld_so/mod.rs: Enable shared_cache module
+- src/ld_so/shared_cache.rs: Remove disabled return in init_shared_cache(), add cache_insert_by_path()
+- src/ld_so/linker.rs: Integrate cache lookup/insert in _get_sym()
 
 Build commands:
 ```bash
 ./build-cranelift.sh relibc
-cd recipes/core/relibc/source
-CARGO_INCREMENTAL=0 cargo rustc --release --manifest-path ld_so/Cargo.toml \
-  --target aarch64-unknown-redox-clif.json -Z build-std=core,alloc \
-  -- --emit obj=target/aarch64-unknown-redox-clif/release/ld_so.o -C panic=abort
-rust-lld -flavor gnu --no-relax -T ld_so/ld_script/aarch64-unknown-redox.ld \
-  --allow-multiple-definition --gc-sections ld_so.o crti.o librelibc.a crtn.o -o ld.so.1
+./build-ld-so.sh
+cp recipes/core/relibc/source/target/aarch64-unknown-redox-clif/release/ld.so.1.stripped mount/usr/lib/ld.so.1
 ```
