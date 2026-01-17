@@ -99,10 +99,10 @@ cargo --config net.offline=false update
 Do not copy pure-rust.works.img to pure-rust.img before you try manual recovery of broken files by copying from mounted pure-rust.works.img
 
 # Caveats
+chmod doesn't work in 9p
 2>&1 doesn't work in ion scripts - use files
  ls /scheme/ very often hangs (depending on device?)
- currently try to debug WITHOUT ls /scheme/... 
-chmod doesn't work in 9p
+ currently try to debug WITHOUT ls /scheme/...  file /scheme/... etc!
 
 # ⚠️ DO NOT TOUCH: bootloader
 see Bootloader.md if you need to
