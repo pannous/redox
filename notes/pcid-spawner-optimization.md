@@ -199,3 +199,33 @@ Implemented `/scheme/shm` detection for true shared memory caching:
 
 ### Next Step
 Hook `cache_insert()` calls into `linker.rs` symbol resolution to actually populate the cache.
+
+## MILESTONE: Symbol Cache Integration Complete (2026-01-18 00:10)
+
+### SUCCESS: Cross-Process Symbol Caching Working!
+
+Hooked the cache into `resolve_sym()` in `dso.rs`:
+
+1. **Cache lookup**: Check cache before expensive DSO iteration
+2. **Cache insert**: Store resolved symbols for future processes
+3. **DSO lookup by name**: Added `find_dso_by_name()` to Scope
+
+### Boot Results
+```
+959 cache HITs
+2 new inserts (symbols not previously cached)
+```
+
+### Key Fix
+DSOs registered via `cache_insert_by_path()` use `mtime=0, inode=0, dev=0` as a marker meaning "trust cache, don't validate file". Without this, validation was invalidating the entire cache on every process start.
+
+### Files Modified
+- `src/ld_so/dso.rs` - Modified `resolve_sym()` with cache lookup/insert
+- `src/ld_so/linker.rs` - Added `find_dso_by_name()` to Scope
+- `src/ld_so/shared_cache.rs` - Skip validation for unvalidated DSOs
+
+### Performance Impact
+With caching enabled:
+- First process: populates cache (INSERTED messages)
+- Subsequent processes: cache HITs instead of O(n) DSO searches
+- Should significantly speed up process startup on aarch64 (eager binding)
