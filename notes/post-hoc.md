@@ -110,3 +110,28 @@ sleep 3
 cp /tmp/denovo-mnt/usr/lib/ld.so.1 /opt/other/redox/mount/usr/lib/ld.so.1
 umount /tmp/denovo-mnt
 ```
+
+## 2026-01-18: curl/wget HTTP client
+
+Added pure-Rust HTTP/HTTPS client with wget-like functionality.
+
+### Files Added
+- `/usr/bin/curl` (6.1MB) - HTTP client with TLS via rustls-rustcrypto
+- `/usr/bin/wget` (6.1MB) - Same binary, auto-detects name and defaults to save-to-file
+
+### Features
+- `-o FILE` - Save to specific file
+- `-O` - Save using remote filename (wget default)
+- `-L` - Follow redirects (wget default)
+- `-v` - Verbose mode
+- `-I` - Headers only
+- `-s` - Silent mode
+
+### Dynamic Linking Attempt
+**FAILED** - Tried building with `-Cprefer-dynamic` but cargo's `-Z build-std` always
+statically links std. Would need pre-built dynamic std library for Redox target.
+Currently using static linking (~6MB per binary).
+
+### Source
+- `/opt/other/redox/recipes/core/base/source/curl/`
+- Build: `./build-curl.sh`
