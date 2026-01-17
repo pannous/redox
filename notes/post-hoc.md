@@ -80,15 +80,21 @@ Initial version with in-process symbol cache:
 
 ## 2026-01-17: Shared Memory Symbol Cache (Cross-process)
 
-Enabled file-backed shared cache at /tmp/ld_symbol_cache:
+**STATUS: DISABLED** - Causes system hang after getty. Needs debugging.
+
+File-backed shared cache at /tmp/ld_symbol_cache:
 - Size: 1.4MB (same as before)
-- Commit: relibc 668b5ae1 "feature(minor): Enable shared-memory symbol cache"
+- Commits:
+  - relibc 668b5ae1 "feature(minor): Enable shared-memory symbol cache"
+  - relibc 06349190 "chore: disable shared cache for debugging"
 - Cross-process persistence via MAP_SHARED mmap
 
 Changes in relibc:
 - src/ld_so/mod.rs: Enable shared_cache module
-- src/ld_so/shared_cache.rs: Remove disabled return in init_shared_cache(), add cache_insert_by_path()
+- src/ld_so/shared_cache.rs: Cache infrastructure (currently disabled via return statement)
 - src/ld_so/linker.rs: Integrate cache lookup/insert in _get_sym()
+
+To re-enable: Remove `return;` in init_shared_cache() in shared_cache.rs
 
 Build commands:
 ```bash
@@ -96,3 +102,5 @@ Build commands:
 ./build-ld-so.sh
 cp recipes/core/relibc/source/target/aarch64-unknown-redox-clif/release/ld.so.1.stripped mount/usr/lib/ld.so.1
 ```
+
+Note: The console/getty issue (no login prompt on serial) is unrelated to the shared cache and exists with or without it enabled.

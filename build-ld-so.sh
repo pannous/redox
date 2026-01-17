@@ -4,8 +4,9 @@
 set -e
 
 RELIBC_DIR="recipes/core/relibc/source"
-TARGET="aarch64-unknown-redox"
-BUILD_DIR="$RELIBC_DIR/target/${TARGET}-clif/release"
+# Build dir uses -clif suffix, linker script uses base target name
+BUILD_DIR="$RELIBC_DIR/target/aarch64-unknown-redox-clif/release"
+LD_SCRIPT_TARGET="aarch64-unknown-redox"
 
 # Find rust-lld
 RUST_SYSROOT="$(rustc --print sysroot)"
@@ -23,7 +24,7 @@ fi
 echo "Using linker: $RUST_LLD"
 
 # Check prerequisites
-for f in ld_so.o crti.o librelibc.a crtn.o; do
+for f in libld_so.a crti.o librelibc.a crtn.o; do
     if [ ! -f "$BUILD_DIR/$f" ]; then
         echo "Error: $BUILD_DIR/$f not found"
         echo "Run ./build-cranelift.sh relibc first"
@@ -32,14 +33,15 @@ for f in ld_so.o crti.o librelibc.a crtn.o; do
 done
 
 # Build ld.so.1
+# Use --whole-archive for libld_so.a to include all its objects
 echo "Building ld.so.1..."
 $RUST_LLD \
     -flavor gnu \
     --no-relax \
-    -T "$RELIBC_DIR/ld_so/ld_script/${TARGET}.ld" \
+    -T "$RELIBC_DIR/ld_so/ld_script/${LD_SCRIPT_TARGET}.ld" \
     --allow-multiple-definition \
     --gc-sections \
-    "$BUILD_DIR/ld_so.o" \
+    --whole-archive "$BUILD_DIR/libld_so.a" --no-whole-archive \
     "$BUILD_DIR/crti.o" \
     "$BUILD_DIR/librelibc.a" \
     "$BUILD_DIR/crtn.o" \
