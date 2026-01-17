@@ -1,5 +1,9 @@
 # The ld.so.1 Debugging Saga (2026-01-17)
 
+The goal was to enable Dynamic Linking Symbol Cache 
+**REVERTED** - Code removed from relibc (commits reverted to 6bcf31ab).
+The in-process and shared cache implementations were causing issues.
+
 ## The Symptom
 
 System hung after boot with no login prompt:
