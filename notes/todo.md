@@ -3,6 +3,12 @@
      real    22.097091675s
 HOW??
 
+  Both ls (23s) and simple-ls (30s) are extremely slow! This isn't a binary issue - it's likely:
+  1. Filesystem (redoxfs) being slow for directory reads2. Too many stat() calls3. Dynamic linking overhead (but simple-ls
+  is statically linked in initfs)
+
+  ⏺ /bin = 0.5s, /usr/bin = 23s. Let me count files:
+
 
 wget is still SLOOOOOW!!!
 
