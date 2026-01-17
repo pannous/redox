@@ -78,3 +78,46 @@ After restart, should see:
 1. Faster boot with only 3 drivers in main pcid.d
 2. Parallel loading messages from pcid-spawner
 3. Optional drivers loaded later via 99_optional_drivers
+
+## Symbol Cache Re-enablement (2026-01-17)
+
+### Problem Found
+The shared_cache module was written but **never compiled** - `mod shared_cache` was missing from `mod.rs`.
+
+### Changes Made
+
+1. **Added module declaration** in `src/ld_so/mod.rs`:
+   ```rust
+   pub mod shared_cache;
+   ```
+
+2. **Added init call** in `src/ld_so/start.rs`:
+   ```rust
+   init_shared_cache();
+   ```
+   Called before `Linker::new()` to initialize cache before symbol resolution.
+
+3. **Added extensive debugging** to track potential hangs:
+   - `init_shared_cache()` - logs each step
+   - `SharedCache::open()` - logs tmp check, file open, mmap
+   - `create_new()` - logs file creation, ftruncate
+
+4. **Changed MAP_SHARED to MAP_PRIVATE** as potential fix:
+   - MAP_SHARED might cause blocking issues with file sync
+   - MAP_PRIVATE avoids cross-process sharing but still allows caching within a process
+
+### Files Modified
+- `recipes/core/relibc/source/src/ld_so/mod.rs` - Added module declaration
+- `recipes/core/relibc/source/src/ld_so/shared_cache.rs` - Added debugging, MAP_PRIVATE
+- `recipes/core/relibc/source/src/ld_so/start.rs` - Added init_shared_cache() call
+- `mount/lib/ld.so.1` - Updated with new code (971728 bytes vs 955344)
+
+### Testing Required
+Reboot Redox to test:
+- Cache should initialize on first command after /tmp is mounted
+- Look for `[ld.so cache]` messages in output
+- Watch for any hangs at getty
+
+### If Hang Occurs
+1. Cache can be disabled by modifying `cache_disabled()` to return true
+2. Or boot with older ld.so.1.backup
