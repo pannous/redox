@@ -125,3 +125,5 @@ Before and after each Bash command, give a short one-line comment
 commit often, small increments
 
 ⚠️ NEVER use `git` directly - ALWAYS use ./git-all.sh ⚠️
+
+⚠️ There are currently three agents working on the code please do not kill qemu sessions instead of be patient
