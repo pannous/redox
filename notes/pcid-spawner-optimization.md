@@ -229,3 +229,27 @@ With caching enabled:
 - First process: populates cache (INSERTED messages)
 - Subsequent processes: cache HITs instead of O(n) DSO searches
 - Should significantly speed up process startup on aarch64 (eager binding)
+
+## FINAL: Performance Results (2026-01-18)
+
+### Verified Performance
+- **Before cache**: 9-11 seconds per external command startup
+- **After cache**: ~0.6 seconds per external command startup
+- **Improvement**: 15x-18x faster command startup!
+
+### Test Results
+```
+time ls /usr/bin/ls   # First run
+real    0.606428862s
+
+time ls /usr/bin/ls   # Second run
+real    0.586618900s
+
+time ls /usr/bin/ls   # Third run
+real    0.613841474s
+```
+
+### Debug Output
+Converted all `eprintln!("[ld.so cache]...")` to `trace!()` macro.
+- trace! is zero-cost when disabled (compiles to nothing)
+- Enable with `--features trace` in relibc build to re-enable debug output
