@@ -82,7 +82,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         "${NETDEV_ARGS[@]}" \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device ramfb \
+        -device virtio-gpu-pci \
         -serial mon:stdio
         # -device virtio-gpu-pci \  # TODO: driver init works but rendering broken
 elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
@@ -106,7 +106,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
         ${NETDEV_ARGS[*]} \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device ramfb \
+        -device virtio-gpu-pci \
         -serial mon:stdio"
         # -device virtio-gpu-pci \  # TODO: driver init works but rendering broken
 
