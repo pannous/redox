@@ -60,3 +60,13 @@ cp mount/etc/ion/wasm.ion /path/to/mount/etc/ion/
 - Also placed updated inputd in share/ for 9p access
 - **Note**: Due to snapshot=on, need to set PATH=/scheme/9p.hostshare:$PATH before running orbital to use the new inputd
 
+
+## 2025-01-17: GUI Debug Builds
+
+Installed debug versions of orbital GUI components to /usr/bin/:
+- orbital (11.9M, was 7.0M)
+- orblogin (7.3M, was 4.7M)
+- background (9.5M, NEW)
+- launcher (21M, was 13.5M)
+
+Built with -Cdebuginfo=2 for symbol tables.
