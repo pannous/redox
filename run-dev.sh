@@ -80,7 +80,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         "${NETDEV_ARGS[@]}" \
-        -device qemu-xhci -device usb-kbd \
+        -device qemu-xhci -device usb-kbd -device usb-tablet \
         -device ramfb \
         -serial mon:stdio
 elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
@@ -102,7 +102,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
         ${NETDEV_ARGS[*]} \
-        -device qemu-xhci -device usb-kbd \
+        -device qemu-xhci -device usb-kbd -device usb-tablet \
         -device ramfb \
         -serial mon:stdio"
 
