@@ -317,3 +317,25 @@ after any rebuild from upstream. Consider contributing upstream.
 - recipes/gui/orbital/source/src/core/mod.rs
 - recipes/gui/orbital/source/src/main.rs
 - Binary installed to mount/usr/bin/orbital
+
+
+## 2026-01-17: orblogin auto-login feature
+
+Added auto-login support to orblogin for development/testing.
+
+### Usage
+```bash
+# Auto-login as root (no password check)
+VT=3 orbital orblogin launcher --auto-root
+
+# Auto-login with credentials
+VT=3 orbital orblogin launcher --auto username password
+```
+
+### Files Modified
+- recipes/gui/orbutils/source/orbutils/src/orblogin/main.rs
+- Binary installed to mount/usr/bin/orblogin and share/orblogin
+
+### Note
+The launcher binary crashes (separate issue), but orblogin auto-login itself works.
+Use orblogin from share/ folder for latest version: `/scheme/9p.hostshare/orblogin`
