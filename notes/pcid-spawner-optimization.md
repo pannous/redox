@@ -121,3 +121,52 @@ Reboot Redox to test:
 ### If Hang Occurs
 1. Cache can be disabled by modifying `cache_disabled()` to return true
 2. Or boot with older ld.so.1.backup
+
+## Test Results (2026-01-17 23:46)
+
+### SUCCESS: No Getty Hang
+The system boots successfully with the symbol cache enabled. Key observations:
+
+1. **Cache initializes correctly**:
+   ```
+   [ld.so cache] init_shared_cache starting
+   [ld.so cache] calling SharedCache::open()
+   [ld.so cache] open: checking /tmp exists
+   [ld.so cache] open: /tmp exists, creating path
+   [ld.so cache] open: trying to open /tmp/ld_symbol_cache
+   [ld.so cache] open: creating new cache file
+   [ld.so cache] create_new: file created, fd=4
+   [ld.so cache] create_new: ftruncate to 1199160 bytes
+   [ld.so cache] open: mmap succeeded at 0x330000
+   ```
+
+2. **MAP_PRIVATE behavior**: Each subsequent process sees "invalid header, reinitializing" because:
+   - MAP_PRIVATE creates copy-on-write mappings
+   - Writes by one process are NOT visible to others
+   - Each process gets its own private copy of the cache
+
+3. **Getty runs without hang**: The critical issue is fixed - no more hangs at getty startup
+
+### Current Limitation
+With MAP_PRIVATE, the cache doesn't actually share data between processes. Each process:
+1. Opens the cache file
+2. Sees "invalid header" (because previous process's writes are private)
+3. Reinitializes its own private copy
+
+This means **no cross-process caching benefit** yet, but the hang is fixed.
+
+### Root Cause of Original Hang (Theory)
+MAP_SHARED likely caused issues because:
+- File-backed MAP_SHARED requires kernel synchronization
+- During early boot, file sync operations may block indefinitely
+- Or there's a deadlock in Redox's mmap/msync implementation for shared mappings
+
+### Next Steps for Real Caching
+To achieve actual cross-process symbol caching:
+
+1. **Option A: Fix MAP_SHARED** - Debug why it hangs (complex)
+2. **Option B: Use anonymous shared memory** - `shm_open()` + MAP_SHARED (no file backing)
+3. **Option C: Use IPC** - Dedicated daemon that manages symbol lookup (more overhead)
+4. **Option D: Pre-warm cache** - Boot-time script that populates file before MAP_PRIVATE reads
+
+For now, the cache is "enabled" but not providing cross-process benefits. The hang fix is the main achievement.
