@@ -92,6 +92,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     echo "Starting QEMU with graphics in tmux: $SESSION" >&2
     echo "Attach: tmux attach -t $SESSION" >&2
     echo "QEMU window will open - resolution auto-selected after 2s" >&2
+    echo "use WORKING -device ramfb \ or fix -device virtio-gpu-pci "
 
     tmux new-session -d -s "$SESSION" \
         "qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
@@ -104,8 +105,10 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
         ${NETDEV_ARGS[*]} \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device virtio-gpu-pci \
         -serial mon:stdio"
+
+#        -device virtio-gpu-pci \
+
 
     # Auto-select default resolution in GUI
     (sleep 2 && tmux send-keys -t "$SESSION" "" Enter && sleep 2) &
