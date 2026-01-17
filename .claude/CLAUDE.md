@@ -98,31 +98,30 @@ cargo --config net.offline=false update
 # Recovery
 Do not copy pure-rust.works.img to pure-rust.img before you try manual recovery of broken files by copying from mounted pure-rust.works.img
 
+
+# ⚠️ DO NOT TOUCH: bootloader
+see Bootloader.md if you need to
+
 # Caveats
 chmod doesn't work in 9p
 2>&1 doesn't work in ion scripts - use files
  ls /scheme/ very often hangs (depending on device?)
  currently try to debug WITHOUT ls /scheme/...  file /scheme/... etc!
-
-# ⚠️ DO NOT TOUCH: bootloader
-see Bootloader.md if you need to
+ Alternatively use plenty of de Black statements but disable them when everything works:
+Risk: pre-built packages may not match Cranelift ABI
+The target spec NEEDS "position-independent-executables": false:
+The kernel's ELF loader doesn't support PIE relocation. Without this, binaries jump to address 0x0 on startup.
 
 # Logging
 Drivers respect `RUST_LOG` env var (set in `common/logger.rs`).
 pcid-spawner passes `RUST_LOG=warn` to spawned drivers.
-To re-enable verbose: edit pcid-spawner or set `RUST_LOG=info` in 00_base.
-
+To re-enable verbose: edit pcid-spawner or set `export RUST_LOG=all` in 00_base.
 # Logging Configuration
 Boot logging is controlled by `RUST_LOG` in init.rc (line 9) currently "warn", ./build-initfs.sh
 
-Risk: pre-built packages may not match Cranelift ABI
-
-The target spec NEEDS "position-independent-executables": false:
-The kernel's ELF loader doesn't support PIE relocation. Without this, binaries jump to address 0x0 on startup.
-
-commit often, small increments even broken wip!
-
 Before and after each Bash command, give a short one-line comment 
 
+# commit
+commit often, small increments
+
 ⚠️ NEVER use `git` directly - ALWAYS use ./git-all.sh ⚠️
-NEVER remove a TODO, replace with DONE if done, keep text identical
