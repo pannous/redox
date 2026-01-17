@@ -1,12 +1,14 @@
 #!/bin/bash
 # Build ld.so.1 for aarch64 using pure Rust toolchain
+# IMPORTANT: Uses default linker layout (no custom linker script) because:
+# - Custom linker script creates ELF with headers NOT in LOAD segment
+# - Redox kernel requires headers to be part of first LOAD segment
+# - Default layout starts first LOAD at file offset 0, including headers
 
 set -e
 
 RELIBC_DIR="recipes/core/relibc/source"
-# Build dir uses -clif suffix, linker script uses base target name
 BUILD_DIR="$RELIBC_DIR/target/aarch64-unknown-redox-clif/release"
-LD_SCRIPT_TARGET="aarch64-unknown-redox"
 
 # Find rust-lld
 RUST_SYSROOT="$(rustc --print sysroot)"
@@ -32,14 +34,12 @@ for f in libld_so.a crti.o librelibc.a crtn.o; do
     fi
 done
 
-# Build ld.so.1
+# Build ld.so.1 using default layout (no custom linker script)
 # --whole-archive needed for libld_so.a to satisfy cross-references with librelibc.a
-# Size reduction via --gc-sections (LTO/opt-level=z don't work with Cranelift)
 echo "Building ld.so.1..."
 $RUST_LLD \
     -flavor gnu \
     --no-relax \
-    -T "$RELIBC_DIR/ld_so/ld_script/${LD_SCRIPT_TARGET}.ld" \
     --allow-multiple-definition \
     --gc-sections \
     --whole-archive "$BUILD_DIR/libld_so.a" --no-whole-archive \
