@@ -1,62 +1,66 @@
-# ld.so.1 Cranelift Build - Optimization Results
+# ld.so.1 Cranelift Build - FIXED
 
 ## Summary
 
-**The Cranelift-built ld.so.1 does NOT work** - system boots but getty fails to exec ion.
-
-## Size Comparison
-
-| Build | Unstripped | Stripped |
-|-------|------------|----------|
-| LLVM  | ~1.1MB     | 393KB    |
-| Cranelift | 2.1MB  | 1.3MB    |
-
-The Cranelift binary is **3x larger** even after stripping.
-
-## Optimization Attempts
-
-### 1. Remove `--whole-archive` from linker
-**Result: FAILED** - Causes undefined symbol errors. The libld_so.a archive has cross-references with librelibc.a that require whole-archive linking.
-
-### 2. Add `lto = "thin"` to Cargo.toml
-**Result: WARNING** - Cranelift backend doesn't support LTO. Shows "LTO is not supported. You may get a linker error."
-
-### 3. Add `opt-level = "z"` to Cargo.toml
-**Result: FAILED** - Causes new undefined symbol errors:
-- `core::panicking::panic_nounwind_fmt`
-- `alloc::raw_vec::handle_error`
-- `core::slice::index::slice_index_fail`
-- Many core/alloc symbols
-
-The size optimization causes the compiler to outline code that references std symbols not available in relibc's freestanding build.
+**Cranelift-built ld.so.1 NOW WORKS** after fixing ELF layout issue.
 
 ## Root Cause
 
-The ld.so.1 is the dynamic linker itself. It must be **statically linked** and include all functionality inline. Cranelift:
-1. Generates less optimized code than LLVM
-2. Cannot use LTO for cross-module optimization
-3. Cannot use aggressive size opts without breaking symbol requirements
+The custom linker script (`ld_so/ld_script/aarch64-unknown-redox.ld`) created
+an ELF where the first LOAD segment started at file offset 0x10000, excluding
+ELF headers from any mapped segment:
 
-## Functional Test
+```
+LLVM (working):    LOAD offset=0x0000, VA=0x20000000 (headers included)
+Cranelift (broken): LOAD offset=0x10000, VA=0x20010000 (headers NOT included)
+```
+
+The Redox kernel requires ELF headers to be in the first LOAD segment.
+
+## The Fix
+
+Removed custom linker script from `build-ld-so.sh`. Default linker layout
+produces ELF with headers at offset 0, properly included in first LOAD segment.
+
+## Size Comparison
+
+| Build | Stripped |
+|-------|----------|
+| LLVM  | 402KB    |
+| Cranelift | 955KB |
+
+Cranelift is ~2.4x larger but now fully functional.
+
+## Optimization Attempts (historical)
+
+### 1. Remove `--whole-archive`
+**FAILED** - Undefined symbol errors. Cross-references require whole-archive.
+
+### 2. Add `lto = "thin"`
+**N/A** - Cranelift doesn't support LTO.
+
+### 3. Add `opt-level = "z"`
+**FAILED** - Causes undefined symbols for outlined panic/error handlers.
+
+## Functional Test (AFTER FIX)
 
 | ld.so.1 Version | Boot | Init | Getty | Shell |
 |-----------------|------|------|-------|-------|
-| LLVM (393KB)    | ✓    | ✓    | ✓     | ✓     |
-| Cranelift (1.3MB) | ✓  | ✓    | ✓     | ✗     |
+| LLVM (402KB)    | ✓    | ✓    | ✓     | ✓     |
+| Cranelift (955KB) | ✓  | ✓    | ✓     | ✓     |
 
-Getty starts but fails to load ion - the dynamic linker cannot successfully link executables.
+## Files Changed
 
-## Conclusion
+- `build-ld-so.sh` - Removed custom linker script, uses default layout
+- `ld_so/src/lib.rs` - Removed debug instrumentation
+- `src/ld_so/start.rs` - Removed debug instrumentation
 
-**LLVM ld.so.1 is required** for a working Redox system. The Cranelift toolchain can build relibc but produces a non-functional ld.so.1.
+## Debugging Notes
 
-The 1.4MB "issue" mentioned earlier was likely the unstripped binary. The actual stripped Cranelift binary is 1.3MB, still 3x larger than LLVM and non-functional.
+The issue was diagnosed by:
+1. Adding raw syscall debug output to _start assembly
+2. Comparing ELF layouts between LLVM and Cranelift builds
+3. Discovering headers at file offset 0 vs 0x10000
+4. Testing default linker layout (which works)
 
-## Files Changed (reverted)
-
-- `build-ld-so.sh` - Updated comment only (kept --whole-archive)
-- `recipes/core/relibc/source/Cargo.toml` - LTO/opt-level reverted
-
-## Current State
-
-Using LLVM-built ld.so.1 (MD5: 8629c6da183a1d78a42920872d66e65b, 393KB)
+The kernel never reached _start because it couldn't properly map the ELF.
