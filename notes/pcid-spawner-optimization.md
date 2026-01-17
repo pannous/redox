@@ -170,3 +170,32 @@ To achieve actual cross-process symbol caching:
 4. **Option D: Pre-warm cache** - Boot-time script that populates file before MAP_PRIVATE reads
 
 For now, the cache is "enabled" but not providing cross-process benefits. The hang fix is the main achievement.
+
+## MILESTONE: shm-based Cross-Process Cache (2026-01-17 23:55)
+
+### SUCCESS: True Cross-Process Caching
+Implemented `/scheme/shm` detection for true shared memory caching:
+
+1. **Cache path selection**: Prefers `/scheme/shm/ld_symbol_cache` (MAP_SHARED) over `/tmp` (MAP_PRIVATE)
+2. **Boot output confirms**:
+   ```
+   [ld.so cache] using shm path for cross-process sharing
+   [ld.so cache] open: using path=/scheme/shm/ld_symbol_cache, shared=true
+   [ld.so cache] open: using MAP_SHARED for cross-process caching
+   [ld.so cache] open: header valid
+   [ld.so cache] cache opened (CROSS-PROCESS mode), validating DSOs...
+   ```
+
+3. **No hang**: System boots cleanly with MAP_SHARED on /scheme/shm
+
+### Why /scheme/shm Works but /tmp Didn't
+- `/scheme/shm` is Redox's POSIX shared memory implementation
+- Designed for MAP_SHARED from the start (no file sync complexity)
+- `/tmp` file-backed mmap with MAP_SHARED caused hangs (likely kernel sync issue)
+
+### Current Status
+- ✅ Infrastructure works (file creation, mmap, header persistence)
+- ⏳ Symbol insertion not yet hooked into linker (shows "0 symbols")
+
+### Next Step
+Hook `cache_insert()` calls into `linker.rs` symbol resolution to actually populate the cache.
