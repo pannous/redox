@@ -268,3 +268,52 @@ Also fixed `relibc/src/platform/redox/event.rs`:
   - Aligned output formatting
   - Support for -f (files-from), -L/-h (follow/no-follow symlinks)
 - Added to initfs build script (build-initfs-cranelift.sh)
+
+
+## 2026-01-17: Fixed orbital VT activation mismatch
+
+### Issue
+Running `VT=3 orbital background /ui/background.jpg` showed a login terminal instead
+of orbital's GUI.
+
+### Root Cause
+1. Orbital opens `/scheme/input/consumer/{vt}` (e.g., consumer/3)
+2. inputd **ignores** the VT number in the path and auto-assigns the next VT (e.g., VT 4)
+3. Orbital then ran `inputd -A 3` (from env var) to activate VT 3
+4. But orbital was actually rendering to VT 4
+5. VT 3 didn't exist (or had getty), so login terminal remained visible
+
+### Fix Applied
+Modified orbital to use the actual assigned VT instead of the env var:
+
+**recipes/gui/orbital/source/src/core/mod.rs**:
+- Changed `open_display()` return type to include actual VT: `io::Result<(Self, Vec<Display>, String)>`
+- Extract VT from fpath result: `let actual_vt = vt_screen.split('.').next().unwrap_or(vt_screen).to_string();`
+- Return actual_vt along with orbital and displays
+
+**recipes/gui/orbital/source/src/main.rs**:
+- Destructure actual_vt: `let (orbital, displays, actual_vt) = Orbital::open_display(&vt)`
+- Use actual_vt for activation: `Command::new("inputd").arg("-A").arg(&actual_vt)`
+- Enhanced logging: `"orbital: {} displays at {}x{}, assigned VT {}"`
+
+### Testing
+Before fix:
+```
+orbital: 1 displays at 1024x768
+inputd -A 3  # Wrong VT!
+```
+
+After fix:
+```
+orbital: 1 displays at 800x600, assigned VT 4
+inputd -A 4  # Correct VT!
+```
+
+### Note
+The orbital source is gitignored (external dependency). This fix needs to be reapplied
+after any rebuild from upstream. Consider contributing upstream.
+
+### Files Modified
+- recipes/gui/orbital/source/src/core/mod.rs
+- recipes/gui/orbital/source/src/main.rs
+- Binary installed to mount/usr/bin/orbital
