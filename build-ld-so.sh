@@ -33,7 +33,8 @@ for f in libld_so.a crti.o librelibc.a crtn.o; do
 done
 
 # Build ld.so.1
-# Use --whole-archive for libld_so.a to include all its objects
+# --whole-archive needed for libld_so.a to satisfy cross-references with librelibc.a
+# Size reduction via --gc-sections (LTO/opt-level=z don't work with Cranelift)
 echo "Building ld.so.1..."
 $RUST_LLD \
     -flavor gnu \
