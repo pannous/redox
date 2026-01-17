@@ -367,3 +367,62 @@ Fixed launcher to handle missing fonts gracefully (prevents crash from Font::fin
 ### Testing Status
 Not tested - blocked by orbital crash (display driver not started).
 Requires virtio-gpud or another display driver to test orbital → orblogin → launcher chain.
+
+
+## 2026-01-17: pcid-spawner Optimization
+
+Optimized pcid-spawner to improve boot time by parallelizing driver loading and deferring non-essential drivers.
+
+### Problem
+1. **Sequential blocking**: pcid-spawner used `command.status()` which blocks until each driver exits
+2. **Dynamic linker bottleneck**: aarch64 uses eager binding (all symbols resolved at load time)
+3. **Too many drivers**: All drivers loaded at boot, even non-essential ones
+
+### Changes Made
+
+#### Phase 1: Defer Non-essential Drivers
+- Created `/etc/pcid.d/optional/` directory for non-essential drivers
+- Moved to optional:
+  - ac97d.toml (audio)
+  - bgad.toml (QEMU Graphics Array)
+  - ihdad.toml (Intel HD Audio)
+  - ihdgd.toml (Intel HD Graphics)
+  - ixgbed.toml (Intel 10G NIC)
+  - rtl8139d.toml, rtl8168d.toml (Realtek NICs)
+  - vboxd.toml (VirtualBox)
+  - xhcid.toml (USB)
+- Essential drivers kept in /etc/pcid.d/:
+  - virtio-9pd.toml, virtio-netd.toml, e1000d.toml
+- Created `/usr/lib/init.d/99_optional_drivers` to load deferred drivers post-boot
+
+#### Phase 2: Parallelize pcid-spawner
+- Modified `recipes/core/base/source/drivers/pcid-spawner/src/main.rs`:
+  - Changed from `command.status()` (blocking) to `command.spawn()` (non-blocking)
+  - Added `SpawnedDriver` struct to track spawned processes
+  - Collects all spawned drivers, then waits for all at end
+  - Messages now say "parallel mode" to confirm new behavior
+
+### Files Modified
+- `recipes/core/base/source/drivers/pcid-spawner/src/main.rs` - Parallel spawning
+- `mount/etc/pcid.d/` - Reorganized drivers
+- `mount/etc/pcid.d/optional/` - New directory for deferred drivers
+- `mount/usr/lib/init.d/99_optional_drivers` - New init script
+- `mount/boot/initfs` - Rebuilt with new pcid-spawner
+- `mount/usr/bin/pcid-spawner` - Updated binary
+
+### ld.so Investigation Findings
+- Lazy binding (Resolve::Lazy) is **only implemented for x86_64**
+- aarch64 forces Resolve::Now in `linker.rs:584-588`
+- The aarch64 PLT trampoline is just `udf #0` (crash)
+- There IS a symbol cache in `shared_cache.rs` but it's **DISABLED** (line 617-619)
+  - "DISABLED: Shared cache causes hang at getty - needs debugging"
+  - The MAP_SHARED mmap or file creation may be blocking
+
+### Expected Improvement
+- Essential driver load time reduced from sequential sum to parallel max
+- Boot-critical path only loads 3 drivers instead of 12
+- Optional drivers loaded after login prompt is available
+
+### Testing
+System boots successfully with deferred drivers and new pcid-spawner in initfs.
+To verify parallel loading, look for "parallel mode" in boot messages.
