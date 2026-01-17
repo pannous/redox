@@ -72,6 +72,8 @@ Note all post-hoc modifications to the img or mount as post-hoc.md
 or apply the changes in the source folders directly for denovo build
 
 ## Building Userspace Tools
+💡  important from now on all libraries should be dynamically linked so they can make full use of our ld.so linker cache.
+
 cd recipes/core/base/source/netstack && cargo build --target aarch64-unknown-redox 
 
 # Build all initfs tools
