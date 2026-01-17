@@ -81,7 +81,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         "${NETDEV_ARGS[@]}" \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device ramfb \
+        -device virtio-gpu-pci \
         -serial mon:stdio
 elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     # Tmux mode with graphics (ramfb) - serial output goes to tmux
@@ -103,7 +103,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
         ${NETDEV_ARGS[*]} \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device ramfb \
+        -device virtio-gpu-pci \
         -serial mon:stdio"
 
     # Auto-select default resolution in GUI
