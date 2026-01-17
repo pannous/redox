@@ -115,6 +115,9 @@ The target spec NEEDS "position-independent-executables": false:
 The kernel's ELF loader doesn't support PIE relocation. Without this, binaries jump to address 0x0 on startup.
 
 # Logging
+The trace! macro in relibc is controlled by feature="trace". 
+When disabled, it expands to nothing (zero-cost). After debugging convert all eprintln! to trace!
+
 Drivers respect `RUST_LOG` env var (set in `common/logger.rs`).
 pcid-spawner passes `RUST_LOG=warn` to spawned drivers.
 To re-enable verbose: edit pcid-spawner or set `export RUST_LOG=all` in 00_base.
