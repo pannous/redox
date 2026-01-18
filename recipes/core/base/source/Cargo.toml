@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "audiod",
+    "bottom",
     "daemon",
     "dns-test",
     "init",
@@ -97,6 +98,9 @@ drm-sys = { git = "https://github.com/Smithay/drm-rs.git" }
 
 # Updated for redox_syscall 0.7.0 compatibility
 redox-scheme = { path = "redox-scheme" }
+
+# For bottom - sysinfo with Redox support
+sysinfo = { git = "https://github.com/jackpot51/sysinfo.git" }
 
 [patch."https://gitlab.redox-os.org/redox-os/relibc.git"]
 #redox-rt = { path = "../../relibc/source/redox-rt" }
