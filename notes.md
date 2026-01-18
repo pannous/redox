@@ -268,9 +268,39 @@ misaligned pointer dereference: address must be a multiple of 0x8 but is 0x27c7a
 
 📺 orbital ion works
 
+alias e='helix'
+
 VT=3 /scheme/9p.hostshare/orbital /scheme/9p.hostshare/orblogin /scheme/9p.hostshare/launcher
-/scheme/9p.hostshare/background /ui/background.jpg
+VT=3 orbital orblogin launcher
+VT=4 orbital orblogin launcher
+VT=3 orbital orblogin background /ui/background.jpg
+VT=3 /scheme/9p.hostshare/orbital /scheme/9p.hostshare/launcher
+VT=3 orbital launcher
+VT=4 orbital background /ui/background.jpg
+VT=3 /scheme/9p.hostshare/orbital /scheme/9p.hostshare/background /ui/background.jpg
+VT=3 /scheme/9p.hostshare/background /ui/background.jpg
+orbital & disown
+chvt 3
 
   - calc - calculator (might be GUI)
   - file - file manager (might be GUI)
 
+
+
+ Built: NO EFFECT
+  - ✅ RedoxFS with read-ahead caching
+  - ✅ relibc with LD_PRELOAD support
+  - ✅ ld.so.1 (1.17MB stripped)
+  - ✅ initfs with updated redoxfs and drivers
+
+  Injected into mount:
+  - /lib/ld.so.1 - new with LD_PRELOAD support
+  - /lib/ld64.so.1 - same as above
+  - /lib/initfs.img - new (83MB) with read-ahead RedoxFS
+  - /usr/lib/init.d/00_aaa_preload_libs - ramfs library cache script
+
+  Commits:
+  - 0de6b86 (redoxfs) - Read-ahead caching
+  - c695520 (relibc) - LD_PRELOAD + debug fix
+  - d8d89ad (main) - pcid-spawner Option fix
+NO EFFECT
