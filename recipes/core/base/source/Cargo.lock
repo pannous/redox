@@ -5067,6 +5067,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
 
 [[package]]
+name = "venus-icd"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5194,6 +5201,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vkinfo"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "void"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5215,6 +5229,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d9b2acfb050df409c972a37d3b8e08cdea3bddb0c09db9d53137e504cfabed0"
 dependencies = [
  "utf8parse 0.2.2",
+]
+
+[[package]]
+name = "vulkan-loader"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5925,10 +5948,10 @@ name = "relibc"
 version = "0.2.5"
 
 [[patch.unused]]
-name = "relibc"
-version = "0.2.5"
-
-[[patch.unused]]
 name = "rustix"
 version = "1.1.2"
 source = "git+https://github.com/jackpot51/rustix.git?branch=redox-ioctl#e7e66bc77455251463336582c0b97df01054ccb8"
+
+[[patch.unused]]
+name = "relibc"
+version = "0.2.5"
