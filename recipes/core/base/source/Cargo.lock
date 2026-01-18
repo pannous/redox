@@ -955,6 +955,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossterm-test"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+]
+
+[[package]]
 name = "crossterm_winapi"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4493,6 +4500,13 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-io-kit",
  "windows 0.61.3",
+]
+
+[[package]]
+name = "sysinfo-test"
+version = "0.1.0"
+dependencies = [
+ "sysinfo",
 ]
 
 [[package]]

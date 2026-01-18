@@ -156,3 +156,22 @@ Add `00_aaa_preload_libs` to config/aarch64/qemu.toml under init.d files, or:
 ```bash
 cp mount/usr/lib/init.d/00_aaa_preload_libs /path/to/new/mount/usr/lib/init.d/
 ```
+
+## btm (bottom) - Process Monitor
+Built from jackpot51/bottom fork with Cranelift.
+
+### Build
+- Added to base workspace as symlink
+- Required fixes for ratatui API changes:
+  - Added local `braille` module with BLANK/DOTS constants
+  - Added wildcard match for Marker enum
+- Build: `./build_scripts/build-bottom.sh`
+
+### Install
+- Binary: `/opt/other/redox/share/bin/btm` (13MB)
+- Access in Redox: `/scheme/9p.hostshare/bin/btm`
+
+### Notes
+- Works with sysinfo from jackpot51/sysinfo (Redox-specific process info)
+- MIDR kernel debug messages pollute display (kernel issue, not btm)
+- Temps/Disks show "No data" - expected, Redox doesn't expose these yet

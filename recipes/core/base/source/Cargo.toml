@@ -3,7 +3,9 @@ resolver = "2"
 members = [
     "audiod",
     "bottom",
+    "crossterm-test",
     "daemon",
+    "sysinfo-test",
     "dns-test",
     "init",
     "initfs",
