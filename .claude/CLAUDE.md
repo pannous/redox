@@ -42,7 +42,7 @@ Good for: Testing binaries, scripts, quick iterations, persisting across reboots
 we did /opt/other/redox/mount.sh  to create permanent ./mount to build/aarch64/pure-rust.img
 You can just `cp tool /opt/other/redox/mount/usr/bin/`
 These changes will be picked up on the next restart of Redox.
-⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we NEVER NEED TO UNMOUNT. 
+⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we NEVER NEED TO UNMOUNT. But we also need to configure new tools/files in build system.
 
 # Test
 IMPORTANT: 
