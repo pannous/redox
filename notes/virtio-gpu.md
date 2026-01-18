@@ -32,3 +32,27 @@ With sync blocking, the virtio-gpu driver successfully:
 1. Creates framebuffers for VTs
 2. Renders text via fbcond
 3. Supports full boot to login prompt
+
+## Graphics Working (2026-01-18)
+
+### Final Fix
+Added initial scanout setup during VT creation in driver-graphics/src/lib.rs.
+Without this, the scanout was never configured and the display showed
+"Display output is not active."
+
+### What's Working
+- VirtIO-GPU framebuffer creation (ResourceCreate2d + AttachBacking)
+- Scanout configuration (SetScanout)
+- Content transfer (XferToHost2d)
+- Display refresh (ResourceFlush)
+- Gradient test pattern displays correctly in QEMU
+
+### Current State
+- Graphics display works
+- Console text not yet rendering (fbcond integration needed)
+- Framebuffer initialized with gradient for testing
+
+### Next Steps
+- Investigate why fbcond doesn't write to display
+- May need VT activation event to trigger text rendering
+- Consider if fbcond opens correct display path

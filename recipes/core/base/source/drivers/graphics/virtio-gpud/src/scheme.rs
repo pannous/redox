@@ -394,8 +394,9 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
         let fb_size = width as usize * height as usize * bpp / 8;
         let sgl = sgl::Sgl::new(fb_size).unwrap();
 
+        // Initialize framebuffer to black (content will be written by fbcond/orbital)
         unsafe {
-            core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 255, fb_size);
+            core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 0, fb_size);
         }
 
         let res_id = ResourceId::alloc();
@@ -452,41 +453,43 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage) {
-        futures::executor::block_on(async {
-            let req = Dma::new(XferToHost2d::new(
+        // Use synchronous blocking operations to avoid hangs in scheme handler context
+
+        // Transfer framebuffer to host
+        let req = Dma::new(XferToHost2d::new(
+            framebuffer.id,
+            GpuRect {
+                x: 0,
+                y: 0,
+                width: framebuffer.width,
+                height: framebuffer.height,
+            },
+            0,
+        ))
+        .unwrap();
+        let header = self.send_request_blocking(req).unwrap();
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
+
+        // Set scanout if not already active for this resource
+        if self.displays[display_id].active_resource != Some(framebuffer.id) {
+            let scanout_request = Dma::new(SetScanout::new(
+                display_id as u32,
                 framebuffer.id,
-                GpuRect {
-                    x: 0,
-                    y: 0,
-                    width: framebuffer.width,
-                    height: framebuffer.height,
-                },
-                0,
+                GpuRect::new(0, 0, framebuffer.width, framebuffer.height),
             ))
             .unwrap();
-            let header = self.send_request(req).await.unwrap();
+            let header = self.send_request_blocking(scanout_request).unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
+            self.displays[display_id].active_resource = Some(framebuffer.id);
+        }
 
-            // FIXME once we support resizing we also need to check that the current and target size match
-            if self.displays[display_id].active_resource != Some(framebuffer.id) {
-                let scanout_request = Dma::new(SetScanout::new(
-                    display_id as u32,
-                    framebuffer.id,
-                    GpuRect::new(0, 0, framebuffer.width, framebuffer.height),
-                ))
-                .unwrap();
-                let header = self.send_request(scanout_request).await.unwrap();
-                assert_eq!(header.ty, CommandTy::RespOkNodata);
-                self.displays[display_id].active_resource = Some(framebuffer.id);
-            }
-
-            let flush = ResourceFlush::new(
-                framebuffer.id,
-                damage.clip(framebuffer.width, framebuffer.height).into(),
-            );
-            let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
-        });
+        // Flush the display
+        let flush = ResourceFlush::new(
+            framebuffer.id,
+            damage.clip(framebuffer.width, framebuffer.height).into(),
+        );
+        let header = self.send_request_blocking(Dma::new(flush).unwrap()).unwrap();
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
     }
 
     fn supports_hw_cursor(&self) -> bool {

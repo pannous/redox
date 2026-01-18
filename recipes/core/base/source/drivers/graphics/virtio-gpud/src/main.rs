@@ -567,35 +567,14 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
     // Use a polling loop for scheme requests
     // This is a workaround for event notification issues on aarch64 where
     // the kernel event queue doesn't reliably deliver scheme socket notifications
-    eprintln!("virtio-gpud: ENTERING MAIN LOOP");
-    debug_log("6: entering main loop");
-    let mut loop_count = 0u64;
+    log::info!("virtio-gpud: entering main loop");
     loop {
-        if loop_count % 100 == 0 {
-            eprintln!("virtio-gpud: main loop iteration {}", loop_count);
-            debug_log(&format!("loop {}", loop_count));
-        }
-        loop_count += 1;
-
         // Poll scheme for any pending requests
-        if loop_count <= 5 || loop_count % 100 == 0 {
-            eprintln!("virtio-gpud: before tick() {}", loop_count);
-        }
-        let tick_result = scheme.tick();
-        debug_log(&format!("tick {} returned {:?}", loop_count, tick_result.is_ok()));
-        if loop_count <= 5 || loop_count % 100 == 0 {
-            eprintln!("virtio-gpud: after tick() {}", loop_count);
-        }
+        let _ = scheme.tick();
 
-        // Yield to avoid busy-waiting (sleep blocks indefinitely on aarch64)
-        // Use sched_yield instead of sleep as a workaround
-        if loop_count <= 5 || loop_count % 100 == 0 {
-            eprintln!("virtio-gpud: before yield() {}", loop_count);
-        }
-        debug_log(&format!("before yield {}", loop_count));
+        // Yield to avoid busy-waiting
         for _ in 0..10 {
             let _ = syscall::sched_yield();
         }
-        debug_log(&format!("after yield {}", loop_count));
     }
 }

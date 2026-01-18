@@ -171,6 +171,20 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             log::info!("driver-graphics: VT {} pre-created", vt_num);
         }
 
+        // Set up initial scanout for VT 2 so display isn't blank
+        // This calls update_plane which does XferToHost2d + SetScanout + ResourceFlush
+        if let Some(vt_state) = vts.get(&2) {
+            log::info!("driver-graphics: setting initial scanout for VT 2");
+            for (display_id, fb) in vt_state.display_fbs.iter().enumerate() {
+                let (width, height) = adapter.display_size(display_id);
+                adapter.update_plane(
+                    display_id,
+                    fb,
+                    Damage { x: 0, y: 0, width, height },
+                );
+            }
+        }
+
         GraphicsScheme {
             adapter,
             scheme_name,
@@ -255,14 +269,6 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
     /// This needs to be called each time there is a new event on the scheme
     /// file.
     pub fn tick(&mut self) -> io::Result<()> {
-        static TICK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let count = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        // Debug log first 5 ticks and every 100 after that
-        if count <= 5 || count % 100 == 0 {
-            eprintln!("driver-graphics: tick #{} entering", count);
-        }
-
         loop {
             let request = match self.socket.next_request(SignalBehavior::Restart) {
                 Ok(Some(request)) => request,
