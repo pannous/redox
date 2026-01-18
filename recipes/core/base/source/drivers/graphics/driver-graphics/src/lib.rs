@@ -145,9 +145,34 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         );
         let standard_properties = StandardProperties { edid, dpms };
 
+        eprintln!("driver-graphics: BEFORE adapter.init()");
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF0:BEFORE_INIT\n");
         adapter.init(&mut objects, &standard_properties);
+        eprintln!("driver-graphics: AFTER adapter.init()");
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF0:AFTER_INIT\n");
         for connector_id in objects.connector_ids().to_vec() {
             adapter.probe_connector(&mut objects, &standard_properties, connector_id)
+        }
+
+        // Pre-create VT 1 and 2 during initialization since async virtio operations
+        // work here but hang when called from within scheme handlers
+        let mut vts = HashMap::new();
+        for vt_num in [1, 2] {
+            log::info!("driver-graphics: pre-creating VT {}", vt_num);
+            let mut display_fbs = vec![];
+            for display_id in 0..adapter.display_count() {
+                let (width, height) = adapter.display_size(display_id);
+                display_fbs.push(Arc::new(adapter.create_dumb_framebuffer(width, height)));
+            }
+            let cursor_plane = adapter.supports_hw_cursor().then(|| CursorPlane {
+                x: 0,
+                y: 0,
+                hot_x: 0,
+                hot_y: 0,
+                framebuffer: adapter.create_cursor_framebuffer(),
+            });
+            vts.insert(vt_num, VtState { display_fbs, cursor_plane });
+            log::info!("driver-graphics: VT {} pre-created", vt_num);
         }
 
         GraphicsScheme {
@@ -160,7 +185,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             next_id: 0,
             handles: BTreeMap::new(),
             active_vt: 0,
-            vts: HashMap::new(),
+            vts,
         }
     }
 

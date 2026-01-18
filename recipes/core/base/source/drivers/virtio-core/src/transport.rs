@@ -310,6 +310,118 @@ impl<'a> Queue<'a> {
         })
     }
 
+    /// Synchronous blocking send - sends a request and busy-waits for completion.
+    /// Use this when async/block_on doesn't work (e.g., inside scheme handlers).
+    #[must_use = "Returns the number of bytes written by the device"]
+    pub fn send_blocking(&self, chain: Vec<Buffer>) -> Option<u32> {
+        // Try to reclaim completed descriptors before checking availability
+        self.reclaim_completed();
+
+        let chain_len = chain.len();
+        if self.descriptor_stack.len() < chain_len {
+            log::warn!(
+                "virtio-core: send_blocking: not enough descriptors ({} available, {} needed)",
+                self.descriptor_stack.len(),
+                chain_len
+            );
+            return None;
+        }
+
+        let mut first_descriptor: Option<usize> = None;
+        let mut last_descriptor: Option<usize> = None;
+
+        for buffer in chain.iter() {
+            let descriptor = self.descriptor_stack.pop()? as usize;
+
+            if first_descriptor.is_none() {
+                first_descriptor = Some(descriptor);
+            }
+
+            self.descriptor[descriptor].set_addr(buffer.buffer as u64);
+            self.descriptor[descriptor].set_flags(buffer.flags);
+            self.descriptor[descriptor].set_size(buffer.size as u32);
+
+            if let Some(index) = last_descriptor {
+                self.descriptor[index].set_next(Some(descriptor as u16));
+            }
+
+            last_descriptor = Some(descriptor);
+        }
+
+        let last_descriptor = last_descriptor.unwrap();
+        let first_descriptor = first_descriptor.unwrap() as u32;
+
+        self.descriptor[last_descriptor as usize].set_next(None);
+
+        let index = self.available.head_index() as usize;
+
+        self.available
+            .get_element_at(index)
+            .set_table_index(first_descriptor as u16);
+
+        self.available.set_head_idx(index as u16 + 1);
+
+        // Memory barrier to ensure descriptor and available ring writes are visible
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            core::arch::asm!("dsb sy", options(nostack, preserves_flags));
+        }
+
+        self.notification_bell.ring(self.queue_index);
+
+        // Busy-wait for completion
+        let mut iterations = 0u64;
+        loop {
+            // Memory barrier before reading used ring
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                core::arch::asm!("dsb sy", options(nostack, preserves_flags));
+            }
+            std::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+            let used_head = std::hint::black_box(self.used.head_index());
+            let stored = std::hint::black_box(self.used_head.load(Ordering::SeqCst));
+
+            if used_head != stored {
+                let used_element = self.used.get_element_at((used_head.wrapping_sub(1)) as usize);
+                let written = used_element.written.get();
+                let mut table_index = used_element.table_index.get();
+
+                if table_index == first_descriptor as u32 {
+                    // Recycle descriptors
+                    while self.descriptor[table_index as usize]
+                        .flags()
+                        .contains(DescriptorFlags::NEXT)
+                    {
+                        let next_index = self.descriptor[table_index as usize].next();
+                        self.descriptor_stack.push(table_index as u16);
+                        table_index = next_index.into();
+                    }
+                    self.descriptor_stack.push(table_index as u16);
+                    self.used_head.store(used_head, Ordering::SeqCst);
+                    return Some(written);
+                }
+            }
+
+            iterations += 1;
+            if iterations % 10000 == 0 {
+                // Yield periodically to avoid starving other processes
+                std::thread::yield_now();
+            }
+
+            // Give up after ~10 seconds (assuming ~1M iterations/second)
+            if iterations > 10_000_000 {
+                log::error!("virtio-core: send_blocking timed out after {} iterations", iterations);
+                return None;
+            }
+
+            // Small spin
+            for _ in 0..10 {
+                core::hint::spin_loop();
+            }
+        }
+    }
+
     /// Returns the number of descriptors in the descriptor table of this queue.
     pub fn descriptor_len(&self) -> usize {
         self.descriptor.len()

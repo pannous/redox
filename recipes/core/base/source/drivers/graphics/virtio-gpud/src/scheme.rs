@@ -106,7 +106,11 @@ impl<'a> fmt::Debug for VirtGpuAdapter<'a> {
 
 impl VirtGpuAdapter<'_> {
     pub async fn update_displays(&mut self) -> Result<(), Error> {
+        eprintln!("virtio-gpu: UD1 - before get_display_info");
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"UD1\n");
         let display_info = self.get_display_info().await?;
+        eprintln!("virtio-gpu: UD2 - after get_display_info");
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"UD2\n");
         let raw_displays = &display_info.display_info[..self.config.num_scanouts() as usize];
 
         self.displays.resize(
@@ -158,6 +162,19 @@ impl VirtGpuAdapter<'_> {
         self.control_queue.send(command)
             .expect("virtio-gpud: no descriptors for request")
             .await;
+        Ok(header)
+    }
+
+    /// Synchronous blocking version of send_request for use when async doesn't work
+    fn send_request_blocking<T>(&self, request: Dma<T>) -> Result<Dma<ControlHeader>, Error> {
+        let header = Dma::new(ControlHeader::default())?;
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue.send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed");
         Ok(header)
     }
 
@@ -270,9 +287,17 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn init(&mut self, objects: &mut DrmObjects<Self>, standard_properties: &StandardProperties) {
+        eprintln!("virtio-gpu: INIT1");
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT1\n");
         futures::executor::block_on(async {
+            eprintln!("virtio-gpu: INIT2");
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT2\n");
             self.update_displays().await.unwrap();
+            eprintln!("virtio-gpu: INIT3");
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT3\n");
         });
+        eprintln!("virtio-gpu: INIT4");
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT4\n");
 
         for display_id in 0..self.config.num_scanouts.get() {
             log::info!("virtio-gpu: init() adding connector for display {}", display_id);
@@ -376,71 +401,71 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
 
     fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
         let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF1:{}x{}\n", width, height).as_bytes());
-        futures::executor::block_on(async {
-            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF2\n");
-            let bpp = 32;
-            let fb_size = width as usize * height as usize * bpp / 8;
-            let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF3:{}\n", fb_size).as_bytes());
-            let sgl = sgl::Sgl::new(fb_size).unwrap();
-            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF4\n");
 
-            unsafe {
-                core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 255, fb_size);
-            }
-            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF5\n");
+        // Use synchronous blocking operations instead of async to avoid hangs
+        // when called from scheme handlers
+        let bpp = 32;
+        let fb_size = width as usize * height as usize * bpp / 8;
+        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF3:{}\n", fb_size).as_bytes());
+        let sgl = sgl::Sgl::new(fb_size).unwrap();
 
-            let res_id = ResourceId::alloc();
-            let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF6:res={:?}\n", res_id).as_bytes());
+        unsafe {
+            core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 255, fb_size);
+        }
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF5\n");
 
-            // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
-            let request = Dma::new(ResourceCreate2d::new(
-                res_id,
-                ResourceFormat::Bgrx,
-                width,
-                height,
-            ))
-            .unwrap();
-            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF7\n");
+        let res_id = ResourceId::alloc();
+        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF6:res={:?}\n", res_id).as_bytes());
 
-            let header = self.send_request(request).await.unwrap();
-            let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF8:{:?}\n", header.ty).as_bytes());
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
+        // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
+        let request = Dma::new(ResourceCreate2d::new(
+            res_id,
+            ResourceFormat::Bgrx,
+            width,
+            height,
+        ))
+        .unwrap();
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF7\n");
 
-            // Use the allocated framebuffer from the guest ram, and attach it as backing
-            // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
+        let header = self.send_request_blocking(request).unwrap();
+        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF8:{:?}\n", header.ty).as_bytes());
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
 
-            let mut mem_entries =
-                unsafe { Dma::zeroed_slice(sgl.chunks().len()).unwrap().assume_init() };
-            for (entry, chunk) in mem_entries.iter_mut().zip(sgl.chunks().iter()) {
-                *entry = MemEntry {
-                    address: chunk.phys as u64,
-                    length: chunk.length.next_multiple_of(PAGE_SIZE) as u32,
-                    padding: 0,
-                };
-            }
+        // Use the allocated framebuffer from the guest ram, and attach it as backing
+        // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
 
-            let attach_request =
-                Dma::new(AttachBacking::new(res_id, mem_entries.len() as u32)).unwrap();
-            let header = Dma::new(ControlHeader::default()).unwrap();
-            let command = ChainBuilder::new()
-                .chain(Buffer::new(&attach_request))
-                .chain(Buffer::new_unsized(&mem_entries))
-                .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
-                .build();
+        let mut mem_entries =
+            unsafe { Dma::zeroed_slice(sgl.chunks().len()).unwrap().assume_init() };
+        for (entry, chunk) in mem_entries.iter_mut().zip(sgl.chunks().iter()) {
+            *entry = MemEntry {
+                address: chunk.phys as u64,
+                length: chunk.length.next_multiple_of(PAGE_SIZE) as u32,
+                padding: 0,
+            };
+        }
 
-            self.control_queue.send(command)
-                .expect("virtio-gpud: no descriptors for attach_backing")
-                .await;
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
+        let attach_request =
+            Dma::new(AttachBacking::new(res_id, mem_entries.len() as u32)).unwrap();
+        let header = Dma::new(ControlHeader::default()).unwrap();
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&attach_request))
+            .chain(Buffer::new_unsized(&mem_entries))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
 
-            VirtGpuFramebuffer {
-                queue: self.control_queue.clone(),
-                id: res_id,
-                sgl,
-                width,
-                height,
-            }
-        })
+        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF9_ATTACH\n");
+        self.control_queue.send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for attach_backing");
+        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF10:{:?}\n", header.ty).as_bytes());
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
+
+        VirtGpuFramebuffer {
+            queue: self.control_queue.clone(),
+            id: res_id,
+            sgl,
+            width,
+            height,
+        }
     }
 
     fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8 {
