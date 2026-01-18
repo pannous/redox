@@ -516,9 +516,6 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
     device.transport.setup_config_notify(MSIX_PRIMARY_VECTOR);
     device.transport.run_device();
 
-    eprintln!("virtio-gpud: MAIN_BEFORE_SCHEME - about to create scheme");
-    let write_result = std::fs::write("/scheme/debug/no-preserve", b"MAIN_BEFORE_SCHEME\n");
-    eprintln!("virtio-gpud: write result = {:?}", write_result);
     // Create the display scheme BEFORE signaling ready, so fbbootlogd/fbcond can find it
     let (mut scheme, mut inputd_handle) = scheme::GpuScheme::new(
         config,
@@ -527,12 +524,9 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         device.transport.clone(),
         has_edid,
     )?;
-    let _ = std::fs::write("/scheme/debug/no-preserve", b"MAIN_AFTER_SCHEME\n");
 
     // Signal that the daemon is ready (display scheme exists)
-    eprintln!("virtio-gpud: BEFORE ready()");
     deamon.ready();
-    eprintln!("virtio-gpud: AFTER ready()");
 
     // File-based debug logging - try multiple locations
     use std::io::Write;

@@ -106,11 +106,7 @@ impl<'a> fmt::Debug for VirtGpuAdapter<'a> {
 
 impl VirtGpuAdapter<'_> {
     pub async fn update_displays(&mut self) -> Result<(), Error> {
-        eprintln!("virtio-gpu: UD1 - before get_display_info");
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"UD1\n");
         let display_info = self.get_display_info().await?;
-        eprintln!("virtio-gpu: UD2 - after get_display_info");
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"UD2\n");
         let raw_displays = &display_info.display_info[..self.config.num_scanouts() as usize];
 
         self.displays.resize(
@@ -287,17 +283,9 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn init(&mut self, objects: &mut DrmObjects<Self>, standard_properties: &StandardProperties) {
-        eprintln!("virtio-gpu: INIT1");
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT1\n");
         futures::executor::block_on(async {
-            eprintln!("virtio-gpu: INIT2");
-            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT2\n");
             self.update_displays().await.unwrap();
-            eprintln!("virtio-gpu: INIT3");
-            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT3\n");
         });
-        eprintln!("virtio-gpu: INIT4");
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF_INIT4\n");
 
         for display_id in 0..self.config.num_scanouts.get() {
             log::info!("virtio-gpu: init() adding connector for display {}", display_id);
@@ -400,22 +388,17 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
-        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF1:{}x{}\n", width, height).as_bytes());
-
         // Use synchronous blocking operations instead of async to avoid hangs
         // when called from scheme handlers
         let bpp = 32;
         let fb_size = width as usize * height as usize * bpp / 8;
-        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF3:{}\n", fb_size).as_bytes());
         let sgl = sgl::Sgl::new(fb_size).unwrap();
 
         unsafe {
             core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 255, fb_size);
         }
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF5\n");
 
         let res_id = ResourceId::alloc();
-        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF6:res={:?}\n", res_id).as_bytes());
 
         // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
         let request = Dma::new(ResourceCreate2d::new(
@@ -425,10 +408,8 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
             height,
         ))
         .unwrap();
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF7\n");
 
         let header = self.send_request_blocking(request).unwrap();
-        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF8:{:?}\n", header.ty).as_bytes());
         assert_eq!(header.ty, CommandTy::RespOkNodata);
 
         // Use the allocated framebuffer from the guest ram, and attach it as backing
@@ -453,10 +434,8 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
             .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF9_ATTACH\n");
         self.control_queue.send_blocking(command)
             .expect("virtio-gpud: send_blocking failed for attach_backing");
-        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF10:{:?}\n", header.ty).as_bytes());
         assert_eq!(header.ty, CommandTy::RespOkNodata);
 
         VirtGpuFramebuffer {
@@ -511,7 +490,9 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn supports_hw_cursor(&self) -> bool {
-        true
+        // Disabled for now - create_cursor_framebuffer uses block_on(async) which hangs
+        // TODO: convert to sync like create_dumb_framebuffer
+        false
     }
 
     fn create_cursor_framebuffer(&mut self) -> VirtGpuCursor {
