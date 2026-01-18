@@ -75,7 +75,36 @@ jiff was recently adopted by uutils; chrono might have lower initialization over
 - `/opt/other/redox/recipes/core/uutils/source/src/uucore/Cargo.toml` - uucore time feature enables jiff
 - `~/.cargo/registry/src/.../jiff-0.2.18/src/tz/db/` - jiff timezone database code
 
+## Additional Testing
+
+### 9p Not the Cause
+Tested booting without virtio-9p device:
+- `time date` still takes **8.3 seconds**
+- Confirms 9p filesystem is not the bottleneck
+
+### TZDIR Environment Variable
+Setting `TZDIR=/scheme/9p.hostshare/zoneinfo` with UTC file: **7.0 seconds**
+- No improvement - issue is not in zoneinfo directory walking
+
+### TZ=UTC
+Setting `TZ=UTC` to bypass system timezone detection: **7.9 seconds**
+- No improvement - issue is not in /etc/localtime reading
+
+## Conclusion
+The 6-second overhead is somewhere deep in jiff's initialization that happens regardless of:
+- Timezone database source (filesystem vs bundled)
+- System timezone detection method
+- 9p filesystem presence
+
+Most likely causes:
+1. Something in jiff's OnceLock/lazy initialization is slow on Redox
+2. Redox's memory allocation or syscalls are slow for jiff's data structures
+3. The bundled tzdb data parsing/decompression
+
 ## Status
 - [x] Root cause identified: jiff initialization
-- [ ] Try populating zoneinfo directory
+- [x] Tried populating zoneinfo directory - no help
+- [x] Tried without 9p - no help
+- [x] Tried TZ=UTC - no help
 - [ ] Consider uutils rebuild without bundled tzdb
+- [ ] Profile jiff internals on Redox
