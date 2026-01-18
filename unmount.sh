@@ -1,6 +1,6 @@
 # check open files in the mount;
 echo "⚠️ the Main file system outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we never need to unmount."
-input "Press Enter to continue unmounting ./mount..."
+read -r -p "Press Enter to continue unmounting ./mount..."
 mount | grep redox
 lsof +D /opt/other/redox/mount/ 
 # mount | rg '/opt/other/mount'
