@@ -108,3 +108,44 @@ Most likely causes:
 - [x] Tried TZ=UTC - no help
 - [ ] Consider uutils rebuild without bundled tzdb
 - [ ] Profile jiff internals on Redox
+
+## Next Steps
+
+### Option 1: Rebuild uutils without `tzdb-bundle-platform`
+Modify `/opt/other/redox/recipes/core/uutils/source/src/uu/date/Cargo.toml`:
+```toml
+# Change from:
+jiff = { workspace = true, features = ["tzdb-bundle-platform", "tzdb-zoneinfo", "tzdb-concatenated"] }
+# To:
+jiff = { workspace = true, features = ["tzdb-zoneinfo"] }
+```
+This removes the bundled tzdb and forces filesystem-only lookup.
+
+### Option 2: Minimal jiff test program
+Create a simple Rust program that only calls `jiff::Zoned::now()` to isolate if the overhead is in:
+- jiff library initialization
+- uutils/coreutils specific code
+- Something else
+
+### Option 3: Add timing instrumentation to jiff
+Modify jiff source to add `eprintln!` timestamps at key points:
+- `TimeZoneDatabase::from_env()` entry/exit
+- `zoneinfo::Database::from_env()`
+- `bundled::Database::new()`
+- `TimeZone::system()`
+
+## Quick Reference
+
+Fast commands (no jiff at runtime):
+```bash
+simple-ls -l /etc/passwd   # 0.4s
+ls -l /etc/passwd          # 0.8s
+touch --help               # 1.3s
+```
+
+Slow commands (jiff triggered):
+```bash
+date                       # 7-8s
+date +%s                   # 7-8s
+stat /etc/passwd           # 7-8s
+```
