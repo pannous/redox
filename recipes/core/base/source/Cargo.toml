@@ -28,6 +28,7 @@ members = [
     "vulkan-loader",
     "venus-icd",
     "vkinfo",
+    "vktriangle",
     "strace",
     "curl",
     "sync",
