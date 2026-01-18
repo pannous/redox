@@ -43,6 +43,18 @@ This is ~60ms per stat call.
 1. **stat() is still slow (~65ms per file)** - Each stat creates a new transaction
 2. **readdir iteration still 5ms per entry** - Even without read_tree, there's overhead
 
+## Hash Verification Test
+
+Added `skip-hash-verify` feature to disable seahash verification. Results:
+
+| Mode | With Hash | No Hash | Difference |
+|------|-----------|---------|------------|
+| readdir only | 5.1ms/entry | 8.1ms/entry | Slower (noise) |
+| stat | 65.2ms/entry | 59.5ms/entry | 9% faster |
+
+**Conclusion**: Hash verification is NOT the bottleneck. It only adds ~5ms to stat.
+The real bottleneck is transaction/tree overhead.
+
 ## Future Optimizations
 
 1. **Node metadata cache** - Cache recently accessed node metadata to avoid re-reading for stat
