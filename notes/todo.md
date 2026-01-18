@@ -1,3 +1,5 @@
+❯ lets try out a minimal Guest Redox (Vulkan + Venus ICD) demo. qemu already supports this 
+
 todo: for loops are currently hanging??
 for i in 1 2 3 4 5; do time echo test$i; done
 
