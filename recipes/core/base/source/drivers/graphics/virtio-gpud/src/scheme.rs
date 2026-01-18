@@ -394,9 +394,18 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
         let fb_size = width as usize * height as usize * bpp / 8;
         let sgl = sgl::Sgl::new(fb_size).unwrap();
 
-        // Initialize framebuffer to black (content will be written by fbcond/orbital)
+        // Fill with gradient pattern as background
         unsafe {
-            core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 0, fb_size);
+            let ptr = sgl.as_ptr() as *mut u32;
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    let r = ((x * 255) / width as usize) as u8;
+                    let g = ((y * 255) / height as usize) as u8;
+                    let b = 128u8;
+                    // BGRX format
+                    *ptr.add(y * width as usize + x) = (b as u32) | ((g as u32) << 8) | ((r as u32) << 16);
+                }
+            }
         }
 
         let res_id = ResourceId::alloc();
