@@ -21,6 +21,7 @@ members = [
     "simple-coreutils",
     "simple-pkg",
     "simple-file",
+    "strace",
     "curl",
     "sync",
     "test-mode",
