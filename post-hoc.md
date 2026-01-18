@@ -426,3 +426,9 @@ Optimized pcid-spawner to improve boot time by parallelizing driver loading and 
 ### Testing
 System boots successfully with deferred drivers and new pcid-spawner in initfs.
 To verify parallel loading, look for "parallel mode" in boot messages.
+
+## 2026-01-18 09:13 - Image resize to 768MB
+- Removed backup files: kernel.good, ion.good, pkg.old, smolnetd.old, smolnetd-new, ld.so.1.backup, ld.so.1.llvm-good
+- Expanded image from 512MB to 768MB
+- Resized redoxfs partition and filesystem
+- Free space: ~285MB (was ~24MB)
