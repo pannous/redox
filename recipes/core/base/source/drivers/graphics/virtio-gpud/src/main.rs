@@ -530,8 +530,25 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
     deamon.ready();
     eprintln!("virtio-gpud: AFTER ready()");
 
+    // File-based debug logging - try multiple locations
+    use std::io::Write;
+    fn debug_log(msg: &str) {
+        // Try 9p share first (persists), then /tmp (may be cleared)
+        for path in &["/scheme/9p.hostshare/virtio-gpud-debug.log", "/tmp/virtio-gpud-debug.log"] {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "{}", msg);
+                let _ = f.flush();
+                return;
+            }
+        }
+        // Last resort: eprintln
+        eprintln!("virtio-gpud-debug: {}", msg);
+    }
+    debug_log("1: after ready()");
+
     // Process any initial VT events from inputd
     eprintln!("virtio-gpud: entering VT event loop");
+    debug_log("2: entering VT event loop");
     while let Some(vt_event) = inputd_handle
         .read_vt_event()
         .expect("virtio-gpud: failed to read display handle")
@@ -540,20 +557,47 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         scheme.handle_vt_event(vt_event);
     }
     eprintln!("virtio-gpud: VT event loop done");
+    debug_log("3: VT event loop done");
 
     // Process any initial scheme requests
     eprintln!("virtio-gpud: calling initial tick()");
+    debug_log("4: calling tick()");
     let _ = scheme.tick();
     eprintln!("virtio-gpud: initial tick() done");
+    debug_log("5: tick() done, entering main loop");
 
     // Use a polling loop for scheme requests
     // This is a workaround for event notification issues on aarch64 where
     // the kernel event queue doesn't reliably deliver scheme socket notifications
+    eprintln!("virtio-gpud: ENTERING MAIN LOOP");
+    debug_log("6: entering main loop");
+    let mut loop_count = 0u64;
     loop {
-        // Poll scheme for any pending requests
-        let _ = scheme.tick();
+        if loop_count % 100 == 0 {
+            eprintln!("virtio-gpud: main loop iteration {}", loop_count);
+            debug_log(&format!("loop {}", loop_count));
+        }
+        loop_count += 1;
 
-        // Sleep to avoid busy-waiting (10ms)
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Poll scheme for any pending requests
+        if loop_count <= 5 || loop_count % 100 == 0 {
+            eprintln!("virtio-gpud: before tick() {}", loop_count);
+        }
+        let tick_result = scheme.tick();
+        debug_log(&format!("tick {} returned {:?}", loop_count, tick_result.is_ok()));
+        if loop_count <= 5 || loop_count % 100 == 0 {
+            eprintln!("virtio-gpud: after tick() {}", loop_count);
+        }
+
+        // Yield to avoid busy-waiting (sleep blocks indefinitely on aarch64)
+        // Use sched_yield instead of sleep as a workaround
+        if loop_count <= 5 || loop_count % 100 == 0 {
+            eprintln!("virtio-gpud: before yield() {}", loop_count);
+        }
+        debug_log(&format!("before yield {}", loop_count));
+        for _ in 0..10 {
+            let _ = syscall::sched_yield();
+        }
+        debug_log(&format!("after yield {}", loop_count));
     }
 }

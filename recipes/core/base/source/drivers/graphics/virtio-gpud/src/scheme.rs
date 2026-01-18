@@ -375,16 +375,22 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
+        let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF1:{}x{}\n", width, height).as_bytes());
         futures::executor::block_on(async {
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF2\n");
             let bpp = 32;
             let fb_size = width as usize * height as usize * bpp / 8;
+            let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF3:{}\n", fb_size).as_bytes());
             let sgl = sgl::Sgl::new(fb_size).unwrap();
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF4\n");
 
             unsafe {
                 core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 255, fb_size);
             }
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF5\n");
 
             let res_id = ResourceId::alloc();
+            let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF6:res={:?}\n", res_id).as_bytes());
 
             // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
             let request = Dma::new(ResourceCreate2d::new(
@@ -394,8 +400,10 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
                 height,
             ))
             .unwrap();
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"CDF7\n");
 
             let header = self.send_request(request).await.unwrap();
+            let _ = std::fs::write("/scheme/debug/no-preserve", format!("CDF8:{:?}\n", header.ty).as_bytes());
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
             // Use the allocated framebuffer from the guest ram, and attach it as backing

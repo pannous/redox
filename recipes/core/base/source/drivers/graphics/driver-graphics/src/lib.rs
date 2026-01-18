@@ -234,15 +234,39 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
     /// This needs to be called each time there is a new event on the scheme
     /// file.
     pub fn tick(&mut self) -> io::Result<()> {
+        static TICK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Debug log first 5 ticks and every 100 after that
+        if count <= 5 || count % 100 == 0 {
+            eprintln!("driver-graphics: tick #{} entering", count);
+        }
+
         loop {
+            if count <= 5 || count % 100 == 0 {
+                eprintln!("driver-graphics: tick #{} calling next_request", count);
+            }
             let request = match self.socket.next_request(SignalBehavior::Restart) {
-                Ok(Some(request)) => request,
+                Ok(Some(request)) => {
+                    eprintln!("driver-graphics: tick #{} got request!", count);
+                    request
+                }
                 Ok(None) => {
+                    eprintln!("driver-graphics: tick #{} scheme unmounted", count);
                     // Scheme likely got unmounted
                     std::process::exit(0);
                 }
-                Err(err) if err.errno == EAGAIN => break,
-                Err(err) => panic!("driver-graphics: failed to read display scheme: {err}"),
+                Err(err) if err.errno == EAGAIN => {
+                    // No more requests - normal case
+                    if count <= 5 || count % 100 == 0 {
+                        eprintln!("driver-graphics: tick #{} EAGAIN, returning", count);
+                    }
+                    return Ok(());
+                }
+                Err(err) => {
+                    eprintln!("driver-graphics: tick #{} error: {:?}", count, err);
+                    panic!("driver-graphics: failed to read display scheme: {err}");
+                }
             };
 
             match request.kind() {
@@ -307,20 +331,29 @@ const MAP_FAKE_OFFSET_MULTIPLIER: usize = 0x10_000_000;
 
 impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
     fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
+        // Debug: scheme open() called
+        let _ = std::fs::write("/scheme/debug/no-preserve", format!("SCHOPEN:{}\n", path).as_bytes());
+
         if path.is_empty() {
             return Err(Error::new(EINVAL));
         }
 
         let handle = if path.starts_with("v") {
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"SCHV\n");
             if !path.starts_with("v2/") {
+                let _ = std::fs::write("/scheme/debug/no-preserve", b"SCHV_NOT_V2\n");
                 return Err(Error::new(ENOENT));
             }
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"SCHV2\n");
             let vt = path["v2/".len()..]
                 .parse::<usize>()
                 .map_err(|_| Error::new(EINVAL))?;
+            let _ = std::fs::write("/scheme/debug/no-preserve", format!("SCHVT:{}\n", vt).as_bytes());
 
             // Ensure the VT exists such that the rest of the methods can freely access it.
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"SCHVT_CREATE\n");
             Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
+            let _ = std::fs::write("/scheme/debug/no-preserve", b"SCHVT_CREATED\n");
 
             Handle::V2 {
                 vt,
@@ -345,6 +378,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
         };
         self.next_id += 1;
         self.handles.insert(self.next_id, handle);
+        let _ = std::fs::write("/scheme/debug/no-preserve", format!("SCHOPEN_OK:{}\n", self.next_id).as_bytes());
         Ok(OpenResult::ThisScheme {
             number: self.next_id,
             flags: NewFdFlags::empty(),
