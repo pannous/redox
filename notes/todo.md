@@ -1,3 +1,7 @@
+todo: for loops are currently hanging??
+for i in 1 2 3 4 5; do time echo test$i; done
+
+
      root:~# time ls /usr/bin | wc -l
      1
      real    22.097091675s
@@ -8,6 +12,74 @@ HOW??
   is statically linked in initfs)
 
   ⏺ /bin = 0.5s, /usr/bin = 23s. Let me count files:
+
+  /bin is a symlink to usr/bin! So they're the same directory. So why would /bin be fast and /usr/bin slow?
+
+  Maybe in Redox, /bin is handled specially (initfs mount?) while /usr/bin goes through the actual redoxfs filesystem. Let
+  me check what the Redox system shows.
+
+⏺ /bin -> usr/bin symlink. In Redox, /bin might be initfs (RAM) while /usr/bin is redoxfs (disk). Let me verify:
+
+
+  24 seconds for simple-ls /usr/bin on a fresh boot. This is definitely a filesystem or stat() overhead issue, not related
+  to ld.so cache.
+
+irtio-blk performance issue, not ld.so related.
+
+  Summary:
+  - ld.so symbol cache: ✅ Working (HITs visible, ~25% speedup on df)
+  - Directory listing: ❌ ~115ms per file stat() - extremely slow
+
+  The slow ls /usr/bin is disk I/O or redoxfs overhead, not dynamic linking. Each of the 208 files needs a stat() syscall that's taking ~100ms.
+
+  This would need investigation in:
+  - redoxfs (filesystem driver)
+  - virtio-blkd (block device)
+  - Or kernel's file stat implementation
+
+⏺ Found it. The bottleneck is in redoxfs - each stat() call:
+
+  Root Cause
+
+  Per-file transaction overhead in redoxfs/src/mount/redox/scheme.rs:827:
+  fn fstat(&mut self, id: usize, stat: &mut Stat, ...) {
+      self.fs.tx(|tx| file.stat(stat, tx))  // NEW transaction per stat!
+  }
+
+  Each transaction does:
+  1. 5-level tree walk (l3→l2→l1→l0→data)
+  2. Decrypt each block even on cache hit
+  3. Hash verification per block
+  4. Transaction setup/commit overhead
+
+  Cost Breakdown (~115ms per stat)
+  ┌───────────────────────────┬──────────┐
+  │         Component         │   Time   │
+  ├───────────────────────────┼──────────┤
+  │ Transaction create/commit │ ~5-10ms  │
+  ├───────────────────────────┼──────────┤
+  │ 5× read_block with crypto │ ~50-70ms │
+  ├───────────────────────────┼──────────┤
+  │ Hash verification         │ ~10-20ms │
+  ├───────────────────────────┼──────────┤
+  │ Virtio-blk latency        │ ~20-30ms │
+  └───────────────────────────┴──────────┘
+  Why No Caching Helps
+
+  - DiskCache exists (16MB) but only caches raw encrypted blocks
+  - No decrypted block cache - crypto runs every time
+  - No node metadata cache - tree walk repeats for every file
+  - Transaction isolation - each stat is independent
+
+  Solution Options
+
+  1. Node metadata cache - cache stat results across transactions
+  2. Batch transactions - reuse transaction for directory listings
+  3. Decrypted block cache - avoid re-decrypting same blocks
+  4. Readdir+stat combo - return metadata during directory read
+
+
+
 
 
 wget is still SLOOOOOW!!!
