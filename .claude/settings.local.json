@@ -24,7 +24,8 @@
       "Bash(RUSTC_WRAPPER=\"\" cargo build:*)",
       "Bash(./build-initfs-cranelift.sh:*)",
       "Bash(hdiutil attach:*)",
-      "Bash(CARGO_INCREMENTAL=0 cargo rustc:*)"
+      "Bash(CARGO_INCREMENTAL=0 cargo rustc:*)",
+      "Bash(xxd:*)"
     ]
   },
   "hooks": {

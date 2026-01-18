@@ -185,3 +185,31 @@ After `update_displays()` logs "display 0", something fails:
 1. Try disabling EDID feature to see if that's the issue
 2. Add eprintln for immediate output (bypass log scheme)
 3. Check if DisplayHandle::new is failing
+
+
+## Workaround
+###  Problem: 
+The virtio-gpu display scheme was not receiving event notifications for incoming requests, causing open() calls from fbcond to block indefinitely.
+
+### Root Cause: 
+The event queue mechanism (EventQueue from redox_event) wasn't reliably delivering scheme socket notifications on aarch64. This appears to be a race condition or kernel event system issue.
+
+ ### Solution: 
+ Replaced the event-driven loop with a polling loop that calls scheme.tick() every 10ms. This ensures scheme requests are always processed, even when event notifications are missed.
+
+  Key Changes in virtio-gpud/src/main.rs:
+  // Simple polling loop instead of event-driven
+  loop {
+      let _ = scheme.tick();
+      std::thread::sleep(std::time::Duration::from_millis(10));
+  }
+
+  Results:
+  - Boot markers now show: V4 → OPEN:v2/2 → V5 → F6 (display opened successfully)
+  - System boots to login prompt
+  - Display scheme is functional
+
+  The polling approach trades some CPU efficiency for reliability. For production use, the underlying event notification issue should be investigated and fixed in the kernel or event queue implementation.
+
+### Next:
+underlying event notification issue should be investigated and fixed in the kernel or event queue implementation
