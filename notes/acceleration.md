@@ -100,3 +100,19 @@ qemu-system-aarch64 -M virt -accel hvf -cpu host -m 2G \
 ```
 
 Note: Using `if=none` + `-device` is more reliable than `if=virtio` in QEMU 10.x
+
+## 2026-01-18 DSB Barrier Investigation
+
+Investigated whether DSB SY before WFI is causing performance issues.
+
+### Test Results:
+- **No DSB**: Crashes immediately (UNHANDLED EXCEPTION in init)
+- **DSB ISH** (inner shareable - lighter): Also crashes
+- **DSB SY** (system-wide): Required for HVF stability
+
+### Conclusion:
+DSB SY before WFI is **mandatory for HVF**. It runs in the idle loop when CPU has
+nothing to do - doesn't impact active workload performance.
+
+The actual performance issues are architectural (no VFS caching, IPC overhead per
+syscall) - see performance-investigation-2026-01-18.md for details
