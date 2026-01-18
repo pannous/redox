@@ -128,8 +128,8 @@ fn main() -> Result<()> {
             eprintln!("pcid-spawner: no driver for {:04x}:{:04x}", full_device_id.vendor_id, full_device_id.device_id);
             continue;
         };
-        let driver_name = driver.name.clone();
-        eprintln!("pcid-spawner: MATCHED {:04x} -> {:?}", full_device_id.device_id, driver_name);
+        let driver_name = driver.name.clone().unwrap_or_else(|| "unknown".to_string());
+        eprintln!("pcid-spawner: MATCHED {:04x} -> {}", full_device_id.device_id, driver_name);
 
         let mut args = driver.command.iter();
 
