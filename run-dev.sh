@@ -71,7 +71,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
     # Graphical mode: framebuffer window + serial in terminal
     echo "Graphical mode: QEMU window with framebuffer terminal" >&2
     echo "Serial console also available in this terminal" >&2
-    echo "Using ramfb (virtio-gpu-pci driver init works but rendering broken)"
+    echo "Using virtio-gpu-pci with blob support"
     qemu-system-aarch64 -M virt $CPU -m 2G  $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
@@ -82,9 +82,8 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         "${NETDEV_ARGS[@]}" \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device virtio-gpu-pci \
+        -device virtio-gpu-pci,edid=on \
         -serial mon:stdio
-        # -device virtio-gpu-pci \  # TODO: driver init works but rendering broken
 elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     # Tmux mode with graphics (ramfb) - serial output goes to tmux
     SESSION="redox-dev"
@@ -93,7 +92,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     echo "Starting QEMU with graphics in tmux: $SESSION" >&2
     echo "Attach: tmux attach -t $SESSION" >&2
     echo "QEMU window will open - resolution auto-selected after 2s" >&2
-    echo "Using ramfb (virtio-gpu-pci driver init works but rendering broken)"
+    echo "Using virtio-gpu-pci with blob support"
 
     tmux new-session -d -s "$SESSION" \
         "qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
@@ -106,9 +105,8 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
         -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
         ${NETDEV_ARGS[*]} \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device virtio-gpu-pci \
+        -device virtio-gpu-pci,edid=on \
         -serial mon:stdio"
-        # -device virtio-gpu-pci \  # TODO: driver init works but rendering broken
 
 
     # Auto-select default resolution in GUI

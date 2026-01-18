@@ -17,6 +17,7 @@ use syscall::{EINVAL, PAGE_SIZE};
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, Transport};
 
+use crate::venus::*;
 use crate::*;
 
 impl Into<GpuRect> for Damage {
@@ -93,7 +94,11 @@ pub struct VirtGpuAdapter<'a> {
     cursor_queue: Arc<Queue<'a>>,
     transport: Arc<dyn Transport>,
     has_edid: bool,
+    has_venus: bool,
+    num_capsets: u32,
     displays: Vec<Display>,
+    // Venus context state
+    venus_ctx: Option<VenusContext>,
 }
 
 impl<'a> fmt::Debug for VirtGpuAdapter<'a> {
@@ -265,6 +270,299 @@ impl VirtGpuAdapter<'_> {
                 .expect("virtio-gpud: no descriptors for cursor move")
                 .await;
         });
+    }
+
+    // ========================================================================
+    // Venus/3D Methods
+    // ========================================================================
+
+    /// Check if Venus/Vulkan support is available
+    pub fn has_venus(&self) -> bool {
+        self.has_venus
+    }
+
+    /// Get capset info for a given index
+    pub fn get_capset_info(&self, capset_index: u32) -> Result<CapsetInfoResp, Error> {
+        let request = Dma::new(GetCapsetInfo::new(capset_index))?;
+        let response = Dma::new(CapsetInfoResp::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for get_capset_info");
+
+        if response.header.ty != CommandTy::RespOkCapsetInfo {
+            log::error!("virtio-gpud: get_capset_info failed: {:?}", response.header.ty);
+        }
+
+        // Copy out the response before Dma is dropped
+        Ok(CapsetInfoResp {
+            header: ControlHeader {
+                ty: response.header.ty,
+                flags: response.header.flags,
+                fence_id: response.header.fence_id,
+                ctx_id: response.header.ctx_id,
+                ring_index: response.header.ring_index,
+                padding: response.header.padding,
+            },
+            capset_id: response.capset_id,
+            capset_max_version: response.capset_max_version,
+            capset_max_size: response.capset_max_size,
+            padding: response.padding,
+        })
+    }
+
+    /// Find Venus capset among available capsets
+    pub fn find_venus_capset(&self) -> Option<(u32, u32)> {
+        for i in 0..self.num_capsets {
+            if let Ok(info) = self.get_capset_info(i) {
+                log::info!(
+                    "virtio-gpud: capset[{}] id={} version={} size={}",
+                    i, info.capset_id, info.capset_max_version, info.capset_max_size
+                );
+                if info.capset_id == VIRTIO_GPU_CAPSET_VENUS {
+                    return Some((info.capset_max_version, info.capset_max_size));
+                }
+            }
+        }
+        None
+    }
+
+    /// Create a Venus 3D context
+    pub fn create_venus_context(&mut self) -> Result<u32, Error> {
+        if !self.has_venus {
+            log::error!("virtio-gpud: Venus not supported");
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let ctx = VenusContext::new(VIRTIO_GPU_CAPSET_VENUS);
+        let ctx_id = ctx.ctx_id;
+
+        let request = Dma::new(CtxCreate::new(ctx_id, VIRTIO_GPU_CAPSET_VENUS, "venus"))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: create_venus_context failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        log::info!("virtio-gpud: created Venus context {}", ctx_id);
+        self.venus_ctx = Some(ctx);
+        Ok(ctx_id)
+    }
+
+    /// Destroy the Venus context
+    pub fn destroy_venus_context(&mut self) -> Result<(), Error> {
+        if let Some(ctx) = self.venus_ctx.take() {
+            let request = Dma::new(CtxDestroy::new(ctx.ctx_id))?;
+            let header = self.send_request_blocking(request)?;
+
+            if header.ty != CommandTy::RespOkNodata {
+                log::error!("virtio-gpud: destroy_venus_context failed: {:?}", header.ty);
+            } else {
+                log::info!("virtio-gpud: destroyed Venus context {}", ctx.ctx_id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Create a blob resource (host-visible memory for Vulkan)
+    pub fn create_blob(
+        &mut self,
+        blob_mem: u32,
+        blob_flags: u32,
+        blob_id: u64,
+        size: u64,
+    ) -> Result<ResourceId, Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        let resource_id = ResourceId::alloc();
+
+        let request = Dma::new(ResourceCreateBlob::new(
+            ctx_id,
+            resource_id,
+            blob_mem,
+            blob_flags,
+            blob_id,
+            size,
+        ))?;
+
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: create_blob failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        log::info!(
+            "virtio-gpud: created blob resource {:?} size={} blob_id={}",
+            resource_id, size, blob_id
+        );
+
+        // Track resource in context
+        if let Some(ctx) = &mut self.venus_ctx {
+            ctx.resources.push(resource_id);
+        }
+
+        Ok(resource_id)
+    }
+
+    /// Map a blob resource and get cache type info
+    pub fn map_blob(&self, resource_id: ResourceId, offset: u64) -> Result<MapCacheType, Error> {
+        let request = Dma::new(ResourceMapBlob::new(resource_id, offset))?;
+        let response = Dma::new(MapInfoResp::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for map_blob");
+
+        if response.header.ty != CommandTy::RespOkMapInfo {
+            log::error!("virtio-gpud: map_blob failed: {:?}", response.header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let cache_type = match response.map_cache_type {
+            0 => MapCacheType::Cached,
+            1 => MapCacheType::Uncached,
+            2 => MapCacheType::WriteCombining,
+            _ => MapCacheType::Cached,
+        };
+
+        Ok(cache_type)
+    }
+
+    /// Unmap a blob resource
+    pub fn unmap_blob(&self, resource_id: ResourceId) -> Result<(), Error> {
+        let request = Dma::new(ResourceUnmapBlob::new(resource_id))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: unmap_blob failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
+    }
+
+    /// Attach a resource to the Venus context
+    pub fn attach_resource(&mut self, resource_id: ResourceId) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let request = Dma::new(CtxAttachResource::new(ctx_id, resource_id))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: attach_resource failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
+    }
+
+    /// Detach a resource from the Venus context
+    pub fn detach_resource(&mut self, resource_id: ResourceId) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let request = Dma::new(CtxDetachResource::new(ctx_id, resource_id))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: detach_resource failed: {:?}", header.ty);
+        }
+
+        Ok(())
+    }
+
+    /// Submit a 3D command buffer to the Venus context
+    pub fn submit_3d(&self, cmd_data: &[u8]) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let request = Dma::new(Submit3d::new(ctx_id, cmd_data.len() as u32))?;
+
+        // Allocate DMA buffer for command data
+        let cmd_dma = unsafe {
+            let mut dma = Dma::<[u8]>::zeroed_slice(cmd_data.len())
+                .map_err(Error::SyscallError)?
+                .assume_init();
+            dma.copy_from_slice(cmd_data);
+            dma
+        };
+
+        let header = Dma::new(ControlHeader::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new_unsized(&cmd_dma))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for submit_3d");
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: submit_3d failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
+    }
+
+    /// Submit a fenced 3D command buffer (waits for completion)
+    pub fn submit_3d_fenced(&self, cmd_data: &[u8], fence_id: u64) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let mut submit = Submit3d::new(ctx_id, cmd_data.len() as u32);
+        submit.header.flags |= VIRTIO_GPU_FLAG_FENCE;
+        submit.header.fence_id = fence_id;
+        let request = Dma::new(submit)?;
+
+        let cmd_dma = unsafe {
+            let mut dma = Dma::<[u8]>::zeroed_slice(cmd_data.len())
+                .map_err(Error::SyscallError)?
+                .assume_init();
+            dma.copy_from_slice(cmd_data);
+            dma
+        };
+
+        let header = Dma::new(ControlHeader::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new_unsized(&cmd_dma))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for submit_3d_fenced");
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: submit_3d_fenced failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
     }
 }
 
@@ -600,6 +898,8 @@ impl<'a> GpuScheme {
         cursor_queue: Arc<Queue<'a>>,
         transport: Arc<dyn Transport>,
         has_edid: bool,
+        has_venus: bool,
+        num_capsets: u32,
     ) -> Result<(GraphicsScheme<VirtGpuAdapter<'a>>, DisplayHandle), Error> {
         let adapter = VirtGpuAdapter {
             config,
@@ -607,7 +907,10 @@ impl<'a> GpuScheme {
             cursor_queue,
             transport,
             has_edid,
+            has_venus,
+            num_capsets,
             displays: vec![],
+            venus_ctx: None,
         };
 
         let scheme = GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned());

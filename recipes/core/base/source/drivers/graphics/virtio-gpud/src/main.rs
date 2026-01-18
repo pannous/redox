@@ -29,12 +29,13 @@ use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
 
 mod scheme;
+pub mod venus;
 
-//const VIRTIO_GPU_F_VIRGL: u32 = 0;
+const VIRTIO_GPU_F_VIRGL: u32 = 0;
 const VIRTIO_GPU_F_EDID: u32 = 1;
-//const VIRTIO_GPU_F_RESOURCE_UUID: u32 = 2;
-//const VIRTIO_GPU_F_RESOURCE_BLOB: u32 = 3;
-//const VIRTIO_GPU_F_CONTEXT_INIT: u32 = 4;
+const VIRTIO_GPU_F_RESOURCE_UUID: u32 = 2;
+const VIRTIO_GPU_F_RESOURCE_BLOB: u32 = 3;
+const VIRTIO_GPU_F_CONTEXT_INIT: u32 = 4;
 
 const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1 << 0;
 const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
@@ -205,7 +206,7 @@ static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1); // XXX: 0 is reserved for 
 pub struct ResourceId(u32);
 
 impl ResourceId {
-    fn alloc() -> Self {
+    pub fn alloc() -> Self {
         ResourceId(RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst))
     }
 }
@@ -491,6 +492,18 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         common::file_level(),
     );
 
+    // File-based debug logging helper - defined early for use throughout init
+    use std::io::Write;
+    fn debug_log(msg: &str) {
+        for path in &["/scheme/9p.hostshare/virtio-gpud-debug.log", "/tmp/virtio-gpud-debug.log"] {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "{}", msg);
+                let _ = f.flush();
+                return;
+            }
+        }
+    }
+
     // Double check that we have the right device (0x1050 = virtio-gpu)
     let pci_config = pcid_handle.config();
     assert_eq!(pci_config.func.full_device_id.device_id, 0x1050);
@@ -499,8 +512,47 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
     let device = DEVICE.try_call_once(|| virtio_core::probe_device(&mut pcid_handle))?;
     let config = unsafe { &mut *(device.device_space as *mut GpuConfig) };
 
-    // Negotiate features (EDID disabled for now)
-    let has_edid = false;
+    // Negotiate features
+    let has_edid = device.transport.check_device_feature(VIRTIO_GPU_F_EDID);
+    if has_edid {
+        device.transport.ack_driver_feature(VIRTIO_GPU_F_EDID);
+    }
+
+    // Check for 3D/Venus features
+    let has_virgl = device.transport.check_device_feature(VIRTIO_GPU_F_VIRGL);
+    let has_resource_blob = device.transport.check_device_feature(VIRTIO_GPU_F_RESOURCE_BLOB);
+    let has_context_init = device.transport.check_device_feature(VIRTIO_GPU_F_CONTEXT_INIT);
+
+    // Debug log Venus feature detection
+    debug_log(&format!(
+        "Venus features: VIRGL={} BLOB={} CTX_INIT={} num_capsets={}",
+        has_virgl, has_resource_blob, has_context_init, config.num_capsets.get()
+    ));
+
+    if has_virgl {
+        device.transport.ack_driver_feature(VIRTIO_GPU_F_VIRGL);
+        log::info!("virtio-gpu: VIRGL (3D) feature enabled");
+        debug_log("VIRGL feature acknowledged");
+    }
+    if has_resource_blob {
+        device.transport.ack_driver_feature(VIRTIO_GPU_F_RESOURCE_BLOB);
+        log::info!("virtio-gpu: RESOURCE_BLOB feature enabled");
+        debug_log("RESOURCE_BLOB feature acknowledged");
+    }
+    if has_context_init {
+        device.transport.ack_driver_feature(VIRTIO_GPU_F_CONTEXT_INIT);
+        log::info!("virtio-gpu: CONTEXT_INIT feature enabled");
+        debug_log("CONTEXT_INIT feature acknowledged");
+    }
+
+    let has_venus = has_virgl && has_resource_blob && has_context_init;
+    if has_venus {
+        log::info!("virtio-gpu: Venus/Vulkan support available!");
+        debug_log("Venus/Vulkan support AVAILABLE!");
+    } else {
+        debug_log("Venus/Vulkan NOT available (missing features)");
+    }
+
     device.transport.finalize_features();
 
     // Queue for sending control commands
@@ -523,25 +575,13 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         cursor_queue.clone(),
         device.transport.clone(),
         has_edid,
+        has_venus,
+        config.num_capsets.get(),
     )?;
 
     // Signal that the daemon is ready (display scheme exists)
     deamon.ready();
 
-    // File-based debug logging - try multiple locations
-    use std::io::Write;
-    fn debug_log(msg: &str) {
-        // Try 9p share first (persists), then /tmp (may be cleared)
-        for path in &["/scheme/9p.hostshare/virtio-gpud-debug.log", "/tmp/virtio-gpud-debug.log"] {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                let _ = writeln!(f, "{}", msg);
-                let _ = f.flush();
-                return;
-            }
-        }
-        // Last resort: eprintln
-        eprintln!("virtio-gpud-debug: {}", msg);
-    }
     debug_log("1: after ready()");
 
     // Process any initial VT events from inputd

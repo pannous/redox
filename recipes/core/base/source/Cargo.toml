@@ -24,6 +24,7 @@ members = [
     "simple-coreutils",
     "simple-pkg",
     "simple-file",
+    "gpu-info",
     "strace",
     "curl",
     "sync",

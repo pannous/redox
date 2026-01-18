@@ -24,6 +24,8 @@ BINS="$BINS test-9p simple-ls"
 BINS="$BINS simple-coreutils"
 # Simple file (POSIX file command)
 BINS="$BINS simple-file"
+# GPU info tool
+BINS="$BINS gpu-info"
 
 export DYLD_LIBRARY_PATH=~/.rustup/toolchains/${NIGHTLY}-aarch64-apple-darwin/lib
 export CARGO_INCREMENTAL=0
