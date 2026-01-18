@@ -13,3 +13,4 @@ ps -axo pid,command | rg '/opt/other/redox/mount'
 # PID = $(lsof +D /opt/other/redox/mount/ | awk 'NR==2 {print $2}')
 # kill $PID
 umount /opt/other/redox/mount/ || diskutil unmount force /opt/other/redox/mount || hdiutil detach /opt/other/redox/mount -force
+# umount /opt/other/redox/mount-works/ || diskutil unmount force /opt/other/redox/mount-works || hdiutil detach /opt/other/redox/mount-works -force
