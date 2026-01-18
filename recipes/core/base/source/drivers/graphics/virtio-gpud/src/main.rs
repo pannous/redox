@@ -526,18 +526,25 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
     )?;
 
     // Signal that the daemon is ready (display scheme exists)
+    eprintln!("virtio-gpud: BEFORE ready()");
     deamon.ready();
+    eprintln!("virtio-gpud: AFTER ready()");
 
     // Process any initial VT events from inputd
+    eprintln!("virtio-gpud: entering VT event loop");
     while let Some(vt_event) = inputd_handle
         .read_vt_event()
         .expect("virtio-gpud: failed to read display handle")
     {
+        eprintln!("virtio-gpud: got VT event: {:?}", vt_event.kind);
         scheme.handle_vt_event(vt_event);
     }
+    eprintln!("virtio-gpud: VT event loop done");
 
     // Process any initial scheme requests
+    eprintln!("virtio-gpud: calling initial tick()");
     let _ = scheme.tick();
+    eprintln!("virtio-gpud: initial tick() done");
 
     // Use a polling loop for scheme requests
     // This is a workaround for event notification issues on aarch64 where

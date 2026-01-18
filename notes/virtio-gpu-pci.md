@@ -213,3 +213,18 @@ The event queue mechanism (EventQueue from redox_event) wasn't reliably deliveri
 
 ### Next:
 underlying event notification issue should be investigated and fixed in the kernel or event queue implementation
+
+## Investigation 2026-01-18
+
+### Issue: Driver Not Spawning at Runtime
+The virtio-gpu device was detected by pcid but the driver wasn't spawned because:
+1. Missing `/etc/pcid.d/virtio-gpud.toml` - runtime config file
+2. Missing `/usr/lib/drivers/virtio-gpud` - runtime binary
+
+The initfs.toml config is only used during early boot with initfs binaries.
+The pcid-spawner in 00_drivers reads from /etc/pcid.d/*.toml and looks for
+binaries in /usr/lib/drivers/.
+
+### Fix Applied:
+- Created /etc/pcid.d/virtio-gpud.toml
+- Copied virtio-gpud binary to /usr/lib/drivers/
