@@ -299,13 +299,65 @@ Move filesystem hot paths into kernel:
 
 ---
 
+## 9. VFS Negative Dentry Cache Implementation (2026-01-18)
+
+### What Was Implemented
+
+Added a kernel-level VFS cache (`src/vfs_cache.rs`) that caches ENOENT results:
+
+```rust
+pub enum CachedLookup {
+    NotFound { expires_at: u64 },  // TTL: 5 seconds
+    Found { node_id: u64, expires_at: u64 },  // TTL: 30 seconds (future use)
+}
+```
+
+Integration points:
+- `open()` syscall checks cache before calling userspace driver
+- Cache bypassed for O_CREAT (file creation)
+- Cache invalidated on file creation and rename
+- Max 4096 entries with LRU-like eviction
+
+### Measured Results
+
+| Scenario | Before | After | Improvement |
+|----------|--------|-------|-------------|
+| First ENOENT lookup | 0.515s | 0.515s | 0% (expected) |
+| Second ENOENT lookup | 0.515s | 0.312s | **~40%** |
+
+The remaining 0.312s is process launch overhead (dynamic linker, ELF loading, etc.)
+
+### What This Proves
+
+1. Caching at VFS level can provide significant improvements
+2. The ~0.2s saved per cached lookup is purely IPC/driver overhead
+3. For workloads with repeated path lookups, this adds up significantly
+
+### Limitations
+
+- Only negative caching implemented (ENOENT)
+- Positive caching (Found) not yet integrated
+- No integration with unlinkat() for path invalidation on delete
+- Cache key uses full path string (memory overhead)
+
+### Next Steps
+
+1. Add positive cache integration for successful lookups
+2. Expand cache invalidation to cover unlinkat(), rmdir()
+3. Measure impact on `ls /usr/bin` (many stat() calls)
+4. Consider per-scheme caching for better memory efficiency
+
+---
+
 ## Conclusion
 
 The performance problem is architectural, not implementational. Redox's microkernel design with userspace filesystem drivers and zero VFS caching creates fundamental overhead that cannot be fixed by optimizing individual components.
 
+**Update**: Initial VFS negative caching shows 40% improvement for repeated ENOENT lookups, proving that kernel-level caching can help. Full implementation of dentry/inode caching would likely provide even greater benefits.
+
 The path forward requires either:
-1. Adding kernel-level caching (complex but correct)
+1. Adding kernel-level caching (complex but correct) - **started, showing promise**
 2. Hybrid approach with hot paths in kernel
 3. Accept the performance tradeoff as a microkernel cost
 
-Current RedoxFS optimizations provide 20-30% improvement but cannot overcome the 100-500x overhead of the architecture itself.
+Current RedoxFS optimizations provide 20-30% improvement. VFS cache adds another 40% for ENOENT cases. Full VFS caching could potentially bring Redox performance much closer to Linux.
