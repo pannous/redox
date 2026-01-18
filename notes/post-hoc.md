@@ -135,3 +135,24 @@ Currently using static linking (~6MB per binary).
 ### Source
 - `/opt/other/redox/recipes/core/base/source/curl/`
 - Build: `./build-curl.sh`
+
+## 2026-01-18: Boot I/O Optimizations
+
+### Added Files
+- `/usr/lib/init.d/00_aaa_preload_libs` - Early boot library cache script
+
+### What it does
+1. Creates a ramfs scheme at `/scheme/libcache` during early boot
+2. Copies core libraries (libc.so, libgcc_s.so.1, ld.so.1) to ramfs
+3. Sets `LD_LIBRARY_PATH=/scheme/libcache:/lib` for all subsequent processes
+
+### Benefits
+- Libraries served from memory - zero disk I/O after initial copy
+- Eliminates ~1.5 second cold-start file read time
+- ~5.5MB memory cost for core libraries
+
+### To include in fresh build
+Add `00_aaa_preload_libs` to config/aarch64/qemu.toml under init.d files, or:
+```bash
+cp mount/usr/lib/init.d/00_aaa_preload_libs /path/to/new/mount/usr/lib/init.d/
+```

@@ -10,3 +10,6 @@ which has different directory structure:
 
 The system would show "init: running: ion" and hang because the ion binary
 wasn't in the expected `/usr/bin/ion` location.
+
+
+mount/usr/lib/  still contains many libraries which are probably compiled by c last year
