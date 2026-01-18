@@ -17,12 +17,18 @@ This read the child node from disk just to get inode and file type for the diren
 - Populate these fields when loading directory entries in `scheme.rs`
 - Use cached values in `getdents` instead of calling `read_tree`
 
-### 2. stat() creates new transaction per file (NOT FIXED)
+### 2. stat() creates new transaction per file (OPTIMIZED)
 Each `fstat()` call creates a new transaction with 5-level tree walk:
 ```rust
 self.fs.tx(|tx| file.stat(stat, tx))
 ```
 This is ~60ms per stat call.
+
+**Fix**: Added LRU node metadata cache to avoid re-reading nodes.
+- Added `CachedNodeMeta` struct in `filesystem.rs` with all stat-relevant fields
+- 1024-entry LRU cache using `VecDeque<(u64, CachedNodeMeta)>`
+- Cache lookup in `fstat()` before doing transaction
+- Cache invalidation on write, fchmod, fchown, ftruncate, futimens
 
 ## Performance Results
 
@@ -38,9 +44,16 @@ This is ~60ms per stat call.
 | Time per stat | 63.1ms | 65.2ms | ~same |
 | Total time | 13.3s | 13.8s | ~same |
 
+## Node Metadata Cache Results
+
+| Metric | Before (no hash) | Cache Run 1 | Cache Run 2 |
+|--------|------------------|-------------|-------------|
+| Time per stat | 59.5ms | 49.2ms | 47.4ms |
+| Improvement | baseline | **17% faster** | **20% faster** |
+
 ## Remaining Performance Issues
 
-1. **stat() is still slow (~65ms per file)** - Each stat creates a new transaction
+1. **stat() still ~47ms per file** - Even with cache, transaction overhead dominates
 2. **readdir iteration still 5ms per entry** - Even without read_tree, there's overhead
 
 ## Hash Verification Test
@@ -57,11 +70,15 @@ The real bottleneck is transaction/tree overhead.
 
 ## Future Optimizations
 
-1. **Node metadata cache** - Cache recently accessed node metadata to avoid re-reading for stat
+1. **DONE** ~~Node metadata cache~~ - Cache recently accessed node metadata to avoid re-reading for stat
 2. **Batch transactions** - Allow multiple operations in a single transaction
 3. **Verify hash once** - Don't re-verify block hashes within same transaction
 4. **Lazy node loading** - Only read node data on demand, not full node struct
+5. **Block-level cache** - Cache recently read disk blocks
 
 ## Files Modified
 - `recipes/core/redoxfs/source/src/mount/redox/resource.rs` - Added inode/mode to Entry, use cached values in getdents
-- `recipes/core/redoxfs/source/src/mount/redox/scheme.rs` - Populate inode/mode when loading directory entries
+- `recipes/core/redoxfs/source/src/mount/redox/scheme.rs` - Populate inode/mode when loading directory entries; added cache lookup in fstat()
+- `recipes/core/redoxfs/source/src/filesystem.rs` - Added CachedNodeMeta, node_meta_cache, cache helper methods
+- `recipes/core/redoxfs/source/src/transaction.rs` - Added skip-hash-verify feature
+- `recipes/core/redoxfs/source/Cargo.toml` - Added skip-hash-verify feature flag
