@@ -29,6 +29,7 @@ members = [
     "venus-icd",
     "vkinfo",
     "vktriangle",
+    "set-background",
     "strace",
     "curl",
     "sync",
