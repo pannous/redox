@@ -11,7 +11,7 @@ SHARE="${SHARE:-$ROOT/share/}"
 SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"
 SOCK="${SOCK:-$SOCKET_DIR/redox-dev-raw.sock}"
 MONSOCK="${MONSOCK:-$SOCKET_DIR/redox-dev-raw-mon.sock}"
-HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
+HOST_SSH_PORT="${HOST_SSH_PORT:-2223}"
 # HOST_SSH_PORT="${HOST_SSH_PORT:-0}" # no tunnel
 CACHE="cache=unsafe,snapshot=on"  # snapshot=off for persistence
 NOMENU="-boot menu=off,strict=on" #Doesn't prevent 2-second boot delay.  via ESC in gui!
