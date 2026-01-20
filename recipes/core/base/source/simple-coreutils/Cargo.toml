@@ -79,4 +79,8 @@ path = "src/less.rs"
 name = "test-mtime"
 path = "src/test-mtime.rs"
 
+[[bin]]
+name = "pkill"
+path = "src/pkill.rs"
+
 [dependencies]
