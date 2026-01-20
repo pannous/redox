@@ -4199,6 +4199,7 @@ version = "0.1.0"
 dependencies = [
  "drm",
  "graphics-ipc",
+ "inputd",
  "libredox",
  "png",
 ]
