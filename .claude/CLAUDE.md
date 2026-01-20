@@ -129,6 +129,9 @@ Boot logging is controlled by `RUST_LOG` in init.rc (line 9) currently "warn", .
 
 Before and after each Bash command, give a short one-line comment 
 
+# Other
+VT switching with inputd -A N works 
+
 # commit
 commit often, small increments
 
