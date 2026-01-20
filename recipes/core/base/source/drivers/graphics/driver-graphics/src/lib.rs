@@ -349,7 +349,6 @@ const MAP_FAKE_OFFSET_MULTIPLIER: usize = 0x10_000_000;
 
 impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
     fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
-        log::warn!("scheme: open({})", path);
         if path.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -361,12 +360,9 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
             let vt = path["v2/".len()..]
                 .parse::<usize>()
                 .map_err(|_| Error::new(EINVAL))?;
-            log::warn!("scheme: v2 open for VT {}, exists={}", vt, self.vts.contains_key(&vt));
 
             // Ensure the VT exists such that the rest of the methods can freely access it.
-            log::warn!("scheme: get_or_create_vt {}", vt);
             Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
-            log::warn!("scheme: VT {} ensured", vt);
 
             Handle::V2 {
                 vt,
@@ -878,7 +874,6 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                     Ok(0)
                 }),
                 ipc::UPDATE_PLANE => {
-                    log::warn!("call: UPDATE_PLANE for VT {}, active_vt={}", vt, self.active_vt);
                     if payload.len() < size_of::<ipc::UpdatePlane>() {
                         return Err(Error::new(EINVAL));
                     }
@@ -890,23 +885,18 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
                     let display_id = payload.display_id;
                     if display_id >= self.adapter.display_count() {
-                        log::warn!("call: UPDATE_PLANE invalid display_id {}", display_id);
                         return Err(Error::new(EINVAL));
                     }
 
                     let Some(framebuffer) = fbs.get(&id_index(payload.fb_id)) else {
-                        log::warn!("call: UPDATE_PLANE framebuffer not found");
                         return Err(Error::new(EINVAL));
                     };
 
                     self.vts.get_mut(vt).unwrap().display_fbs[display_id] = framebuffer.clone();
 
                     if *vt == self.active_vt {
-                        log::warn!("call: UPDATE_PLANE rendering to active VT");
                         self.adapter
                             .update_plane(display_id, framebuffer, payload.damage);
-                    } else {
-                        log::warn!("call: UPDATE_PLANE skipped (VT {} not active)", vt);
                     }
 
                     Ok(size_of::<ipc::UpdatePlane>())

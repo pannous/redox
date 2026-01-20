@@ -147,6 +147,7 @@ Before and after each Bash command, give a short one-line comment
 
 # Other
 VT switching with inputd -A N works 
+There are now way too many notes/ to read them all and some are quite old. 
 
 # commit
 commit often, small increments
