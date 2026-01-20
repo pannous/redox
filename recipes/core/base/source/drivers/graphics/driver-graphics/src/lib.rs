@@ -194,7 +194,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             standard_properties,
             next_id: 0,
             handles: BTreeMap::new(),
-            active_vt: 0,
+            active_vt: 2, // VT 2 is the initial active VT (set up above)
             vts,
         }
     }
