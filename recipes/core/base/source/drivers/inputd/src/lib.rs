@@ -73,23 +73,15 @@ impl ConsumerHandle {
     }
 
     pub fn open_display_v2(&self) -> io::Result<File> {
-        // Use debug console for immediate output
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"OD1\n");
-
         let mut buffer = [0; 1024];
         let fd = self.0.as_raw_fd();
 
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"OD2\n");
         let written = libredox::call::fpath(fd as usize, &mut buffer)?;
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"OD3\n");
-
         assert!(written <= buffer.len());
 
         let base_path = std::str::from_utf8(&buffer[..written])
             .expect("init: display path UTF-8 check failed")
             .to_owned();
-        // Write base_path to debug
-        let _ = std::fs::write("/scheme/debug/no-preserve", format!("ODPATH:{}\n", base_path).as_bytes());
 
         let mut display_path = PathBuf::from(base_path);
         display_path.set_file_name(format!(
@@ -97,17 +89,13 @@ impl ConsumerHandle {
             display_path.file_name().unwrap().to_str().unwrap()
         ));
         let display_path = display_path.to_str().unwrap();
-        // Write final path to debug
-        let _ = std::fs::write("/scheme/debug/no-preserve", format!("ODFINAL:{}\n", display_path).as_bytes());
 
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"OD4\n");
         let display_file =
             libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
                 .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
                 .unwrap_or_else(|err| {
                     panic!("failed to open display {}: {}", display_path, err);
                 });
-        let _ = std::fs::write("/scheme/debug/no-preserve", b"OD5\n");
 
         Ok(display_file)
     }
