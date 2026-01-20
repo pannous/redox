@@ -150,10 +150,10 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             adapter.probe_connector(&mut objects, &standard_properties, connector_id)
         }
 
-        // Pre-create VT 1 and 2 during initialization since async virtio operations
+        // Pre-create VTs during initialization since async virtio operations
         // work here but hang when called from within scheme handlers
         let mut vts = HashMap::new();
-        for vt_num in [1, 2] {
+        for vt_num in 1..=4 {
             log::info!("driver-graphics: pre-creating VT {}", vt_num);
             let mut display_fbs = vec![];
             for display_id in 0..adapter.display_count() {
