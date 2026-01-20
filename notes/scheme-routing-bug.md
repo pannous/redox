@@ -153,3 +153,127 @@ Fix is complete when:
 2. `ping 127.0.0.1` works from login shell
 3. `cat /scheme/netcfg/*` works from login shell
 4. No regression in init-time scheme access
+
+---
+
+## Deep Kernel Analysis (2026-01-20)
+
+### Request Flow Analysis
+
+The kernel code was traced through these paths:
+
+**Client Side (set-background):**
+```
+syscall/fs.rs:call()
+  → call_normal()
+    → schemes().get(scheme_id) → UserScheme
+      → UserScheme::kcall()
+        → inner.upgrade() → UserInner
+          → call_extended_inner()
+            → context.block("UserInner::call")
+            → self.states[tag] = State::Waiting
+            → self.todo.send(sqe, token)  ← REQUEST ENQUEUED
+            → event::trigger(root_id, handle_id, EVENT_READ)
+            → context::switch()
+```
+
+**Server Side (virtio-gpud):**
+```
+polling loop (10ms sleep)
+  → socket.next_request()
+    → libredox::call::read(socket, buf)
+      → kernel read syscall
+        → RootScheme handle → UserInner::read()
+          → self.todo.receive_into_user()  ← REQUEST DEQUEUED
+```
+
+### Key Insight: Same UserInner
+
+Both fbcond and set-background use the **same UserInner**:
+1. Driver registers scheme → creates UserInner
+2. Both clients open via same SchemeId → same UserInner
+3. Both clients' requests go to same `self.todo` WaitQueue
+4. Driver reads from same `self.todo` WaitQueue
+
+**If requests from one client work but not another, and they share UserInner,
+the issue is NOT in namespace lookup (that only affects open()).**
+
+### Mysterious Observation
+
+The partial success pattern is puzzling:
+- open() succeeds → namespace/SchemeId lookup works
+- SET_CLIENT_CAP ioctl succeeds → UserInner::call works
+- GET_CAP ioctl succeeds → UserInner::call works
+- MODE_CARD_RES ioctl hangs → Same code path should work!
+
+This suggests either:
+1. A race condition that triggers intermittently
+2. Something corrupts state after initial successful calls
+3. The "partial success" observation may be inaccurate
+
+### Proposed Kernel Instrumentation
+
+Add logging to these locations in `kernel/src/scheme/user.rs`:
+
+```rust
+// In call_extended_inner(), after todo.send():
+pub fn call_extended_inner(...) {
+    // ... existing code ...
+
+    let queue_len = self.todo.send(sqe, token);
+
+    // ADD THIS:
+    if cfg!(feature = "debug_scheme_routing") {
+        let pid = context::current().read(token.token()).pid.get();
+        println!("SCHEME_DEBUG: request enqueued pid={} opcode={} tag={} queue_len={}",
+                 pid, sqe.opcode, sqe.tag, queue_len);
+    }
+
+    event::trigger(self.root_id, self.handle_id, EVENT_READ);
+    // ...
+}
+
+// In UserInner::read(), when dequeuing:
+pub fn read(...) {
+    // ... existing code ...
+
+    let result = self.todo.receive_into_user(...);
+
+    // ADD THIS:
+    if cfg!(feature = "debug_scheme_routing") && result.is_ok() {
+        println!("SCHEME_DEBUG: request dequeued bytes={}", result.unwrap());
+    }
+
+    result
+}
+```
+
+This will show:
+1. Every request enqueued (with PID to identify source)
+2. Every request dequeued by driver
+3. Mismatch = request lost somewhere
+
+### Alternative Hypothesis: Event Delivery
+
+Another possibility: the issue is in event delivery, not queue management.
+
+The `event::trigger()` notifies the driver that requests are pending.
+If the driver is polling (10ms loop), it shouldn't need events.
+But there might be a subtle interaction where:
+- Event delivery failure causes driver to not poll
+- Or polling loop gets stuck somehow
+
+### Next Steps
+
+1. **Add kernel instrumentation** as described above
+2. **Rebuild kernel** with debug feature enabled
+3. **Reproduce hang** and capture kernel logs
+4. **Compare** enqueue vs dequeue counts
+5. **Identify** where requests disappear
+
+### Alternative: Userspace Debugging
+
+If kernel changes are too invasive:
+1. Add debug output in `graphics-ipc/src/v2.rs` before each ioctl
+2. Add debug output in `driver-graphics/src/lib.rs` for each request type
+3. Look for patterns in which specific ioctls fail

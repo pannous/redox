@@ -272,7 +272,6 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         loop {
             let request = match self.socket.next_request(SignalBehavior::Restart) {
                 Ok(Some(request)) => {
-                    log::warn!("tick: got request");
                     request
                 }
                 Ok(None) => {
@@ -290,12 +289,10 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
 
             match request.kind() {
                 RequestKind::Call(call) => {
-                    log::warn!("tick: handling Call");
                     let response = call.handle_sync(self);
                     self.socket
                         .write_response(response, SignalBehavior::Restart)
                         .expect("driver-graphics: failed to write response");
-                    log::warn!("tick: Call handled");
                 }
                 RequestKind::OnClose { id } => {
                     self.on_close(id);
@@ -551,7 +548,6 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
         _ctx: &CallerCtx,
     ) -> Result<usize> {
         use graphics_ipc::v2::ipc;
-        log::warn!("call: id={} metadata[0]={:?}", id, metadata.get(0));
 
         const DRM_FORMAT_ARGB8888: u32 = 0x34325241; // 'AR24' fourcc code, for ARGB8888
 
