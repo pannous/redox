@@ -73,15 +73,18 @@ impl ConsumerHandle {
     }
 
     pub fn open_display_v2(&self) -> io::Result<File> {
+        eprintln!("OD1: open_display_v2 start");
         let mut buffer = [0; 1024];
         let fd = self.0.as_raw_fd();
 
+        eprintln!("OD2: fpath({})", fd);
         let written = libredox::call::fpath(fd as usize, &mut buffer)?;
         assert!(written <= buffer.len());
 
         let base_path = std::str::from_utf8(&buffer[..written])
             .expect("init: display path UTF-8 check failed")
             .to_owned();
+        eprintln!("OD3: base_path={}", base_path);
 
         let mut display_path = PathBuf::from(base_path);
         display_path.set_file_name(format!(
@@ -89,13 +92,16 @@ impl ConsumerHandle {
             display_path.file_name().unwrap().to_str().unwrap()
         ));
         let display_path = display_path.to_str().unwrap();
+        eprintln!("OD4: display_path={}", display_path);
 
+        eprintln!("OD5: opening...");
         let display_file =
             libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
                 .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
                 .unwrap_or_else(|err| {
                     panic!("failed to open display {}: {}", display_path, err);
                 });
+        eprintln!("OD6: opened");
 
         Ok(display_file)
     }

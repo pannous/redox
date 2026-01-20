@@ -209,6 +209,79 @@ cat /scheme/logging/fs/pci/virtio-gpud.log  # Did driver receive it?
 
 ---
 
+## set-background Hang Analysis (2026-01-20)
+
+### Debugging Session Results
+
+**Hang location:** `SB8: finding connector` - specifically at `resource_handles()` call
+
+**What works:**
+- `open_display_v2()` - opening `/scheme/display/v2/{vt}` succeeds
+- `V2GraphicsHandle::from_file()` succeeds (calls SET_CLIENT_CAP, GET_CAP)
+- Driver responds to fbcond requests continuously (seen in gpu.log)
+
+**What hangs:**
+- `resource_handles()` which calls MODE_CARD_RES (0xA0) ioctl
+
+### Critical Finding: Requests Don't Reach Driver
+
+The gpu.log shows the driver IS processing requests from fbcond:
+```
+tick: got request
+tick: handling Call
+tick: Call handled
+```
+
+But when set-background hangs, NO NEW "got request" entries appear in the driver log.
+
+**This confirms:** The scheme request from set-background is NOT reaching the driver.
+
+### Pattern: Login Shell Process Routing Bug
+
+This matches the known networking issue where:
+- `ping` from login shell blocks forever (requests don't reach smolnetd)
+- `dhcpd` started during init works fine
+
+**Hypothesis:** The kernel has a bug where scheme requests from processes
+spawned by the login shell are not properly routed to scheme providers.
+
+Processes during init → scheme routing works
+Processes from login shell → scheme routing fails
+
+### Ioctl Wire Format (Not the Issue)
+
+Arrays are **inlined** in the wire format:
+1. Client copies arrays into request buffer
+2. Buffer is sent to scheme
+3. Scheme operates on buffer directly
+4. Response buffer sent back
+
+NO cross-address-space pointer dereferencing needed. The hang is NOT
+due to memory access issues.
+
+### Next Steps to Investigate
+
+1. **Compare process contexts:** Check what's different between fbcond's
+   process context and set-background's
+
+2. **Test workaround:** Run set-background during init instead of login shell
+   ```toml
+   # In config/kaa.toml, add:
+   [[files]]
+   path = "/etc/init.d/99_set_background"
+   data = """
+   set-background /usr/share/background.png
+   """
+   ```
+
+3. **Kernel debugging:** Add logging to kernel's scheme request routing
+   to see where login shell requests go
+
+4. **Process namespace:** Check if login shell processes are in a
+   different namespace that doesn't have the display scheme
+
+---
+
 ## Quick Reference
 
 ```bash
