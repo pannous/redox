@@ -608,9 +608,16 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
     // This is a workaround for event notification issues on aarch64 where
     // the kernel event queue doesn't reliably deliver scheme socket notifications
     log::info!("virtio-gpud: entering main loop");
+    let mut loop_count = 0u64;
     loop {
         // Poll scheme for any pending requests
         let _ = scheme.tick();
+
+        // Log every 1000 iterations to confirm loop is running
+        loop_count += 1;
+        if loop_count % 1000 == 0 {
+            log::warn!("virtio-gpud: main loop iteration {}", loop_count);
+        }
 
         // Yield to avoid busy-waiting
         for _ in 0..10 {
