@@ -66,12 +66,9 @@ impl Display {
         };
 
         if (width, height) != map.fb.size() {
-            match text_screen.resize(map, width, height) {
-                Ok(()) => eprintln!("fbcond: mapped display"),
-                Err(err) => {
-                    eprintln!("fbcond: failed to create or map framebuffer: {}", err);
-                    return;
-                }
+            if let Err(err) = text_screen.resize(map, width, height) {
+                log::error!("fbcond: failed to create or map framebuffer: {}", err);
+                return;
             }
         }
     }
