@@ -26,6 +26,11 @@ echo 'example via config/kaa.toml file'
 # data = "file:share/tool"
 # mode = 0o755
 
+[[files]]
+path = "/usr/bin/pkill"
+data = "file:share/pkill"
+mode = 0o755
+
 
 [[files]]
 path = "/root/share"
