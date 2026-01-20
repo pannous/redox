@@ -36,6 +36,10 @@ run /scheme/initfs/etc/init_drivers.rc
 # Now start graphics console daemons (display scheme should exist by now)
 export RUST_LOG warn
 nowait fbbootlogd
+
+# Display background image if available (before fbcond takes over the display)
+set-background /scheme/9p.hostshare/rendered_triangle.png
+
 # DEBUG: check if fbcond exists
 file /scheme/initfs/bin/fbcond
 ls /scheme/initfs/bin/fbcond

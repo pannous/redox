@@ -26,6 +26,8 @@ BINS="$BINS simple-coreutils"
 BINS="$BINS simple-file"
 # GPU info tool
 BINS="$BINS gpu-info"
+# set-background for boot-time background image
+BINS="$BINS set-background"
 
 export DYLD_LIBRARY_PATH=~/.rustup/toolchains/${NIGHTLY}-aarch64-apple-darwin/lib
 export CARGO_INCREMENTAL=0
@@ -54,7 +56,7 @@ rm -rf /tmp/initfs-cranelift
 mkdir -p /tmp/initfs-cranelift/bin /tmp/initfs-cranelift/lib/drivers /tmp/initfs-cranelift/etc/pcid
 
 # Strip and copy binaries
-for bin in init logd ramfs randd zerod pcid pcid-spawner acpid fbbootlogd fbcond hwd inputd lived rtcd vesad test-9p simple-ls simple-file; do
+for bin in init logd ramfs randd zerod pcid pcid-spawner acpid fbbootlogd fbcond hwd inputd lived rtcd vesad test-9p simple-ls simple-file set-background; do
     llvm-strip -o /tmp/initfs-cranelift/bin/$bin target/aarch64-unknown-redox-clif/release/$bin
 done
 # Create 'ls' symlink/copy for convenience
