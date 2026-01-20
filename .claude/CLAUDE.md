@@ -29,20 +29,36 @@ Plain `git` only sees the main repo and MISSES all component changes!
 
 ## Injecting Files into Redox
 
-### Method 1: 9P Share
-• we want to use direct host file system integration ./share via virtio-9p as often as possible. 
+### Method 1: 9P Share (for testing)
 Host files in /opt/other/redox/share/ appear at /scheme/9p.hostshare/ in Redox.
+```bash
 # On host:
 cp my-tool /opt/other/redox/share/
 # In Redox:
 /scheme/9p.hostshare/my-tool
-Good for: Testing binaries, scripts, quick iterations, persisting across reboots
+```
+Good for: Testing binaries, scripts, quick iterations
 
-### Method 2: Mounted img
-we did /opt/other/redox/mount.sh  to create permanent ./mount to build/aarch64/pure-rust.img
-You can just `cp tool /opt/other/redox/mount/usr/bin/`
-These changes will be picked up on the next restart of Redox.
-⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we NEVER NEED TO UNMOUNT. But we also need to configure new tools/files in build system by creating a [[files]] section in config/
+### Method 2: Mounted img (for testing)
+Run `./mount.sh` to mount build/aarch64/pure-rust.img at ./mount
+```bash
+cp tool /opt/other/redox/mount/usr/bin/
+```
+⚠️ Filesystem runs in snapshot mode - changes outside /scheme/9p.hostshare/ are lost on shutdown.
+
+### Method 3: Register in config (for persistence)
+⚠️ **To persist binaries across image rebuilds, you MUST register them in ./config/**
+
+Add a [[files]] section to the appropriate config (e.g., config/kaa.toml):
+```toml
+[[files]]
+path = "/usr/bin/my-tool"
+data = "file:share/my-tool"
+mode = 0o755
+```
+This copies from ./share/my-tool to /usr/bin/my-tool during image build.
+
+**Workflow:** Test via 9P share first, then register in config once working.
 
 # Test
 IMPORTANT: 
