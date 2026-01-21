@@ -141,7 +141,7 @@ case "$MODE" in
         echo "Attach: tmux attach -t $SESSION"
 
         tmux new-session -d -s "$SESSION" \
-            "$QEMU -M virt $CPU -m 2G \
+            "$QEMU $CPU -m 2G \
             -rtc base=utc,clock=host \
             -drive if=pflash,format=raw,readonly=on,file=\"$EFI_CODE\" \
             -drive if=pflash,format=raw,file=\"$EFI_VARS\" \
