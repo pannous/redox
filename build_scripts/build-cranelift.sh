@@ -323,6 +323,8 @@ build_kernel() {
         kernel_rustflags="$kernel_rustflags -C relocation-model=static -C link-arg=-Tlinkers/x86_64.ld"
     elif [ "$ARCH" = "aarch64" ]; then
         kernel_rustflags="$kernel_rustflags -C relocation-model=static -C link-arg=-Tlinkers/aarch64.ld"
+        # Explicit target features for ABI compatibility (neon required on aarch64)
+        kernel_rustflags="$kernel_rustflags -Ctarget-feature=+v8a,+strict-align,+neon,+fp-armv8"
     fi
 
     RUSTFLAGS="$kernel_rustflags" \
