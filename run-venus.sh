@@ -94,11 +94,12 @@ HOST_SSH_PORT="${HOST_SSH_PORT:-2224}"
 NETDEV_ARGS=(-netdev user,id=net0,hostfwd=tcp::"$HOST_SSH_PORT"-:22)
 NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
 
-# Dual GPU configuration:
-# 1. virtio-gpu-pci: Primary display for boot/console
-# 2. virtio-gpu-gl-pci: Venus GPU for Vulkan (no display, just compute)
-# Venus-only GPU breaks early boot (UEFI needs display output)
-GPU_DISPLAY="virtio-gpu-pci,edid=on"
+# Display configuration:
+# - ramfb: Simple framebuffer for UEFI/early boot (works without OpenGL)
+# - virtio-gpu-gl-pci: Venus GPU for Vulkan rendering via Metal
+# NOTE: virtio-gpu-pci doesn't work with Venus QEMU (built without OpenGL)
+# The Venus driver in Redox will handle display output through Venus protocol
+GPU_DISPLAY="ramfb"
 GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M"
 
 MODE="${1:-gui}"

@@ -1,1 +1,0 @@
-../denovo/notes/denovo.md
