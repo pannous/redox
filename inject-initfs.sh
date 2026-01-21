@@ -4,7 +4,7 @@
 set -e
 
 ISO="${1:-/opt/other/redox/build/aarch64/server-cranelift.iso}"
-INITFS="/tmp/initfs-cranelift.img"
+INITFS="/opt/other/redox/build/aarch64/initfs-cranelift.img"
 REDOXFS="/opt/other/redox/build/fstools/bin/redoxfs"
 MOUNT="/tmp/redoxfs-inject-mount"
 
