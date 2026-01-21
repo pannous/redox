@@ -1,3 +1,12 @@
+cat /scheme/sys/uname
+works
+
+/opt/other/redox/recipes/core/kernel/source/.cargo/config.toml
+      2  # neon is required for proper ABI on aarch64                                               
+      3 -[target.aarch64-unknown-redox-clif]                                                        
+      3 +[target.aarch64-unknown-none]                                                              
+      4  rustflags = ["-Ctarget-feature=+v8a,+strict-align,+neon,+fp-armv8"]  
+WTH?
 
 # RECOVERY
 pure-rust.works.img is always mounted at /opt/other/redox/mount-works
