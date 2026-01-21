@@ -94,19 +94,21 @@ HOST_SSH_PORT="${HOST_SSH_PORT:-2224}"
 NETDEV_ARGS=(-netdev user,id=net0,hostfwd=tcp::"$HOST_SSH_PORT"-:22)
 NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
 
-# Venus GPU configuration:
-# - venus=on: Enable Venus protocol for Vulkan passthrough
-# - blob=on: Enable blob resources for host-visible memory
-# - hostmem=256M: Allocate 256MB for host-visible GPU memory
-GPU_DEVICE="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M"
+# Dual GPU configuration:
+# 1. virtio-gpu-pci: Primary display for boot/console
+# 2. virtio-gpu-gl-pci: Venus GPU for Vulkan (no display, just compute)
+# Venus-only GPU breaks early boot (UEFI needs display output)
+GPU_DISPLAY="virtio-gpu-pci,edid=on"
+GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M"
 
 MODE="${1:-gui}"
 
 echo "=== Redox Venus-Metal Demo ==="
 echo "QEMU: $QEMU"
 echo "Image: $RAW_IMG"
-echo "GPU: $GPU_DEVICE"
-echo "Accel: $ACCEL"
+echo "GPU Display: $GPU_DISPLAY"
+echo "GPU Venus: $GPU_VENUS"
+echo "Accel: HVF"
 echo "SSH: ssh -p $HOST_SSH_PORT root@localhost"
 echo "Share: /scheme/9p.hostshare/ → $SHARE"
 echo ""
@@ -127,7 +129,8 @@ case "$MODE" in
             -fsdev local,id=host0,path="$SHARE",security_model=none \
             "${NETDEV_ARGS[@]}" \
             -device qemu-xhci -device usb-kbd -device usb-tablet \
-            -device "$GPU_DEVICE" \
+            -device "$GPU_DISPLAY" \
+            -device "$GPU_VENUS" \
             -display cocoa \
             -serial mon:stdio
         ;;
@@ -151,7 +154,8 @@ case "$MODE" in
             -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
             ${NETDEV_ARGS[*]} \
             -device qemu-xhci -device usb-kbd -device usb-tablet \
-            -device \"$GPU_DEVICE\" \
+            -device \"$GPU_DISPLAY\" \
+            -device \"$GPU_VENUS\" \
             -display cocoa \
             -serial mon:stdio"
 
