@@ -70,7 +70,26 @@ pub(crate) fn phys_contiguous_fd() -> Result<Fd> {
 /// - A virtual mapping for the physically contiguous memory could not be created
 /// - The virtual address returned by the memory manager was invalid.
 fn alloc_and_map(length: usize, handle: &VirtaddrTranslationHandle) -> Result<(usize, *mut ())> {
-    assert_eq!(length % PAGE_SIZE, 0);
+    alloc_and_map_aligned(length, PAGE_SIZE, handle)
+}
+
+/// Allocates a chunk of physical memory for DMA with custom alignment.
+///
+/// # Arguments
+/// * `length` - The length of the memory region. Must be a multiple of `alignment`
+/// * `alignment` - The alignment to use (must be a power of 2 and >= PAGE_SIZE)
+/// * `handle` - The virtual-to-physical address translation handle
+///
+/// This is useful for Venus/Vulkan blobs which require 16KB alignment on some hosts.
+fn alloc_and_map_aligned(
+    length: usize,
+    alignment: usize,
+    handle: &VirtaddrTranslationHandle,
+) -> Result<(usize, *mut ())> {
+    let alignment = alignment.max(PAGE_SIZE);
+    debug_assert!(alignment.is_power_of_two(), "alignment must be power of 2");
+    assert_eq!(length % alignment, 0, "length must be multiple of alignment");
+
     unsafe {
         let fd = phys_contiguous_fd()?;
         let virt = libredox::call::mmap(MmapArgs {
@@ -133,8 +152,18 @@ impl<T> Dma<T> {
     /// - A '[Ok] (`[Dma]<[MaybeUninit]<T>>`)' containing the allocated and zeroized memory
     /// - An '[Err]' containing an error.
     pub fn zeroed() -> Result<Dma<MaybeUninit<T>>> {
-        let aligned_len = size_of::<T>().next_multiple_of(PAGE_SIZE);
-        let (phys, virt) = alloc_and_map(aligned_len, &*VIRTTOPHYS_HANDLE)?;
+        Self::zeroed_aligned(PAGE_SIZE)
+    }
+
+    /// [Dma] constructor that allocates and zeroizes a memory region with custom alignment
+    ///
+    /// # Arguments
+    /// * `alignment` - The alignment to use (must be a power of 2 and >= PAGE_SIZE)
+    ///
+    /// This is useful for Venus/Vulkan blobs which require 16KB alignment on some hosts.
+    pub fn zeroed_aligned(alignment: usize) -> Result<Dma<MaybeUninit<T>>> {
+        let aligned_len = size_of::<T>().next_multiple_of(alignment.max(PAGE_SIZE));
+        let (phys, virt) = alloc_and_map_aligned(aligned_len, alignment, &*VIRTTOPHYS_HANDLE)?;
         Ok(Dma {
             phys,
             virt: virt.cast(),
@@ -191,11 +220,24 @@ impl<T> Dma<[T]> {
     ///
     /// - 'count: [usize]' - The number of elements of type T in the allocated slice.
     pub fn zeroed_slice(count: usize) -> Result<Dma<[MaybeUninit<T>]>> {
+        Self::zeroed_slice_aligned(count, PAGE_SIZE)
+    }
+
+    /// Returns a [Dma] object containing a zeroized slice of T with custom alignment.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - The number of elements of type T in the allocated slice.
+    /// * `alignment` - The alignment to use (must be a power of 2 and >= PAGE_SIZE)
+    ///
+    /// This is useful for Venus/Vulkan blobs which require 16KB alignment on some hosts.
+    pub fn zeroed_slice_aligned(count: usize, alignment: usize) -> Result<Dma<[MaybeUninit<T>]>> {
+        let alignment = alignment.max(PAGE_SIZE);
         let aligned_len = count
             .checked_mul(size_of::<T>())
             .unwrap()
-            .next_multiple_of(PAGE_SIZE);
-        let (phys, virt) = alloc_and_map(aligned_len, &*VIRTTOPHYS_HANDLE)?;
+            .next_multiple_of(alignment);
+        let (phys, virt) = alloc_and_map_aligned(aligned_len, alignment, &*VIRTTOPHYS_HANDLE)?;
 
         Ok(Dma {
             phys,

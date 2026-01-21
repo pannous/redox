@@ -11,6 +11,25 @@ use crate::{CommandTy, ControlHeader, ResourceId};
 /// Venus capset ID (from virtio-gpu spec)
 pub const VIRTIO_GPU_CAPSET_VENUS: u32 = 4;
 
+/// Venus blob alignment requirement (16KB for host compatibility)
+/// Host Venus driver (especially on macOS/Apple Silicon) expects 16KB-aligned blobs
+pub const VENUS_BLOB_ALIGN: u64 = 16384;
+
+/// Venus blob alignment as usize (for memory entry calculations)
+pub const VENUS_BLOB_ALIGN_USIZE: usize = 16384;
+
+/// Align a size up to Venus blob alignment (16KB)
+#[inline]
+pub fn align_to_venus(size: u64) -> u64 {
+    size.next_multiple_of(VENUS_BLOB_ALIGN)
+}
+
+/// Align a usize to Venus blob alignment (16KB) - for memory entries
+#[inline]
+pub fn align_to_venus_usize(size: usize) -> usize {
+    size.next_multiple_of(VENUS_BLOB_ALIGN_USIZE)
+}
+
 /// Blob resource flags
 pub const VIRTIO_GPU_BLOB_MEM_GUEST: u32 = 0x0001;
 pub const VIRTIO_GPU_BLOB_MEM_HOST3D: u32 = 0x0002;

@@ -371,6 +371,9 @@ impl VirtGpuAdapter<'_> {
     }
 
     /// Create a blob resource (host-visible memory for Vulkan)
+    ///
+    /// The size is automatically aligned to 16KB (VENUS_BLOB_ALIGN) for host compatibility,
+    /// especially on macOS/Apple Silicon where the host expects 16KB-aligned memory.
     pub fn create_blob(
         &mut self,
         blob_mem: u32,
@@ -381,13 +384,16 @@ impl VirtGpuAdapter<'_> {
         let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
         let resource_id = ResourceId::alloc();
 
+        // Align size to 16KB for host Venus driver compatibility
+        let aligned_size = align_to_venus(size);
+
         let request = Dma::new(ResourceCreateBlob::new(
             ctx_id,
             resource_id,
             blob_mem,
             blob_flags,
             blob_id,
-            size,
+            aligned_size,
         ))?;
 
         let header = self.send_request_blocking(request)?;
@@ -398,8 +404,8 @@ impl VirtGpuAdapter<'_> {
         }
 
         log::info!(
-            "virtio-gpud: created blob resource {:?} size={} blob_id={}",
-            resource_id, size, blob_id
+            "virtio-gpud: created blob resource {:?} size={} (aligned from {}) blob_id={}",
+            resource_id, aligned_size, size, blob_id
         );
 
         // Track resource in context
