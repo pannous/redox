@@ -83,11 +83,11 @@ Redox Guest side
   2. virtio-gpu-pci Only worked for showing a gradient otherwise, "display not active"
   3. ramfb works for UEFI but Redox's display driver needs virtio-gpu    
 
-We need our own venus driver!  virtio-gpu-venus-pci based on virtio-gpud
-
-venus driver prepared
-... ;)
-
+We need our own venus driver!  virtio-gpu-venus-pci / virtio-gpu-venusd based on virtio-gpud
+/opt/other/redox/recipes/core/base/source/drivers/graphics/virtio-gpu-venusd/src/venus.rs 
+Work in progress. 
+handle virtio-gpu-venus
+scheme display.virtio-gpu-venus
 
 # Test
 IMPORTANT: 

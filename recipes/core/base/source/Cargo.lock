@@ -5202,6 +5202,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "virtio-gpu-venusd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "common",
+ "daemon",
+ "driver-graphics",
+ "drm-sys",
+ "edid",
+ "futures",
+ "graphics-ipc",
+ "inputd",
+ "libredox",
+ "log",
+ "orbclient",
+ "pcid",
+ "redox_event",
+ "redox_syscall 0.6.0",
+ "spin 0.9.8",
+ "static_assertions",
+ "virtio-core",
+]
+
+[[package]]
 name = "virtio-gpud"
 version = "0.1.0"
 dependencies = [
@@ -5998,10 +6022,10 @@ name = "relibc"
 version = "0.2.5"
 
 [[patch.unused]]
+name = "relibc"
+version = "0.2.5"
+
+[[patch.unused]]
 name = "rustix"
 version = "1.1.2"
 source = "git+https://github.com/jackpot51/rustix.git?branch=redox-ioctl#e7e66bc77455251463336582c0b97df01054ccb8"
-
-[[patch.unused]]
-name = "relibc"
-version = "0.2.5"

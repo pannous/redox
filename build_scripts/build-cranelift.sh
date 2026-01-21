@@ -453,7 +453,7 @@ build_drivers() {
         # Storage
         nvmed virtio-blkd virtio-9pd lived
         # Graphics
-        vesad fbcond fbbootlogd virtio-gpud inputd
+        vesad fbcond fbbootlogd virtio-gpud virtio-gpu-venusd inputd
         # Network
         virtio-netd
         # Test utilities

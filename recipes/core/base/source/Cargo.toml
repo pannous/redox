@@ -61,6 +61,7 @@ members = [
     "drivers/graphics/ihdgd",
     "drivers/graphics/vesad",
     "drivers/graphics/virtio-gpud",
+    "drivers/graphics/virtio-gpu-venusd",
 
     "drivers/input/ps2d",
     "drivers/input/usbhidd",
