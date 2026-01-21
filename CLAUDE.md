@@ -76,18 +76,22 @@ Host side
 | DRM scanout | ✅ Working | SET_SCANOUT_BLOB triggers display |
 | Host Vulkan swapchain | ✅ Working | MoltenVK → CAMetalLayer |
 
-custom qemu @ /opt/other/qemu with venus driver!
+custom qemu @ /opt/other/qemu/build/qemu-system-aarch64 with venus driver!
+In principle we have a working QEMU for macOS aarch64 with Venus for direct Vulkan MoltenVK rendering!
+If you need any modifications there, let us know and another agent would implement them. 
+Same for qemu's components /opt/other/virglrenderer /opt/other/mesa we don't touch them ourselves. 
                                                    
-Redox Guest side
-  1. Venus QEMU was built without OpenGL (intentionally, NO OpenGL!! NO virtio-gpu-gl-pci )
+# Redox Guest side
+  1. Venus QEMU was built without OpenGL (intentionally, NO OpenGL NO virtio-gpu-gl-pci !! )
   2. virtio-gpu-pci Only worked for showing a gradient otherwise, "display not active"
   3. ramfb works for UEFI but Redox's display driver needs virtio-gpu    
 
-We need our own venus driver!  virtio-gpu-venus-pci / virtio-gpu-venusd based on virtio-gpud
+## Work in progress
+We need our OWN venus driver!  virtio-gpu-venus-pci / virtio-gpu-venusd based on virtio-gpud
 /opt/other/redox/recipes/core/base/source/drivers/graphics/virtio-gpu-venusd/src/venus.rs 
-Work in progress. 
 handle virtio-gpu-venus
 scheme display.virtio-gpu-venus
+/usr/lib/drivers/virtio-gpu-venusd currently exits with 101
 
 # Test
 IMPORTANT: 
