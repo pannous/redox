@@ -24,6 +24,7 @@ members = [
     "simple-coreutils",
     "simple-pkg",
     "simple-file",
+    "simple-xxd",
     "gpu-info",
     "vulkan-loader",
     "venus-icd",
