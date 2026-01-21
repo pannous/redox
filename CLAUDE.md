@@ -100,6 +100,8 @@ after your injections ALWAYS test with
 /opt/other/redox/run-venus.sh 
 should spawn a tmux session: redox-venus  ssh does NOT work in redox yet, disable
 
+Other scripts are using the system QEMU which does not have a Venus driver, so don't use them!
+
 Venus Driver prepared in the host /opt/other/qemu as well as here. 
 
 
