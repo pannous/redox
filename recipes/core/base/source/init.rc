@@ -42,10 +42,10 @@ export RUST_LOG warn
 nowait fbbootlogd
 
 # DEBUG: check if fbcond exists
-file /scheme/initfs/bin/fbcond
-ls /scheme/initfs/bin/fbcond
-nowait fbcond 1 2
-unset RSDP_ADDR RSDP_SIZE
+# file /scheme/initfs/bin/fbcond
+# ls /scheme/initfs/bin/fbcond
+# nowait fbcond 1 2
+# unset RSDP_ADDR RSDP_SIZE
 
 # Mount rootfs
 redoxfs --uuid $REDOXFS_UUID file $REDOXFS_BLOCK

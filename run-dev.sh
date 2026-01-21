@@ -83,11 +83,12 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -device virtio-blk-pci,drive=disk0 \
         "${NETDEV_ARGS[@]}" \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path="$SHARE",security_model=none \
         -device ramfb \
         -serial mon:stdio
-        # -device virtio-gpu-pci,edid=on \
-        # -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
-        # -fsdev local,id=host0,path="$SHARE",security_model=none \
+        # -device virtio-gpu-pci,edid=on \  ramfb gives better debug info until
+        # neither virtio-gpu-pci nor 9p Responsible or even tangential for extreme 100% CPU slowdown. 
 elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     # Tmux mode with graphics (ramfb) - serial output goes to tmux
     SESSION="redox-dev"

@@ -83,4 +83,8 @@ path = "src/test-mtime.rs"
 name = "pkill"
 path = "src/pkill.rs"
 
+[[bin]]
+name = "top"
+path = "src/top.rs"
+
 [dependencies]
