@@ -84,16 +84,8 @@ check_prereqs() {
 
 check_prereqs
 
-# CPU: Use TCG for now - HVF has 16KB page alignment issues with Venus blobs
-# The guest allocates with 4KB alignment but macOS requires 16KB
-# TODO: Test with HVF once alignment is fixed in virtio-gpud
-ACCEL="${QEMU_ACCEL:-tcg}"
-if [[ "$ACCEL" == "hvf" ]]; then
-    CPU="-accel hvf -cpu host -smp 4"
-    echo "Warning: HVF may have issues with Venus blob alignment (16KB required)"
-else
-    CPU="-accel tcg -cpu max -smp 4"
-fi
+# CPU: Always use HVF - fix any alignment issues in the guest driver
+CPU="-M virt,highmem=off -accel hvf -cpu host -smp 4"
 
 CACHE="cache=unsafe,snapshot=on"
 
@@ -125,7 +117,7 @@ case "$MODE" in
     -g|--gui|gui)
         # Graphical mode with cocoa display (Metal passthrough)
         echo "Starting Venus-Metal with cocoa display..."
-        exec "$QEMU" -M virt $CPU -m 2G \
+        exec "$QEMU" $CPU -m 2G \
             -rtc base=utc,clock=host \
             -drive if=pflash,format=raw,readonly=on,file="$EFI_CODE" \
             -drive if=pflash,format=raw,file="$EFI_VARS" \
