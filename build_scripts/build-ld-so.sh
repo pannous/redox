@@ -60,3 +60,5 @@ fi
 
 ls -la "$BUILD_DIR_CLIF/ld.so.1" "$BUILD_DIR_CLIF/ld.so.1.stripped"
 echo "Done!"
+echo ""
+echo "To deploy: cp $BUILD_DIR_CLIF/ld.so.1.stripped mount/usr/lib/ld.so.1"
