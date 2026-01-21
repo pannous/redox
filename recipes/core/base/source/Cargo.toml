@@ -30,6 +30,7 @@ members = [
     "vkinfo",
     "vktriangle",
     "set-background",
+    "draw-gradient",
     "strace",
     "curl",
     "sync",

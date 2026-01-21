@@ -1304,6 +1304,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
+name = "draw-gradient"
+version = "0.1.0"
+dependencies = [
+ "drm",
+ "graphics-ipc",
+ "inputd",
+]
+
+[[package]]
 name = "driver-block"
 version = "0.1.0"
 dependencies = [
@@ -5989,10 +5998,10 @@ name = "relibc"
 version = "0.2.5"
 
 [[patch.unused]]
-name = "relibc"
-version = "0.2.5"
-
-[[patch.unused]]
 name = "rustix"
 version = "1.1.2"
 source = "git+https://github.com/jackpot51/rustix.git?branch=redox-ioctl#e7e66bc77455251463336582c0b97df01054ccb8"
+
+[[patch.unused]]
+name = "relibc"
+version = "0.2.5"
