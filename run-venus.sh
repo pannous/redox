@@ -121,7 +121,7 @@ echo ""
 case "$MODE" in
     -g|--gui|gui)
         # Graphical mode with cocoa display (Metal passthrough)
-        echo "Starting Venus-Metal with cocoa display..."
+        # echo "Starting Venus-Metal with cocoa display..."
         exec "$QEMU" $CPU -m 2G \
             -rtc base=utc,clock=host \
             -drive if=pflash,format=raw,readonly=on,file="$EFI_CODE" \
@@ -130,8 +130,8 @@ case "$MODE" in
             -device virtio-blk-pci,drive=disk0 \
             -device qemu-xhci -device usb-kbd -device usb-tablet \
             -device "$GPU_DISPLAY" \
-            -device "$GPU_VENUS" \
-            -display cocoa \
+            # -device "$GPU_VENUS" \
+            # -display cocoa \
             -serial mon:stdio
             # -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
             # -fsdev local,id=host0,path="$SHARE",security_model=none \
