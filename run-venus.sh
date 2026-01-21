@@ -54,7 +54,7 @@ check_prereqs() {
 
     if [[ ! -f "$RAW_IMG" ]]; then
         echo "Error: Redox image not found at $RAW_IMG"
-        echo "Build it with ./build-cranelift.sh all"
+        echo "Build it with ./build-cranelift.sh all OR use working backup!!"
         missing=1
     fi
 
@@ -101,6 +101,7 @@ NETDEV_ARGS=
 # The Venus driver in Redox will handle display output through Venus protocol
 GPU_DISPLAY="ramfb"
 GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M"
+GPU_BROKEN="virtio-gpu-pci,edid=on"
 echo "device virtio-gpu-gl-pci has gl only in it's name, with venus=on its PURELY Vulkan!"
 
 # MODE="${1:-tmux}"
@@ -129,10 +130,11 @@ case "$MODE" in
             -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
             -device virtio-blk-pci,drive=disk0 \
             -device qemu-xhci -device usb-kbd -device usb-tablet \
-            -device "$GPU_DISPLAY" \
+            -device "$GPU_BROKEN" \
+            -serial mon:stdio
+            # -device "$GPU_DISPLAY" \
             # -device "$GPU_VENUS" \
             # -display cocoa \
-            -serial mon:stdio
             # -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
             # -fsdev local,id=host0,path="$SHARE",security_model=none \
             # "${NETDEV_ARGS[@]}" \
