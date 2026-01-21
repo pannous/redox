@@ -83,7 +83,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -device virtio-blk-pci,drive=disk0 \
         "${NETDEV_ARGS[@]}" \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
-        -device ramfs \
+        -device ramfb \
         -serial mon:stdio
         # -device virtio-gpu-pci,edid=on \
         # -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
