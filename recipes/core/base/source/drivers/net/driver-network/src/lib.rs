@@ -26,9 +26,18 @@ pub trait NetworkAdapter {
     fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>>;
 
     /// Write a single network packet.
-    // FIXME support back pressure on writes by returning EWOULDBLOCK or not
-    // returning from the write syscall until there is room.
+    ///
+    /// Returns `Err(EWOULDBLOCK)` when there is no room in the transmit queue.
+    /// The scheme layer handles blocking for non-O_NONBLOCK file descriptors.
     fn write_packet(&mut self, buf: &[u8]) -> Result<usize>;
+
+    /// The amount of space available for writing packets without blocking.
+    /// Returns 0 when the transmit queue is full.
+    /// Default implementation returns 1 for compatibility with drivers that
+    /// don't implement back pressure detection.
+    fn available_for_write(&mut self) -> usize {
+        1 // Assume space available by default for backwards compatibility
+    }
 }
 
 pub struct NetworkScheme<T: NetworkAdapter> {
@@ -173,13 +182,22 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
             let _ = self.socket.write_response(resp, SignalBehavior::Restart)?;
         }
 
-        // Notify readers about incoming events
+        // Notify about incoming read/write events
         let available_for_read = self.scheme.adapter.available_for_read();
+        let available_for_write = self.scheme.adapter.available_for_write();
+
+        let mut event_flags = 0;
         if available_for_read > 0 {
+            event_flags |= syscall::flag::EVENT_READ.bits();
+        }
+        if available_for_write > 0 {
+            event_flags |= syscall::flag::EVENT_WRITE.bits();
+        }
+
+        if event_flags != 0 {
             for &handle_id in self.scheme.handles.keys() {
-                post_fevent(&self.socket, handle_id, syscall::flag::EVENT_READ.bits())?;
+                post_fevent(&self.socket, handle_id, event_flags)?;
             }
-            return Ok(());
         }
 
         Ok(())
@@ -266,7 +284,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
         id: usize,
         buf: &[u8],
         _offset: u64,
-        _fcntl_flags: u32,
+        fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -276,7 +294,18 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
             Handle::Mac { .. } => return Err(Error::new(EINVAL)),
         }
 
-        Ok(self.adapter.write_packet(buf)?)
+        match self.adapter.write_packet(buf) {
+            Ok(count) => Ok(count),
+            Err(Error { errno: syscall::EWOULDBLOCK }) => {
+                // TX queue full - handle blocking vs non-blocking
+                if fcntl_flags & O_NONBLOCK as u32 != 0 {
+                    Err(Error::new(EAGAIN))
+                } else {
+                    Err(Error::new(EWOULDBLOCK))
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn fevent(&mut self, id: usize, _flags: EventFlags, _ctx: &CallerCtx) -> Result<EventFlags> {

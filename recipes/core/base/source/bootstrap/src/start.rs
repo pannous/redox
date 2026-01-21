@@ -50,8 +50,14 @@ pub unsafe extern "C" fn start() -> ! {
     let _ = crate::compat::open("/scheme/debug", syscall::O_WRONLY); // stdout
     let _ = crate::compat::open("/scheme/debug", syscall::O_WRONLY); // stderr
 
-    let _ = syscall::mprotect(4096, 4096, MapFlags::PROT_READ | MapFlags::MAP_PRIVATE)
-        .expect("mprotect failed for initfs header page");
+    // Make the entire initfs read-only (header + content)
+    // The initfs header is at 4096 (after the null page)
+    let initfs_header = 4096 as *const redox_initfs::types::Header;
+    let initfs_size = (*initfs_header).initfs_size.get() as usize;
+    // Round up to page boundary
+    let initfs_pages = initfs_size.div_ceil(4096) * 4096;
+    let _ = syscall::mprotect(4096, initfs_pages, MapFlags::PROT_READ | MapFlags::MAP_PRIVATE)
+        .expect("mprotect failed for initfs");
 
     let _ = syscall::mprotect(
         text_start,
@@ -77,8 +83,6 @@ pub unsafe extern "C" fn start() -> ! {
         MapFlags::PROT_READ | MapFlags::MAP_PRIVATE,
     )
     .expect("mprotect failed for rest of memory");
-
-    // FIXME make the initfs read-only
 
     crate::exec::main();
 }

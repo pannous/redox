@@ -9,12 +9,14 @@ use std::sync::Arc;
 
 use drm_sys::{
     drm_mode_modeinfo, drm_mode_property_enum, DRM_MODE_DPMS_OFF, DRM_MODE_DPMS_ON,
-    DRM_MODE_DPMS_STANDBY, DRM_MODE_DPMS_SUSPEND, DRM_MODE_PROP_ATOMIC, DRM_MODE_PROP_BITMASK,
-    DRM_MODE_PROP_BLOB, DRM_MODE_PROP_ENUM, DRM_MODE_PROP_IMMUTABLE, DRM_MODE_PROP_OBJECT,
-    DRM_MODE_PROP_RANGE, DRM_MODE_PROP_SIGNED_RANGE, DRM_PROP_NAME_LEN,
+    DRM_MODE_DPMS_STANDBY, DRM_MODE_DPMS_SUSPEND, DRM_MODE_FLAG_INTERLACE, DRM_MODE_FLAG_NHSYNC,
+    DRM_MODE_FLAG_NVSYNC, DRM_MODE_FLAG_PHSYNC, DRM_MODE_FLAG_PVSYNC, DRM_MODE_PROP_ATOMIC,
+    DRM_MODE_PROP_BITMASK, DRM_MODE_PROP_BLOB, DRM_MODE_PROP_ENUM, DRM_MODE_PROP_IMMUTABLE,
+    DRM_MODE_PROP_OBJECT, DRM_MODE_PROP_RANGE, DRM_MODE_PROP_SIGNED_RANGE, DRM_PROP_NAME_LEN,
 };
 use graphics_ipc::v1::CursorDamage;
 use graphics_ipc::v2::Damage;
+use graphics_ipc::v2::ipc::DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT;
 use inputd::{VtEvent, VtEventKind};
 use libredox::Fd;
 use redox_scheme::scheme::SchemeSync;
@@ -107,16 +109,40 @@ struct VtState<T: GraphicsAdapter> {
     cursor_plane: Option<CursorPlane<T::Cursor>>,
 }
 
+/// Client capabilities that can be enabled per-handle
+#[derive(Default)]
+struct ClientCaps {
+    cursor_plane_hotspot: bool,
+}
+
 enum Handle<T: GraphicsAdapter> {
     V1Screen {
         vt: usize,
         screen: usize,
+        client_caps: ClientCaps,
     },
     V2 {
         vt: usize,
         next_id: u32,
         fbs: HashMap<u32, Arc<T::Framebuffer>>,
+        client_caps: ClientCaps,
     },
+}
+
+impl<T: GraphicsAdapter> Handle<T> {
+    fn client_caps_mut(&mut self) -> &mut ClientCaps {
+        match self {
+            Handle::V1Screen { client_caps, .. } => client_caps,
+            Handle::V2 { client_caps, .. } => client_caps,
+        }
+    }
+
+    fn client_caps(&self) -> &ClientCaps {
+        match self {
+            Handle::V1Screen { client_caps, .. } => client_caps,
+            Handle::V2 { client_caps, .. } => client_caps,
+        }
+    }
 }
 
 impl<T: GraphicsAdapter> GraphicsScheme<T> {
@@ -366,6 +392,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 vt,
                 next_id: 0,
                 fbs: HashMap::new(),
+                client_caps: ClientCaps::default(),
             }
         } else {
             let mut parts = path.split('/');
@@ -381,7 +408,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
             // Ensure the VT exists such that the rest of the methods can freely access it.
             Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
 
-            Handle::V1Screen { vt, screen: id }
+            Handle::V1Screen { vt, screen: id, client_caps: ClientCaps::default() }
         };
         self.next_id += 1;
         self.handles.insert(self.next_id, handle);
@@ -573,7 +600,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
             Handle::V1Screen { .. } => {
                 return Err(Error::new(EOPNOTSUPP));
             }
-            Handle::V2 { vt, next_id, fbs } => match metadata[0] {
+            Handle::V2 { vt, next_id, fbs, client_caps } => match metadata[0] {
                 ipc::VERSION => ipc::DrmVersion::with(payload, |mut data| {
                     data.set_version_major(1);
                     data.set_version_minor(4);
@@ -596,12 +623,18 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                     Ok(0)
                 }),
                 ipc::SET_CLIENT_CAP => ipc::DrmSetClientCap::with(payload, |data| {
-                    self.adapter.set_client_cap(
-                        data.capability()
-                            .try_into()
-                            .map_err(|_| syscall::Error::new(EINVAL))?,
-                        data.value(),
-                    )?;
+                    let cap: u32 = data.capability()
+                        .try_into()
+                        .map_err(|_| syscall::Error::new(EINVAL))?;
+                    let value = data.value();
+
+                    // Validate with adapter and track per-handle
+                    self.adapter.set_client_cap(cap, value)?;
+
+                    // Track capability per-handle for proper cursor plane visibility
+                    if cap == DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT {
+                        client_caps.cursor_plane_hotspot = value != 0;
+                    }
                     Ok(0)
                 }),
                 ipc::MODE_CARD_RES => ipc::DrmModeCardRes::with(payload, |mut data| {
@@ -964,6 +997,89 @@ pub fn modeinfo_for_size(width: u32, height: u32) -> drm_mode_modeinfo {
     };
 
     let name = format!("{width}x{height}").into_bytes();
+    for (to, from) in modeinfo.name.iter_mut().zip(name) {
+        *to = from as c_char;
+    }
+
+    modeinfo
+}
+
+/// Detailed timing parameters for creating mode info
+#[derive(Clone, Copy)]
+pub struct DetailedTimingParams {
+    pub pixel_clock: u32,        // in kHz
+    pub h_active: u16,
+    pub h_blanking: u16,
+    pub h_front_porch: u16,
+    pub h_sync_width: u16,
+    pub v_active: u16,
+    pub v_blanking: u16,
+    pub v_front_porch: u16,
+    pub v_sync_width: u16,
+    pub h_sync_positive: bool,
+    pub v_sync_positive: bool,
+    pub interlaced: bool,
+}
+
+/// Create modeinfo from detailed timing parameters (extracted from EDID)
+pub fn modeinfo_from_detailed_timing(timing: DetailedTimingParams, preferred: bool) -> drm_mode_modeinfo {
+    let htotal = timing.h_active + timing.h_blanking;
+    let vtotal = timing.v_active + timing.v_blanking;
+    let hsync_start = timing.h_active + timing.h_front_porch;
+    let hsync_end = hsync_start + timing.h_sync_width;
+    let vsync_start = timing.v_active + timing.v_front_porch;
+    let vsync_end = vsync_start + timing.v_sync_width;
+
+    // Calculate refresh rate: pixel_clock / (htotal * vtotal)
+    // pixel_clock is in kHz, so result is in Hz
+    let vrefresh = if htotal > 0 && vtotal > 0 {
+        ((timing.pixel_clock as u64 * 1000) / (htotal as u64 * vtotal as u64)) as u32
+    } else {
+        60
+    };
+
+    // Build mode flags
+    let mut flags = 0u32;
+    if timing.h_sync_positive {
+        flags |= DRM_MODE_FLAG_PHSYNC;
+    } else {
+        flags |= DRM_MODE_FLAG_NHSYNC;
+    }
+    if timing.v_sync_positive {
+        flags |= DRM_MODE_FLAG_PVSYNC;
+    } else {
+        flags |= DRM_MODE_FLAG_NVSYNC;
+    }
+    if timing.interlaced {
+        flags |= DRM_MODE_FLAG_INTERLACE;
+    }
+
+    let type_ = if preferred {
+        drm_sys::DRM_MODE_TYPE_PREFERRED | drm_sys::DRM_MODE_TYPE_DRIVER
+    } else {
+        drm_sys::DRM_MODE_TYPE_DRIVER
+    };
+
+    let mut modeinfo = drm_mode_modeinfo {
+        hdisplay: timing.h_active,
+        vdisplay: timing.v_active,
+        clock: timing.pixel_clock,
+        htotal,
+        vtotal,
+        hsync_start,
+        hsync_end,
+        vsync_start,
+        vsync_end,
+        vscan: 0,
+        vrefresh,
+        hskew: 0,
+        type_,
+        flags,
+        name: [0; 32],
+    };
+
+    // Generate mode name like "1920x1080@60"
+    let name = format!("{}x{}@{}", timing.h_active, timing.v_active, vrefresh).into_bytes();
     for (to, from) in modeinfo.name.iter_mut().zip(name) {
         *to = from as c_char;
     }

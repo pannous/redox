@@ -4,8 +4,8 @@ use std::sync::Arc;
 use common::{dma::Dma, sgl};
 use driver_graphics::objects::{DrmConnectorStatus, DrmObjectId, DrmObjects};
 use driver_graphics::{
-    modeinfo_for_size, CursorFramebuffer, CursorPlane, Framebuffer, GraphicsAdapter,
-    GraphicsScheme, StandardProperties,
+    modeinfo_for_size, modeinfo_from_detailed_timing, CursorFramebuffer, CursorPlane,
+    DetailedTimingParams, Framebuffer, GraphicsAdapter, GraphicsScheme, StandardProperties,
 };
 use drm_sys::{DRM_MODE_DPMS_ON, DRM_MODE_TYPE_PREFERRED};
 use graphics_ipc::v1::Damage;
@@ -655,24 +655,38 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
                 connector.modes = edid
                     .descriptors
                     .iter()
-                    .filter_map(|descriptor| {
+                    .enumerate()
+                    .filter_map(|(idx, descriptor)| {
                         match descriptor {
-                            edid::Descriptor::DetailedTiming(detailed_timing) => {
-                                // FIXME extract full information
-                                Some(modeinfo_for_size(
-                                    u32::from(detailed_timing.horizontal_active_pixels),
-                                    u32::from(detailed_timing.vertical_active_lines),
-                                ))
+                            edid::Descriptor::DetailedTiming(dt) => {
+                                // Extract full timing information from EDID
+                                // Features byte: bits 4-3 = sync type, bit 2 = h_sync polarity, bit 1 = v_sync polarity
+                                let sync_type = (dt.features >> 3) & 0b11;
+                                let h_sync_positive = sync_type == 0b11 && (dt.features & (1 << 2)) != 0;
+                                let v_sync_positive = sync_type == 0b11 && (dt.features & (1 << 1)) != 0;
+                                let interlaced = (dt.features & (1 << 7)) != 0;
+
+                                let params = DetailedTimingParams {
+                                    pixel_clock: dt.pixel_clock as u32 * 10, // EDID stores in 10kHz units
+                                    h_active: dt.horizontal_active_pixels,
+                                    h_blanking: dt.horizontal_blanking_pixels,
+                                    h_front_porch: dt.horizontal_front_porch as u16,
+                                    h_sync_width: dt.horizontal_sync_width as u16,
+                                    v_active: dt.vertical_active_lines,
+                                    v_blanking: dt.vertical_blanking_lines,
+                                    v_front_porch: dt.vertical_front_porch as u16,
+                                    v_sync_width: dt.vertical_sync_width as u16,
+                                    h_sync_positive,
+                                    v_sync_positive,
+                                    interlaced,
+                                };
+                                // First descriptor is preferred mode
+                                Some(modeinfo_from_detailed_timing(params, idx == 0))
                             }
                             _ => None,
                         }
                     })
                     .collect::<Vec<_>>();
-
-                // First detailed timing descriptor indicates preferred mode.
-                for mode in connector.modes.iter_mut().skip(1) {
-                    mode.flags &= !DRM_MODE_TYPE_PREFERRED;
-                }
 
                 let blob = objects.add_blob(display.edid.clone());
                 objects.set_object_property(id, standard_properties.edid, blob.into());

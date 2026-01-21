@@ -104,6 +104,13 @@ impl<'a> NetworkAdapter for VirtioNet<'a> {
         (self.rx.used.head_index() - self.recv_head).into()
     }
 
+    fn available_for_write(&mut self) -> usize {
+        // Reclaim any completed TX descriptors first
+        self.tx.reclaim_completed();
+        // Need at least 2 descriptors per packet (header + payload)
+        self.tx.available_descriptors().saturating_sub(1) / 2
+    }
+
     fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
         let bytes = self.try_recv(buf);
 
