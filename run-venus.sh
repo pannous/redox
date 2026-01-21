@@ -86,22 +86,25 @@ check_prereqs
 
 # CPU: Always use HVF - fix any alignment issues in the guest driver
 CPU="-M virt,highmem=off -accel hvf -cpu host -smp 4"
-
 CACHE="cache=unsafe,snapshot=on"
 
-# Network (SSH disabled - not working in Redox yet)
-NETDEV_ARGS=(-netdev user,id=net0)
-NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
+echo "Network (SSH disabled - not working in Redox yet)"
+# NETDEV_ARGS=(-netdev user,id=net0)
+# NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
+NETDEV_ARGS=
 
 # Display configuration:
 # - ramfb: Simple framebuffer for UEFI/early boot (works without OpenGL)
-# - virtio-gpu-gl-pci: Venus GPU for Vulkan rendering via Metal
+# - virtio-gpu-gl-pci: custom driver: Venus GPU for Vulkan rendering via Metal
 # NOTE: virtio-gpu-pci doesn't work with Venus QEMU (built without OpenGL)
+# NOTE: virtio-gpu-gl-pci  ? NO!
 # The Venus driver in Redox will handle display output through Venus protocol
 GPU_DISPLAY="ramfb"
 GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M"
+echo "device virtio-gpu-gl-pci has gl only in it's name, with venus=on its PURELY Vulkan!"
 
-MODE="${1:-tmux}"
+# MODE="${1:-tmux}"
+MODE="${1:-gui}"
 
 echo "=== Redox Venus-Metal Demo ==="
 echo "QEMU: $QEMU"
@@ -125,14 +128,14 @@ case "$MODE" in
             -drive if=pflash,format=raw,file="$EFI_VARS" \
             -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
             -device virtio-blk-pci,drive=disk0 \
-            -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
-            -fsdev local,id=host0,path="$SHARE",security_model=none \
-            "${NETDEV_ARGS[@]}" \
             -device qemu-xhci -device usb-kbd -device usb-tablet \
             -device "$GPU_DISPLAY" \
             -device "$GPU_VENUS" \
             -display cocoa \
             -serial mon:stdio
+            # -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+            # -fsdev local,id=host0,path="$SHARE",security_model=none \
+            # "${NETDEV_ARGS[@]}" \
         ;;
 
     -t|--tmux|tmux)
