@@ -93,10 +93,12 @@ handle virtio-gpu-venus
 scheme display.virtio-gpu-venus
 /usr/lib/drivers/virtio-gpu-venusd currently exits with 101
 
+
 # Test
 IMPORTANT: 
 after your injections ALWAYS test with 
-/opt/other/redox/run-venus.sh
+/opt/other/redox/run-venus.sh 
+should spawn a tmux session: redox-venus
 
 Venus Driver prepared in the host /opt/other/qemu as well as here. 
 

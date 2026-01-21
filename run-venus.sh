@@ -102,7 +102,7 @@ NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
 GPU_DISPLAY="ramfb"
 GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M"
 
-MODE="${1:-gui}"
+MODE="${1:-tmux}"
 
 echo "=== Redox Venus-Metal Demo ==="
 echo "QEMU: $QEMU"
@@ -171,8 +171,8 @@ case "$MODE" in
         echo "Usage: $0 [-g|--gui|gui] [-t|--tmux|tmux] [-d]"
         echo ""
         echo "Options:"
-        echo "  -g, --gui   Graphical mode with cocoa display (default)"
-        echo "  -t, --tmux  Tmux session with cocoa display"
+        echo "  -t, --tmux  Tmux session with cocoa display (default)"
+        echo "  -g, --gui   Graphical mode with cocoa display (not yet!)"
         echo "  -d          Detached tmux mode (use with -t)"
         echo ""
         echo "Environment variables:"
