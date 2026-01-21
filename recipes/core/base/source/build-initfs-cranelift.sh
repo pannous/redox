@@ -100,9 +100,10 @@ cd ..
 echo "=== Creating initfs archive ==="
 # Clear RUSTFLAGS for host tool build (not cross-compiled)
 unset RUSTFLAGS
+INITFS_OUT="/opt/other/redox/build/aarch64/initfs-cranelift.img"
 cargo run --manifest-path initfs/tools/Cargo.toml --bin redox-initfs-ar -- \
-    /tmp/initfs-cranelift /tmp/bootstrap-cranelift-stripped -o /tmp/initfs-cranelift.img
+    /tmp/initfs-cranelift /tmp/bootstrap-cranelift-stripped -o "$INITFS_OUT"
 
 echo "=== Done ==="
-ls -la /tmp/initfs-cranelift.img
+ls -la "$INITFS_OUT"
 echo "To test: inject into a Redox ISO and boot with QEMU"
