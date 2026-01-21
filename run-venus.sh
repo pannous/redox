@@ -89,9 +89,8 @@ CPU="-M virt,highmem=off -accel hvf -cpu host -smp 4"
 
 CACHE="cache=unsafe,snapshot=on"
 
-# Network - SSH on port 2224 (different from regular run-dev.sh on 2223)
-HOST_SSH_PORT="${HOST_SSH_PORT:-2224}"
-NETDEV_ARGS=(-netdev user,id=net0,hostfwd=tcp::"$HOST_SSH_PORT"-:22)
+# Network (SSH disabled - not working in Redox yet)
+NETDEV_ARGS=(-netdev user,id=net0)
 NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
 
 # Display configuration:
@@ -110,7 +109,7 @@ echo "Image: $RAW_IMG"
 echo "GPU Display: $GPU_DISPLAY"
 echo "GPU Venus: $GPU_VENUS"
 echo "Accel: HVF"
-echo "SSH: ssh -p $HOST_SSH_PORT root@localhost"
+# SSH disabled - not working in Redox yet
 echo "Share: /scheme/9p.hostshare/ → $SHARE"
 echo ""
 echo "Venus debug enabled - check console for VKR_DEBUG output"
@@ -178,7 +177,6 @@ case "$MODE" in
         echo "Environment variables:"
         echo "  QEMU_ACCEL=hvf    Use HVF instead of TCG (experimental)"
         echo "  RAW_IMG=path      Use alternate Redox image"
-        echo "  HOST_SSH_PORT=N   SSH port (default: 2224)"
         exit 1
         ;;
 esac

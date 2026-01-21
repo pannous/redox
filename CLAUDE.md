@@ -98,7 +98,7 @@ scheme display.virtio-gpu-venus
 IMPORTANT: 
 after your injections ALWAYS test with 
 /opt/other/redox/run-venus.sh 
-should spawn a tmux session: redox-venus
+should spawn a tmux session: redox-venus  ssh does NOT work in redox yet, disable
 
 Venus Driver prepared in the host /opt/other/qemu as well as here. 
 
