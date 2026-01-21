@@ -13,8 +13,3 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 rustls-rustcrypto = "0.0.2-alpha"
 rustls-pki-types = "1"
 webpki-roots = "0.26"
-
-[profile.release]
-opt-level = "s"
-lto = false
-panic = "abort"

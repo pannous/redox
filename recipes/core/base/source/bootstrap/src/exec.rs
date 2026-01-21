@@ -1,6 +1,5 @@
 use core::str::FromStr;
 
-use alloc::borrow::ToOwned;
 use alloc::vec::Vec;
 
 use syscall::flag::{O_CLOEXEC, O_RDONLY};

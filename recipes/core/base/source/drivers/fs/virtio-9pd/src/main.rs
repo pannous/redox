@@ -1,5 +1,5 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
-#![allow(unsafe_op_in_unsafe_fn)]
+#![allow(unsafe_op_in_unsafe_fn, dead_code, unused_variables)]
 
 use std::sync::Arc;
 

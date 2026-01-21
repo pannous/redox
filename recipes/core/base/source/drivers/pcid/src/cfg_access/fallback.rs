@@ -1,14 +1,20 @@
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use std::cell::Cell;
-use std::convert::TryFrom;
 use std::sync::Mutex;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use std::convert::TryFrom;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use common::io::{Io as _, Pio};
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use log::info;
+
 use pci_types::{ConfigRegionAccess, PciAddress};
 
 pub(crate) struct Pci {
+    #[allow(dead_code)]
     lock: Mutex<()>,
 }
 
@@ -19,6 +25,7 @@ impl Pci {
         }
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn set_iopl() {
         // The IO privilege level is per-thread, so we need to do the initialization on every thread.
         thread_local! {
@@ -38,6 +45,7 @@ impl Pci {
         });
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn address(address: PciAddress, offset: u8) -> u32 {
         assert_eq!(
             address.segment(),

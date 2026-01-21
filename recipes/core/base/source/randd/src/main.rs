@@ -44,7 +44,6 @@ const SEED_BYTES: usize = 32;
 /// aarch64: Uses timer jitter entropy from CNTVCT_EL0
 fn create_rdrand_seed() -> [u8; SEED_BYTES] {
     let mut rng = [0u8; SEED_BYTES];
-    let mut have_seeded = false;
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -56,7 +55,7 @@ fn create_rdrand_seed() -> [u8; SEED_BYTES] {
                 }
                 rng[i * 8..(i * 8 + 8)].copy_from_slice(&rand.to_le_bytes());
             }
-            have_seeded = true;
+            return rng;
         }
     }
 
@@ -91,14 +90,15 @@ fn create_rdrand_seed() -> [u8; SEED_BYTES] {
 
         let hash = digest.result();
         rng.copy_from_slice(hash.as_slice());
-        have_seeded = true;
         println!("randd: Seeded from aarch64 timer jitter entropy");
+        return rng;
     }
 
-    if !have_seeded {
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
         println!("randd: Seeding failed, no entropy source. Random numbers are NOT SECURE");
+        rng
     }
-    rng
 }
 
 /// Contains information about an open file

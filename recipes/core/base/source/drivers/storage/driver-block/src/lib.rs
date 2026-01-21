@@ -68,6 +68,7 @@ fn block_read(
     Ok(total_read)
 }
 
+#[allow(async_fn_in_trait)]
 pub trait Disk {
     fn block_size(&self) -> u32;
     fn size(&self) -> u64;

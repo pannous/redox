@@ -156,11 +156,13 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         }
     };
 
+    #[allow(deprecated)]
+    let executor = driver_block::FuturesExecutor;
     let mut scheme = DiskScheme::new(
         Some(daemon),
         scheme_name,
         BTreeMap::from([(0, VirtioDisk::new(queue, device_space))]),
-        &driver_block::FuturesExecutor,
+        &executor,
     );
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");

@@ -17,8 +17,3 @@ tar = "0.4"
 flate2 = "1.0"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
-
-[profile.release]
-opt-level = "s"
-lto = false
-panic = "abort"

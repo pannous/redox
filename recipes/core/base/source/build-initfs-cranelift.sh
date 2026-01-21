@@ -106,4 +106,6 @@ cargo run --manifest-path initfs/tools/Cargo.toml --bin redox-initfs-ar -- \
 
 echo "=== Done ==="
 ls -la "$INITFS_OUT"
-echo "To test: inject into a Redox ISO and boot with QEMU"
+# echo "To test: inject into a Redox ISO and boot with QEMU"
+cp /opt/other/redox/mount/boot/initfs /opt/other/redox/mount/boot/initfs.bak
+cp /opt/other/redox/build/aarch64/initfs-cranelift.img /opt/other/redox/mount/boot/initfs

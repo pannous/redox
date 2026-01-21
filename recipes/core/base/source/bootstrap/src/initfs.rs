@@ -319,7 +319,7 @@ impl SchemeSync for InitFsScheme {
         let data = match Self::get_inode(&self.fs, handle.inode)?.kind() {
             InodeKind::File(file) => file.data().map_err(|_| Error::new(EIO))?,
             InodeKind::Dir(_) => return Err(Error::new(EISDIR)),
-            InodeKind::Link(link) => return Err(Error::new(ELOOP)),
+            InodeKind::Link(_link) => return Err(Error::new(ELOOP)),
             InodeKind::Unknown => return Err(Error::new(EIO)),
         };
 

@@ -3,6 +3,8 @@
 //! XXX: 3D mode will offload rendering ops to the host gpu and therefore requires a GPU with 3D support
 //! on the host machine.
 
+#![allow(dead_code, unused_variables, unused_imports)]
+
 // Notes for the future:
 //
 // `virtio-gpu` 2D acceleration is just blitting. 3D acceleration has 2 kinds:

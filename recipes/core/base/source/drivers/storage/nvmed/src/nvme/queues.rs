@@ -86,9 +86,7 @@ impl NvmeCompQueue {
             if let Some(some) = self.complete() {
                 return some;
             } else {
-                unsafe {
-                    std::hint::spin_loop();
-                }
+                std::hint::spin_loop();
             }
         }
     }

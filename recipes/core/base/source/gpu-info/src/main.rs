@@ -4,7 +4,6 @@
 //! and displays available GPU capabilities.
 
 use std::fs;
-use std::io::{self, Read};
 
 fn main() {
     println!("=== GPU Info ===\n");

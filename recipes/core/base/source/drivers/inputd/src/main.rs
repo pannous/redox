@@ -451,7 +451,7 @@ impl SchemeSync for InputScheme {
             Handle::Display {
                 ref mut events,
                 ref mut notified,
-                device,
+                device: _,
                 ..
             } => {
                 *events = flags;
@@ -545,7 +545,7 @@ fn deamon(deamon: daemon::Daemon) -> anyhow::Result<()> {
                     events,
                     pending,
                     ref mut notified,
-                    device,
+                    device: _,
                     ..
                 } => {
                     if pending.is_empty() || *notified || !events.contains(EventFlags::EVENT_READ) {

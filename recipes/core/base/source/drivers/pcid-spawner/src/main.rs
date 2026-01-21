@@ -22,7 +22,7 @@ fn busy_wait_ms(ms: u64) {
     }
 }
 
-fn wait_for_scheme(path: &str, max_retries: u32, _delay_ms: u64) -> Result<fs::ReadDir> {
+fn wait_for_scheme(path: &str, _max_retries: u32, _delay_ms: u64) -> Result<fs::ReadDir> {
     // Wait up to 30 seconds with 100 retries of 300ms each
     // Also wait for directory to have at least one entry
     for i in 0..100 {

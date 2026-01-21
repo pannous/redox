@@ -137,7 +137,7 @@ fn handle_event(
                 RequestKind::Cancellation(cancellation_request) => {
                     if let Some(i) = blocked
                         .iter()
-                        .position(|(op, caller)| caller.id == cancellation_request.id)
+                        .position(|(_op, caller)| caller.id == cancellation_request.id)
                     {
                         let (blocked_req, _) = blocked.remove(i);
                         let resp = Response::err(EINTR, blocked_req);

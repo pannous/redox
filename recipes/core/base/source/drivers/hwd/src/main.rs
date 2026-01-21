@@ -1,6 +1,7 @@
 use std::process;
 use std::time::Duration;
 
+#[allow(dead_code)]
 mod backend;
 
 fn main() {

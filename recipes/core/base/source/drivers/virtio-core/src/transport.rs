@@ -449,6 +449,7 @@ pub struct Available<'a> {
 pub struct Borrowed<'a> {
     phys: usize,
     virt: usize,
+    #[allow(dead_code)]
     size: usize,
     _unused: &'a (),
 }

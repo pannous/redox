@@ -121,7 +121,7 @@ impl PartialOrd for RelativePerformance {
 
 impl LbaFormat {
     pub fn relative_performance(&self) -> RelativePerformance {
-        match ((self.0 >> 24) & 0b11) {
+        match (self.0 >> 24) & 0b11 {
             0b00 => RelativePerformance::Best,
             0b01 => RelativePerformance::Better,
             0b10 => RelativePerformance::Good,

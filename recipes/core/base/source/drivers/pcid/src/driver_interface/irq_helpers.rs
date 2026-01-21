@@ -234,6 +234,7 @@ pub struct InterruptVector {
     kind: InterruptVectorKind,
 }
 
+#[allow(dead_code)]
 enum InterruptVectorKind {
     Legacy,
     Msi,

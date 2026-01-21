@@ -63,6 +63,7 @@ impl FbconScheme {
         }
     }
 
+    #[allow(dead_code)]
     fn get_vt_handle_mut(&mut self, id: usize) -> Result<&mut FdHandle> {
         match self.handles.get_mut(&id) {
             Some(handle) => Ok(handle),

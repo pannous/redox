@@ -300,8 +300,6 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                 _ => (),
             }
         }
-
-        Ok(())
     }
 
     fn update_whole_screen(adapter: &mut T, screen: usize, framebuffer: &T::Framebuffer) {

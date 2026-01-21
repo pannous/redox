@@ -8,15 +8,20 @@ pub struct MmioPtr<T> {
 }
 
 impl<T> MmioPtr<T> {
-    //TODO: reads and writes are unsafe, not new.
+    /// Creates a new MMIO pointer from a raw pointer.
+    ///
+    /// # Safety
+    /// The pointer must be valid for MMIO operations.
     pub unsafe fn new(ptr: *mut T) -> Self {
         Self { ptr }
     }
 
+    /// Returns the pointer as a const pointer.
     pub const fn as_ptr(&self) -> *const T {
         self.ptr
     }
 
+    /// Returns the pointer as a mutable pointer.
     pub const fn as_mut_ptr(&mut self) -> *mut T {
         self.ptr
     }

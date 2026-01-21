@@ -160,7 +160,7 @@ pub fn run(write_fd: usize, auth: &FdGuard) {
 
             log::trace!("--THREAD DIED {}, {}", event.data, thread.pid.0);
 
-            if let Err(err) = scheme.queue.unsubscribe(event.data, event.data) {
+            if let Err(_err) = scheme.queue.unsubscribe(event.data, event.data) {
                 log::error!("failed to unsubscribe from fd {}", event.data);
             }
             scheme.thread_lookup.remove(&event.data);
@@ -1369,7 +1369,7 @@ impl<'a> ProcScheme<'a> {
         let recv_nonblock = |waitpid: &mut BTreeMap<WaitpidKey, (ProcessId, WaitpidStatus)>,
                              key: &WaitpidKey|
          -> Option<(ProcessId, WaitpidStatus)> {
-            if let Some((pid, mut sts)) = waitpid.get(key).map(|(k, v)| (*k, *v)) {
+            if let Some((pid, sts)) = waitpid.get(key).map(|(k, v)| (*k, *v)) {
                 waitpid.remove(key);
                 /*while let Some((_, new_sts)) = waitpid.remove(&WaitpidKey { pid: Some(pid), pgid: None }) {
                     sts = new_sts;
@@ -1578,6 +1578,7 @@ impl<'a> ProcScheme<'a> {
         }
         Ok(())
     }
+    #[allow(dead_code)]
     fn ancestors(&self, pid: ProcessId) -> impl Iterator<Item = ProcessId> + '_ {
         struct Iter<'a> {
             cur: Option<ProcessId>,
@@ -1667,7 +1668,7 @@ impl<'a> ProcScheme<'a> {
         awoken: &mut VecDeque<VirtualId>,
     ) -> Poll<Response> {
         let req_id = *state_entry.key();
-        let mut state = state_entry.get_mut();
+        let state = state_entry.get_mut();
         let this_state = core::mem::replace(state, PendingState::Placeholder);
         match this_state {
             PendingState::Placeholder => return Pending, // unreachable!(),
@@ -1872,6 +1873,7 @@ impl<'a> ProcScheme<'a> {
             }
         }
     }
+    #[allow(dead_code)]
     fn debug(&self) {
         log::trace!("PROCESSES\n{:#?}", self.processes,);
         log::trace!("HANDLES\n{:#?}", self.handles,);
@@ -2233,7 +2235,7 @@ impl<'a> ProcScheme<'a> {
                                 .expect("TODO");
                         }
                     }
-                    KillTarget::Proc(proc) => {
+                    KillTarget::Proc(_proc) => {
                         match mode {
                             KillMode::Queued(arg) => {
                                 if sig_group != 1 {
@@ -2570,7 +2572,7 @@ impl<'a> ProcScheme<'a> {
         // Useful for debugging memory leaks.
         log::trace!("NEXT FD: {}", {
             let nextfd = syscall::dup(0, &[]).unwrap();
-            syscall::close(nextfd);
+            let _ = syscall::close(nextfd);
             nextfd
         });
         log::trace!("{} processes", self.processes.len());

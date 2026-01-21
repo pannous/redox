@@ -3,6 +3,7 @@ use std::str::FromStr;
 use libredox::{flag, Fd};
 use redox_log::{OutputBuilder, RedoxLogger};
 
+/// Returns the log level for console output based on RUST_LOG environment variable.
 pub fn output_level() -> log::LevelFilter {
     // Check RUST_LOG env var, default to Info if not set
     match std::env::var("RUST_LOG").ok().as_deref() {
@@ -16,6 +17,7 @@ pub fn output_level() -> log::LevelFilter {
     }
 }
 
+/// Returns the log level for file output (Debug level for troubleshooting).
 pub fn file_level() -> log::LevelFilter {
     // File logging at Debug level for troubleshooting
     log::LevelFilter::Debug

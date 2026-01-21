@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 use std::convert::TryFrom;
 use std::fs::File;
 use std::mem;

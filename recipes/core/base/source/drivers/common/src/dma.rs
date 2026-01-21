@@ -69,6 +69,7 @@ pub(crate) fn phys_contiguous_fd() -> Result<Fd> {
 /// - A file descriptor to physically contiguous memory of type [DMA_MEMTY] could not be acquired
 /// - A virtual mapping for the physically contiguous memory could not be created
 /// - The virtual address returned by the memory manager was invalid.
+#[allow(dead_code)]
 fn alloc_and_map(length: usize, handle: &VirtaddrTranslationHandle) -> Result<(usize, *mut ())> {
     alloc_and_map_aligned(length, PAGE_SIZE, handle)
 }
