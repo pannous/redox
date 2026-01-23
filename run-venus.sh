@@ -99,9 +99,12 @@ NETDEV_ARGS=
 # NOTE: virtio-gpu-pci doesn't work with Venus QEMU (built without OpenGL)
 # NOTE: virtio-gpu-gl-pci  ? NO!
 # The Venus driver in Redox will handle display output through Venus protocol
-GPU_DISPLAY="ramfb"
-GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M"
+# GPU_VENUS="virtio-gpu-gl-pci" # The console requires a GL context.
+GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M" # only choice!
+# GPU_VENUS="virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M  \ -display cocoa"
 GPU_BROKEN="virtio-gpu-pci,edid=on"
+# DISPLAY="ramfb"
+DISPLAY="$GPU_VENUS"
 echo "device virtio-gpu-gl-pci has gl only in it's name, with venus=on its PURELY Vulkan!"
 
 # MODE="${1:-tmux}"
@@ -110,8 +113,7 @@ MODE="${1:-gui}"
 echo "=== Redox Venus-Metal Demo ==="
 echo "QEMU: $QEMU"
 echo "Image: $RAW_IMG"
-echo "GPU Display: $GPU_DISPLAY"
-echo "GPU Venus: $GPU_VENUS"
+echo "Display: $DISPLAY"
 echo "Accel: HVF"
 # SSH disabled - not working in Redox yet
 echo "Share: /scheme/9p.hostshare/ → $SHARE"
@@ -130,11 +132,9 @@ case "$MODE" in
             -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
             -device virtio-blk-pci,drive=disk0 \
             -device qemu-xhci -device usb-kbd -device usb-tablet \
-            -device "$GPU_BROKEN" \
+            -device "$DISPLAY" \
+            -display cocoa \
             -serial mon:stdio
-            # -device "$GPU_DISPLAY" \
-            # -device "$GPU_VENUS" \
-            # -display cocoa \
             # -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
             # -fsdev local,id=host0,path="$SHARE",security_model=none \
             # "${NETDEV_ARGS[@]}" \
@@ -159,7 +159,7 @@ case "$MODE" in
             -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
             ${NETDEV_ARGS[*]} \
             -device qemu-xhci -device usb-kbd -device usb-tablet \
-            -device \"$GPU_DISPLAY\" \
+            -device \"$DISPLAY\" \
             -device \"$GPU_VENUS\" \
             -display cocoa \
             -serial mon:stdio"

@@ -26,7 +26,8 @@
       "Bash(hdiutil attach:*)",
       "Bash(CARGO_INCREMENTAL=0 cargo rustc:*)",
       "Bash(xxd:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(ldd:*)"
     ]
   },
   "hooks": {
