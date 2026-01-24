@@ -147,6 +147,36 @@ After:  kernel:DEBUG -- BSP: 4 CPUs  ✅
 
 ## Known Issues
 
+### CRITICAL: Boot Hang with PSCI AP Startup
+
+**Problem:** System boots partially but hangs in context switching loop, never reaching login prompt
+
+**Status:** Under investigation (2026-01-24)
+
+**Evidence:**
+- System stuck switching between contexts 1 (kmain), 37 (virtio driver), 59 (xhcid)
+- Never reaches login prompt or user interaction
+- Issue does NOT exist in pre-SMP backup (boots successfully)
+- Phase 1 (CPU enumeration) boots OK ✅
+- Phase 2 (GIC multi-CPU init) boots OK ✅
+- Phase 3+ (IPI, PSCI) causes boot hang ❌
+
+**Fixes Applied:**
+1. ✅ Removed duplicate `context::init()` call from `kmain_ap()` (line 225 in main.rs)
+2. ⚠️ Boot hang persists even with multi_core feature disabled
+
+**Analysis:**
+- Individual commits after Phase 2 have compilation errors (missing dependencies)
+- Suggests sub-agents made interdependent changes across multiple commits
+- Full codebase compiles but individual phases don't
+- Boot hang occurs even without PSCI AP startup code executing
+
+**Next Steps:**
+1. Systematically compare working Phase 2 code with broken Phase 3+ code
+2. Look for unintended side effects in IPI/interrupt handler changes
+3. Check for race conditions or initialization order issues
+4. Verify IRQ handler changes don't break existing interrupt routing
+
 ### Phase 2 Mystery: Missing Log Messages
 
 **Problem:** SMP info!() messages from `src/acpi/madt/arch/aarch64.rs` don't appear in boot log
