@@ -1,0 +1,8 @@
+[package]
+name = "smp-stress-test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "smp-stress"
+path = "src/main.rs"
