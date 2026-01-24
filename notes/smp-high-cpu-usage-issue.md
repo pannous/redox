@@ -487,4 +487,138 @@ qemu-system-aarch64 \
 ---
 
 **Last Updated:** 2026-01-24 Late Evening
-**Next Agent:** Please start with "Priority 1: Revert WFI Logging" to fix boot hang, then investigate WFI behavior.
+
+---
+
+## Investigation Session 2: 2026-01-24 23:00-23:15
+
+### Attempted Changes
+
+#### 1. Removed WFI Logging ✅
+**File:** `src/arch/aarch64/interrupt/mod.rs:27-42`
+- Successfully removed problematic WFI_COUNT logging that caused boot hang
+- Code now directly calls `asm!("dsb sy", "msr daifclr, #2", "wfi", "nop")`
+
+#### 2. Reduced Timer Frequency (50Hz) ❌
+**File:** `src/arch/aarch64/device/generic_timer.rs:71`
+- Changed from `clk_freq / 100` (100Hz) to `clk_freq / 50` (50Hz)
+- Goal: Test if timer interrupts were causing high CPU usage
+
+### Build Attempt
+
+**Method:** Used kernel Makefile with standard rustc
+```bash
+CARGO_INCREMENTAL=0 ARCH=aarch64 make
+```
+
+**Result:** ❌ **FAILED** - Kernel built but caused system crashes
+
+**Symptoms:**
+- Multiple RELIBC panics: "invalid state for Once<T>"
+- Processes crashing: getty, ipcd, ptyd, inputd, xhcid
+- System unable to reach login prompt
+
+**Root Cause:** ABI mismatch between kernel and userspace
+- Kernel Makefile uses standard rustc (not Cranelift)
+- CLAUDE.md states system requires Cranelift for all components
+- Mixing Cranelift-compiled userspace with standard-rustc kernel breaks ABI
+
+### Diagnostics Collected
+
+#### CPU Usage Measurement
+```bash
+ps aux | grep qemu-system-aarch64
+# Result: 228.6% CPU on idle 4-core system
+```
+**Confirmed:** High CPU usage issue persists (~230% out of 400% possible)
+
+#### System State
+- Original kernel boots successfully
+- Login works, userspace programs run
+- SMP test still shows 4.00x speedup
+- 2 MIDR entries visible in `/scheme/sys/cpu/` (expected 4)
+
+### Key Learnings
+
+1. **Cannot use standard Makefile to rebuild kernel**
+   - Requires Cranelift-based build process
+   - Standard rustc causes ABI incompatibility
+   - Need to find proper Cranelift build method
+
+2. **WFI logging removal successful**
+   - Source code updated correctly
+   - But can't deploy without proper kernel build
+
+3. **Timer frequency hypothesis untested**
+   - Unable to test due to build failure
+   - Still a valid theory to investigate
+
+### Remaining Questions
+
+1. **How to properly rebuild kernel with Cranelift?**
+   - build-cranelift.sh doesn't exist in repo
+   - Need to find correct build process
+   - Makefile uses standard rustc, not Cranelift
+
+2. **Is high CPU usage normal for QEMU/HVF SMP?**
+   - 228% on 4 idle cores = 57% per core average
+   - Each core showing ~75% in htop
+   - Might be QEMU/HVF overhead, not Redox issue
+
+3. **Can we diagnose without kernel rebuild?**
+   - Add userspace monitoring tools?
+   - Check QEMU logs/traces?
+   - Compare with x86_64 SMP build?
+
+### Next Steps (Revised)
+
+#### Priority 1: Find Proper Kernel Build Method
+**Blockers:**
+- Standard Makefile uses wrong compiler backend
+- Need Cranelift-specific build process
+- Must maintain ABI compatibility with userspace
+
+**Options:**
+1. Search for Cranelift build scripts in repo
+2. Check bootstrap/toolchain setup
+3. Ask user for build instructions
+4. Investigate .cargo/config for Cranelift settings
+
+#### Priority 2: Baseline Comparison
+**Goal:** Determine if high CPU is abnormal
+- Test x86_64 Redox SMP on QEMU/KVM
+- Compare CPU usage patterns
+- Check if 200-300% is expected for 4-core QEMU
+
+#### Priority 3: Userspace Diagnostics
+**Goal:** Gather data without kernel rebuild
+- Create monitoring tool to track:
+  - Context switch frequency
+  - Interrupt counts per CPU
+  - Time spent in idle vs running
+- Run via /scheme/9p.hostshare/
+
+### Files Modified (Uncommitted)
+
+```bash
+recipes/core/kernel/source/src/arch/aarch64/interrupt/mod.rs
+  - Removed WFI_COUNT logging (lines 29-34)
+
+recipes/core/kernel/source/src/arch/aarch64/device/generic_timer.rs
+  - Changed timer to 50Hz (line 71)
+  - NOT DEPLOYED - needs revert or proper build
+```
+
+**Status:** Changes not committed due to build issues
+
+### Reverted Changes
+
+- Restored original kernel.bak to kernel in image
+- System now boots normally again
+- High CPU usage still present (baseline state)
+
+---
+
+**Next Agent:** Need to either:
+1. Find proper Cranelift kernel build method, OR
+2. Focus on userspace diagnostics/comparisons without kernel changes
