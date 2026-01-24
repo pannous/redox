@@ -3,6 +3,13 @@ set -e
 
 echo "=== Building SMP Test Program for Redox ==="
 
+# Create project in share if it doesn't exist
+if [ ! -d /opt/other/redox/share/smp-test ]; then
+    mkdir -p /opt/other/redox/share/smp-test/src
+    cp /opt/other/redox/tests/smp/Cargo.toml /opt/other/redox/share/smp-test/
+    cp /opt/other/redox/tests/smp/smp-test.rs /opt/other/redox/share/smp-test/src/main.rs
+fi
+
 cd /opt/other/redox/share/smp-test
 
 # Configuration

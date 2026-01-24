@@ -266,16 +266,74 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 }
 
 #[repr(C, packed)]
-#[allow(unused)]
 pub struct KernelArgsAp {
-    cpu_id: u64,
-    page_table: u64,
-    stack_start: u64,
-    stack_end: u64,
+    pub cpu_id: u64,
+    pub page_table: u64,
+    pub stack_start: u64,
+    pub stack_end: u64,
 }
 
-/// Entry to rust for an AP
-#[allow(unused)]
-pub unsafe extern "C" fn kstart_ap(_args_ptr: *const KernelArgsAp) -> ! {
-    loop {}
+/// Assembly entry point for Application Processors
+///
+/// Called by PSCI CPU_ON with:
+/// - x0 = context parameter (args_ptr)
+/// - MMU disabled
+/// - EL1
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
+    unsafe {
+        let cpu_id = {
+            let args = &*args_ptr;
+
+            let cpu_id = crate::cpu_set::LogicalCpuId::new(args.cpu_id as u32);
+
+            // Set up exception vectors (VBAR_EL1)
+            core::arch::asm!(
+                "ldr x9, =exception_vector_base",
+                "msr vbar_el1, x9",
+                out("x9") _,
+            );
+
+            // Set up stack pointer from args
+            core::arch::asm!(
+                "mov sp, {}",
+                in(reg) args.stack_end,
+            );
+
+            // Configure page tables for this CPU (TTBR1_EL1)
+            crate::device::cpu::registers::control_regs::ttbr1_el1_write(args.page_table);
+
+            // Flush TLB
+            core::arch::asm!(
+                "dsb sy",
+                "tlbi vmalle1",
+                "dsb sy",
+                "isb",
+            );
+
+            // Initialize paging (MAIR)
+            paging::init();
+
+            // Initialize per-CPU block and set TPIDR_EL1
+            crate::misc::init(cpu_id);
+
+            // Note: GIC CPU interface initialization happens automatically
+            // on GICv2, the CPU interface is banked per-CPU and accessed at
+            // the same address, routed by hardware based on the accessing CPU.
+            // BSP already initialized the GIC distributor and CPU interfaces.
+
+            // Signal readiness
+            AP_READY.store(true, Ordering::SeqCst);
+
+            cpu_id
+        };
+
+        // Wait for BSP to complete initialization
+        while !BSP_READY.load(Ordering::SeqCst) {
+            core::hint::spin_loop();
+        }
+
+        // Call kmain_ap to enter scheduler
+        crate::kmain_ap(cpu_id);
+    }
 }
