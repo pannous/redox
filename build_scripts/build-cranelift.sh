@@ -152,7 +152,7 @@ Install with: rustup toolchain install $NIGHTLY"
     # Export Cranelift environment
     export DYLD_LIBRARY_PATH="$TOOLCHAIN_LIB:$DYLD_LIBRARY_PATH"
     export LD_LIBRARY_PATH="$TOOLCHAIN_LIB:$LD_LIBRARY_PATH"
-    export RUSTFLAGS="-Zcodegen-backend=$CRANELIFT_LIB"
+    export RUSTFLAGS="-Zcodegen-backend=$CRANELIFT_LIB -Awarnings"
     export RUSTUP_TOOLCHAIN="$NIGHTLY"
     export CARGO_INCREMENTAL=1
 
