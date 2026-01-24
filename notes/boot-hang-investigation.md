@@ -194,10 +194,113 @@ src/cpu_stats.rs                        # IPI counters
 Cargo.toml                              # multi_core feature
 ```
 
+## Investigation Progress (2026-01-24 Evening)
+
+### Fixes Applied
+
+1. ✅ **Removed duplicate `context::init()` from `kmain_ap()`**
+   - Was incorrectly calling global context initialization on each AP
+   - Result: Boot hang persists
+
+2. ✅ **Disabled `periodic_log()` in `context/switch.rs`**
+   - Function does `Vec::collect()` (heap allocation) in timer interrupt
+   - This is unsafe and could cause issues
+   - Result: Boot hang persists
+
+3. ✅ **Tested disabling SGI handler**
+   - Commented out IPI handling in IRQ handlers
+   - Result: Boot hang persists
+
+4. ✅ **Tested disabling `multi_core` feature**
+   - Prevents PSCI AP startup code from executing
+   - Result: Boot hang persists
+
+### What We Know For Certain
+
+**Boot Works:**
+- ✅ Pre-SMP (Jan 23) - before any SMP work
+- ✅ Phase 1 only (8765d9b4) - CPU enumeration from ACPI
+- ✅ Phase 2 only (e71b8606) - GIC multi-CPU initialization
+- ✅ Phase 2 + AP init (d7043307) - kstart_ap implementation
+
+**Boot Fails:**
+- ❌ Any build after Phase 3 commits
+- ❌ Current master with all SMP code
+- ❌ Even with multi_core disabled
+- ❌ Even with SGI handler disabled
+- ❌ Even with periodic_log disabled
+
+### Files Changed Since Phase 2 (Working)
+
+```
+src/acpi/madt/arch/aarch64.rs    - PSCI CPU_ON code
+src/acpi/madt/mod.rs             - Unknown changes
+src/arch/aarch64/device/irqchip/gic.rs - send_sgi method
+src/arch/aarch64/device/irqchip/gicv3.rs - GICv3 send_sgi
+src/arch/aarch64/interrupt/irq.rs - SGI handling (tested, not the cause)
+src/arch/aarch64/ipi.rs          - IPI implementation
+src/arch/aarch64/start.rs        - kstart_ap (tested, not the cause)
+src/context/switch.rs            - periodic_log, debug logging
+src/cpu_stats.rs                 - IPI counters (benign)
+src/dtb/irqchip.rs              - ??? (NOT YET CHECKED)
+src/main.rs                      - kmain_ap fix (tested)
+src/percpu.rs                    - Debug logging (benign)
+src/smp_diag.rs                  - Logging module (benign)
+```
+
+### Remaining Suspects
+
+**High Priority:**
+1. **`src/dtb/irqchip.rs`** - Not yet examined, critical IRQ infrastructure
+2. **`src/acpi/madt/mod.rs`** - Unknown changes
+
+**Medium Priority:**
+3. **`src/acpi/madt/arch/aarch64.rs`** - PSCI code runs even with multi_core disabled?
+4. **`src/arch/aarch64/device/irqchip/gicv3.rs`** - GICv3 changes
+
+### Next Steps (Systematic Approach)
+
+1. **Check `dtb/irqchip.rs` changes**
+   ```bash
+   cd recipes/core/kernel/source
+   git diff e71b8606 master -- src/dtb/irqchip.rs
+   ```
+   Look for changes that could break interrupt handling
+
+2. **Binary search with file reverts**
+   - Start with Phase 2 working code
+   - Revert suspicious files one by one from current master
+   - Test boot after each revert
+   - Identify which file revert makes boot work
+
+3. **Check ACPI MADT changes**
+   ```bash
+   git diff e71b8606 master -- src/acpi/madt/
+   ```
+   Verify no unintended side effects
+
+4. **Enable verbose IRQ logging**
+   - Add printk statements in IRQ path to see what's happening
+   - Check if interrupts are being delivered
+   - Verify timer interrupts are working
+
 ## Conclusion
 
-The SMP implementation is **functionally complete** (all code written and committed) but has a **critical boot regression** introduced in Phase 3 or later. The issue is NOT related to PSCI AP startup (confirmed by disabling multi_core). Most likely cause is IRQ handler changes breaking device interrupt delivery, leading to processes deadlocking while waiting for I/O.
+The SMP implementation is **functionally complete** (all code written and committed) but has a **critical boot regression** introduced somewhere after Phase 2.
+
+**What it's NOT:**
+- ✅ Not the SGI/IPI handler
+- ✅ Not the periodic_log heap allocation
+- ✅ Not the PSCI AP startup code
+- ✅ Not the duplicate context::init
+
+**What it likely IS:**
+- Most likely in `dtb/irqchip.rs` or `acpi/madt/mod.rs` changes
+- Could be a subtle bug in interrupt controller initialization
+- Could be a race condition or initialization order issue
 
 **Priority:** Fix boot regression before proceeding with SMP testing and validation.
 
-**Estimated effort:** 2-4 hours of careful debugging and testing to identify exact breaking change.
+**Status:** Investigation ongoing. Two fixes applied (remove duplicate init, disable unsafe heap alloc), but root cause not yet found.
+
+**Commit:** d95d2a34 - "fix(smp): Remove duplicate context::init and disable periodic_log"
