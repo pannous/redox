@@ -556,17 +556,6 @@ build_orbital() {
     cd "$SCRIPT_DIR"
 }
 
-build_all() {
-    log "Full Cranelift build for $ARCH"
-
-    rebuild_cookbook
-    build_relibc
-    build_kernel
-    build_drivers
-    build_simple_coreutils
-
-    success "Full build complete for $ARCH"
-}
 
 # ============================================================================
 # Make Integration
@@ -674,64 +663,7 @@ main() {
     local cmd="${1:-help}"
     shift 2>/dev/null || true
 
-    case "$cmd" in
-        kernel)
-            build_kernel
-            ;;
-        relibc)
-            build_relibc
-            ;;
-        relibc-rust-math)
-            build_relibc_with_rust_math
-            ;;
-        drivers)
-            build_drivers
-            ;;
-        coreutils|simple-coreutils)
-            build_simple_coreutils
-            ;;
-        orbital)
-            build_orbital
-            ;;
-        all)
-            build_all
-            ;;
-        shell)
-            show_env
-            log "Starting Cranelift build shell"
-            exec bash
-            ;;
-        env|info)
-            show_env
-            ;;
-        clean)
-            log "Cleaning build artifacts"
-            rm -rf build/$ARCH/sysroot
-            rm -rf recipes/core/kernel/source/target/${TARGET_KERNEL}
-            rm -rf recipes/core/relibc/source/target/${TARGET_USER}-clif
-            rm -rf recipes/core/base/source/target/${TARGET_USER}-clif
-            success "Cleaned"
-            ;;
-        cookbook)
-            rebuild_cookbook
-            ;;
-        # Make targets - pass through to make
-        r.kernel|cr.relibc|r.base|r.drivers-initfs|live|qemu|repo)
-            make_target "$cmd" "$@"
-            ;;
-        help|--help|-h)
-            usage
-            ;;
-        *)
-            # Assume it's a make target
-            if [ -n "$cmd" ]; then
-                make_target "$cmd" "$@"
-            else
-                usage
-                exit 1
-            fi
-            ;;
-    esac
+    build_kernel
 }
 
 echo "you may also need to run these commands to rebuild parts:"

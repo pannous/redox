@@ -1,15 +1,15 @@
 #!/bin/bash
-# Inject new initfs into existing ISO
+# Inject new initfs into existing IMG
 
 set -e
 
-ISO="${1:-/opt/other/redox/build/aarch64/server-cranelift.iso}"
+IMG="${1:-/opt/other/redox/build/aarch64/pure-rust.img}"
 INITFS="/opt/other/redox/build/aarch64/initfs-cranelift.img"
 REDOXFS="/opt/other/redox/build/fstools/bin/redoxfs"
-MOUNT="/tmp/redoxfs-inject-mount"
+MOUNT="mount"
 
-if [[ ! -f "$ISO" ]]; then
-    echo "Error: ISO not found at $ISO"
+if [[ ! -f "$IMG" ]]; then
+    echo "Error: IMG not found at $IMG"
     exit 1
 fi
 
@@ -18,23 +18,21 @@ if [[ ! -f "$INITFS" ]]; then
     exit 1
 fi
 
-echo "=== Mounting ISO ==="
-mkdir -p "$MOUNT"
-"$REDOXFS" "$ISO" "$MOUNT"
+echo "=== Mounting IMG ==="
+./mount.sh
+# mkdir -p "$MOUNT"
+# "$REDOXFS" "$IMG" "$MOUNT"
 sleep 2
 
 echo "=== Current boot directory ==="
 ls -la "$MOUNT/boot/"
 
 echo "=== Replacing initfs ==="
+cp "$MOUNT/boot/initfs" "$MOUNT/boot/initfs.bak"
 cp "$INITFS" "$MOUNT/boot/initfs"
 sync
 
 echo "=== New initfs size ==="
 ls -la "$MOUNT/boot/initfs"
 
-echo "=== Unmounting ==="
-umount "$MOUNT" 2>/dev/null || fusermount -u "$MOUNT" 2>/dev/null || diskutil unmount "$MOUNT" 2>/dev/null
-rmdir "$MOUNT"
-
-echo "=== Done! ISO updated ==="
+echo "=== Done! IMG updated ==="
