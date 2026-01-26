@@ -6,8 +6,8 @@ set -e
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
-# QEMU="qemu-system-aarch64"
-QEMU="/opt/other/qemu/build/qemu-system-aarch64"
+QEMU="qemu-system-aarch64"
+# QEMU="/opt/other/qemu/build/qemu-system-aarch64"
 RAW_IMG="${RAW_IMG:-$ROOT/build/aarch64/pure-rust.img}"
 SHARE="${SHARE:-$ROOT/share/}"
 SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"

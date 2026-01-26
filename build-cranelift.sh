@@ -1,0 +1,1 @@
+./build_scripts/build-cranelift.sh
