@@ -27,7 +27,8 @@
       "Bash(CARGO_INCREMENTAL=0 cargo rustc:*)",
       "Bash(xxd:*)",
       "Bash(grep:*)",
-      "Bash(ldd:*)"
+      "Bash(ldd:*)",
+      "Bash(./build_scripts/build-initfs.sh)"
     ]
   },
   "hooks": {

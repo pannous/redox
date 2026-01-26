@@ -87,7 +87,7 @@ skip-hash-verify = []
 fuser = { version = "0.16", optional = true }
 
 [target.'cfg(target_os = "redox")'.dependencies]
-libredox = { version = "0.1.11", features = ["call"], optional = true }
+libredox = { version = "=0.1.11", features = ["call"], optional = true }
 redox-path = "0.3.0"
 redox-scheme = { version = "0.8.3", optional = true }
 

@@ -420,7 +420,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> syscall::Result<usize> {
         let path = match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::V1Screen { vt, screen } => {
+            Handle::V1Screen { vt, screen, .. } => {
                 let framebuffer = &self.vts[vt].display_fbs[*screen];
                 format!(
                     "{}:{vt}.{screen}/{}/{}",
@@ -433,6 +433,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 vt,
                 next_id: _,
                 fbs: _,
+                ..
             } => format!("/scheme/{}/v2/{vt}", self.scheme_name),
         };
         buf[..path.len()].copy_from_slice(path.as_bytes());
@@ -441,7 +442,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
     fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> syscall::Result<()> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::V1Screen { vt, screen } => {
+            Handle::V1Screen { vt, screen, .. } => {
                 if *vt != self.active_vt {
                     // This is a protection against background VT's spamming us with flush requests. We will
                     // flush the framebuffer on the next VT switch anyway
@@ -491,7 +492,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
         _ctx: &CallerCtx,
     ) -> Result<usize> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::V1Screen { vt, screen } => {
+            Handle::V1Screen { vt, screen, .. } => {
                 if *vt != self.active_vt {
                     // This is a protection against background VT's spamming us with flush requests. We will
                     // flush the framebuffer on the next VT switch anyway
@@ -947,11 +948,12 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
     ) -> syscall::Result<usize> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let (framebuffer, offset) = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
-            Handle::V1Screen { vt, screen } => (&self.vts[vt].display_fbs[*screen], offset),
+            Handle::V1Screen { vt, screen, .. } => (&self.vts[vt].display_fbs[*screen], offset),
             Handle::V2 {
                 vt: _,
                 next_id: _,
                 fbs,
+                ..
             } => (
                 fbs.get(&((offset as usize / MAP_FAKE_OFFSET_MULTIPLIER) as u32))
                     .ok_or(Error::new(EINVAL))

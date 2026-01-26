@@ -77,6 +77,7 @@ echo "=== Building redoxfs ==="
 REDOXFS_SRC="/opt/other/redox/recipes/core/redoxfs/source"
 pushd "$REDOXFS_SRC" > /dev/null
 cargo +${NIGHTLY} build \
+    --config net.offline=false \
     --target "${TARGET_ABS}" \
     --release \
     --no-default-features \
