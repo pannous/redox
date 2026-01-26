@@ -344,14 +344,15 @@ build_kernel() {
         # Try alternate name
         kernel_path="target/${TARGET_KERNEL}/release/redox_kernel"
         echo $kernel_repo/$kernel_path
-        echo "auto-inject"
-        ./inject-kernel.sh
         if [ -f "$kernel_path" ]; then
             success "Kernel built: $(ls -lh $kernel_path | awk '{print $5}')"
         else
             error "Kernel build failed"
         fi
     fi
+    echo "auto-inject"
+    ./inject-kernel.sh
+        
 
     cd "$BASE_DIR"
 }

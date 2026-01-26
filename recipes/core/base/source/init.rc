@@ -8,10 +8,17 @@ export RUST_BACKTRACE 1
 # Suppress INFO/DEBUG logging - set to 'info' or 'debug' for verbose boot
 export RUST_LOG warn
 # Parallelize independent daemons for faster boot
-nowait rtcd
-nowait nulld
-nowait zerod
+# nowait rtcd
+# nowait nulld
+# nowait zerod
+# nowait randd
+
+# Test: Serialize daemons for multi cpu ??
+rtcd
+nulld
+zerod
 nowait randd
+
 
 # Logging
 logd

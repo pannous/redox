@@ -66,11 +66,11 @@ IMPORTANT:
 after your injections ALWAYS test with 
 /opt/other/redox/run-dev.sh or
 
-Find out why our custom qemu starts Alpine but does not start Redox at all. 
-/opt/other/qemu/ ./scripts/run-alpine.sh 
-Starting Alpine Linux aarch64 VM (mode: run)...
-  SSH: ssh -p 2222 root@localhost
-  Serial console: Ctrl-A X to quit
+⚠️ There are many sub-repositories in order to not get lost always go to the root directory:  
+cd /opt/other/redox
+And from there go to the sub-components if necessary.
+All components should be able to be built via /opt/other/redox/build.sh kernel etc
+If our main build script does not work use build-cranelift.sh or similar and update the main build script to work. 
 
 ⚠️  Instead of changing debug statements from debug! or info! to warn! Keep the semantic meaning and just change the debugging granularity log level. After you have found out how to change the log level reliably Per Component modify this line. 
 

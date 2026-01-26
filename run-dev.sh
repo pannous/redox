@@ -6,8 +6,8 @@ set -e
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
-QEMU="qemu-system-aarch64"
-# QEMU="/opt/other/qemu/build/qemu-system-aarch64"
+# QEMU="qemu-system-aarch64"
+QEMU="/opt/other/qemu/build/qemu-system-aarch64"
 RAW_IMG="${RAW_IMG:-$ROOT/build/aarch64/pure-rust.img}"
 SHARE="${SHARE:-$ROOT/share/}"
 SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"
@@ -35,7 +35,9 @@ if [[ ! -f "$RAW_IMG" ]]; then
 fi
 
 # CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # slower but works
-CPU="-accel hvf -cpu host -smp 4" # NOW WORKS! Fixed with ISB barriers (2026-01-11)
+# CPU="-accel hvf -cpu host -smp 4" # NOW WORKS! Fixed with ISB barriers (2026-01-11)
+# CPU="-accel hvf -cpu host -smp 1"  # debug single cpu
+CPU="-accel hvf -cpu host"  # debug single cpu
 # CPU="-M virt,highmem=off -accel hvf -cpu host" # not needed, regular HVF works
 NETDEV_ARGS=()
 if [[ "$HOST_SSH_PORT" != "0" ]]; then
