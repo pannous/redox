@@ -6,9 +6,12 @@ set -e
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
+export HVF_WFI_SLEEP=100 # default
+echo HVF_WFI_SLEEP $HVF_WFI_SLEEP
+
 # QEMU="qemu-system-aarch64"
 QEMU="/opt/other/qemu/build/qemu-system-aarch64"
-echo "using custom $QEMU" # for venus and wip idle fixes
+echo "using custom $QEMU" # for venus and wip idle fixes        
 RAW_IMG="${RAW_IMG:-$ROOT/build/aarch64/pure-rust.img}"
 SHARE="${SHARE:-$ROOT/share/}"
 SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"
@@ -55,7 +58,7 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     echo "Socket mode: $SOCK" >&2
     echo "Monitor: $MONSOCK" >&2
     echo "Connect: socat - unix-connect:$SOCK" >&2
-    qemu-system-aarch64 -M virt $CPU -m 2G \
+    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -78,7 +81,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
     echo "Graphical mode: QEMU window with framebuffer terminal" >&2
     echo "Serial console also available in this terminal" >&2
     echo "Using virtio-gpu-pci with blob support"
-    qemu-system-aarch64 -M virt $CPU -m 2G  $NOMENU \
+    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G  $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -103,7 +106,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     echo "Using virtio-gpu-pci with blob support"
 
     tmux new-session -d -s "$SESSION" \
-        "qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
+        "HVF_WFI_SLEEP=$HVF_WFI_SLEEP \"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -132,7 +135,7 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     echo "Detach: Ctrl-b d" >&2
 
     tmux new-session -d -s "$SESSION" \
-        "qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
+        "HVF_WFI_SLEEP=$HVF_WFI_SLEEP \"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -152,7 +155,7 @@ else
     # cache=writeback
     echo "Using: $RAW_IMG" >&2
     echo "Socket mode: $0 -s" >&2
-    qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
+    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
