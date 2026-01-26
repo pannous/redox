@@ -432,3 +432,13 @@ To verify parallel loading, look for "parallel mode" in boot messages.
 - Expanded image from 512MB to 768MB
 - Resized redoxfs partition and filesystem
 - Free space: ~285MB (was ~24MB)
+
+## 2026-01-26: Restored gradient graphics display
+
+- Added `draw-gradient` to build-initfs-cranelift.sh
+- Built draw-gradient binary
+- Added `/usr/bin/draw-gradient` to config/kaa.toml
+- Added `nowait draw-gradient radial` to mount/usr/lib/init.d/30_console
+- Binary location: share/draw-gradient
+- Displays beautiful radial gradient on VT 3
+- Switch VTs with: `inputd -A 3` (gradient) or `inputd -A 1` (shell)

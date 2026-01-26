@@ -31,6 +31,11 @@ path = "/usr/bin/pkill"
 data = "file:share/pkill"
 mode = 0o755
 
+[[files]]
+path = "/usr/bin/draw-gradient"
+data = "file:share/draw-gradient"
+mode = 0o755
+
 
 [[files]]
 path = "/root/share"
