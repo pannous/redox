@@ -13,7 +13,7 @@ export RUST_LOG warn
 # nowait zerod
 # nowait randd
 
-# Test: Serialize daemons for multi cpu ??
+# Test: Serialize daemons for multi cpu ?? doesn't help (on its own)
 rtcd
 nulld
 zerod
