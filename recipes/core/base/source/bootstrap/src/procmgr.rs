@@ -1857,9 +1857,13 @@ impl<'a> ProcScheme<'a> {
                         if let Ok(status_out) = plain::from_mut_bytes::<i32>(op.payload()) {
                             *status_out = status;
                         }
+                        state_entry.remove();
                         Response::ready_ok(pid, op)
                     }
-                    Ready(Err(e)) => Response::ready_err(e.errno, op),
+                    Ready(Err(e)) => {
+                        state_entry.remove();
+                        Response::ready_err(e.errno, op)
+                    }
                     Pending => {
                         *state = PendingState::AwaitingStatusChange {
                             waiter,

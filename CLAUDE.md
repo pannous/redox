@@ -66,6 +66,12 @@ IMPORTANT:
 after your injections ALWAYS test with 
 /opt/other/redox/run-dev.sh or
 
+# ⚠️ DO NOT TOUCH: Bootloader
+The UEFI bootloader (recipes/core/bootloader/) CANNOT be built on macOS.
+- Requires Linux + LLVM (Cranelift doesn't support PE/COFF format for aarch64-unknown-uefi)
+
+(different from - recipes/core/base/source/bootstrap = init/bootstrap INSIDE Redox OS )
+
 ⚠️ There are many sub-repositories in order to not get lost always go to the root directory:  
 cd /opt/other/redox
 And from there go to the sub-components if necessary.
