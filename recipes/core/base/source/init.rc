@@ -13,9 +13,9 @@ export RUST_LOG warn
 # nowait zerod
 # nowait randd
 
-# Test: Serialize daemons for multi cpu ?? doesn't help (on its own)
+# Test: Serialize daemons for multi cpu - with split-phase registration
 rtcd
-# nulld disabled - kernel provides GlobalSchemes::Null
+nulld
 zerod
 nowait randd
 
