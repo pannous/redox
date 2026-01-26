@@ -16,11 +16,13 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$SCRIPT_DIR"
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$BASE_DIR"
+
+kernel_repo=./recipes/core/kernel/source
 
 # Resolve default nightly from rust-toolchain.toml when NIGHTLY isn't set.
-TOOLCHAIN_FILE="$SCRIPT_DIR/rust-toolchain.toml"
+TOOLCHAIN_FILE="$BASE_DIR/rust-toolchain.toml"
 if [ -z "$NIGHTLY" ] && [ -f "$TOOLCHAIN_FILE" ]; then
     NIGHTLY="$(awk -F'\"' '/^channel/ {print $2; exit}' "$TOOLCHAIN_FILE")"
 fi
@@ -196,7 +198,7 @@ EOF
 
         # aarch64 userspace target (Redox)
         # Use full paths for CRT objects so they can be found during linking
-        local sysroot_lib="${SCRIPT_DIR}/build/${ARCH}/sysroot/lib"
+        local sysroot_lib="${BASE_DIR}/build/${ARCH}/sysroot/lib"
         cat > tools/${TARGET_USER}-clif.json << EOF
 {
     "arch": "aarch64",
@@ -314,7 +316,7 @@ build_kernel() {
     cd recipes/core/kernel/source
 
     # Copy target spec
-    cp "$SCRIPT_DIR/tools/${TARGET_KERNEL}.json" .
+    cp "$BASE_DIR/tools/${TARGET_KERNEL}.json" .
 
     local kernel_rustflags="$RUSTFLAGS"
 
@@ -337,11 +339,13 @@ build_kernel() {
     local kernel_path="target/${TARGET_KERNEL}/release/kernel"
     if [ -f "$kernel_path" ]; then
         success "Kernel built: $(ls -lh $kernel_path | awk '{print $5}')"
-        echo recipes/core/kernel/source/$kernel_path
+        echo $kernel_repo/$kernel_path
     else
         # Try alternate name
         kernel_path="target/${TARGET_KERNEL}/release/redox_kernel"
-        echo $kernel_path
+        echo $kernel_repo/$kernel_path
+        echo "auto-inject"
+        ./inject-kernel.sh
         if [ -f "$kernel_path" ]; then
             success "Kernel built: $(ls -lh $kernel_path | awk '{print $5}')"
         else
@@ -349,7 +353,7 @@ build_kernel() {
         fi
     fi
 
-    cd "$SCRIPT_DIR"
+    cd "$BASE_DIR"
 }
 
 build_relibc() {
@@ -358,7 +362,7 @@ build_relibc() {
     cd recipes/core/relibc/source
 
     # Copy target spec
-    cp "$SCRIPT_DIR/tools/${TARGET_USER}-clif.json" .
+    cp "$BASE_DIR/tools/${TARGET_USER}-clif.json" .
 
     # Build relibc (Rust code only - pure Rust math via libm crate)
     # NOTE: With rust-math feature, openlibm (C) is not needed!
@@ -397,15 +401,15 @@ build_relibc() {
         fi
     done
 
-    cd "$SCRIPT_DIR"
+    cd "$BASE_DIR"
 }
 
 build_relibc_with_rust_math() {
     log "Building relibc with pure Rust math (no openlibm)"
 
     # First, integrate math_libm.rs if not already done
-    local math_src="$SCRIPT_DIR/contrib/pure-rust/math_libm.rs"
-    local relibc_math="$SCRIPT_DIR/recipes/core/relibc/source/src/math_libm.rs"
+    local math_src="$BASE_DIR/contrib/pure-rust/math_libm.rs"
+    local relibc_math="$BASE_DIR/recipes/core/relibc/source/src/math_libm.rs"
 
     if [ -f "$math_src" ] && [ ! -f "$relibc_math" ]; then
         info "Integrating Rust math library wrapper..."
@@ -421,18 +425,18 @@ build_drivers() {
     cd recipes/core/base/source
 
     # Apply patches
-    for patch in "$SCRIPT_DIR/patches/"*.patch; do
+    for patch in "$BASE_DIR/patches/"*.patch; do
         [ -f "$patch" ] && git apply --check "$patch" 2>/dev/null && git apply "$patch" && log "Applied $(basename $patch)"
     done
 
     # Copy target spec
-    cp "$SCRIPT_DIR/tools/${TARGET_USER}-clif.json" .
+    cp "$BASE_DIR/tools/${TARGET_USER}-clif.json" .
 
     # Setup sysroot from relibc
-    local sysroot="$SCRIPT_DIR/build/$ARCH/sysroot"
+    local sysroot="$BASE_DIR/build/$ARCH/sysroot"
     mkdir -p "$sysroot"/{lib,include}
 
-    local relibc_dir="$SCRIPT_DIR/recipes/core/relibc/source/target/${TARGET_USER}-clif/release"
+    local relibc_dir="$BASE_DIR/recipes/core/relibc/source/target/${TARGET_USER}-clif/release"
     if [ -f "$relibc_dir/librelibc.a" ]; then
         cp "$relibc_dir/librelibc.a" "$sysroot/lib/libc.a"
         for obj in crt0.o crti.o crtn.o; do
@@ -474,7 +478,7 @@ build_drivers() {
     local built=$(ls target/${TARGET_USER}-clif/release/{init,pcid,vesad} 2>/dev/null | wc -l)
     success "Built $built core drivers"
 
-    cd "$SCRIPT_DIR"
+    cd "$BASE_DIR"
 }
 
 build_simple_coreutils() {
@@ -483,10 +487,10 @@ build_simple_coreutils() {
     cd recipes/core/base/source/simple-coreutils
 
     # Copy target spec
-    cp "$SCRIPT_DIR/tools/${TARGET_USER}-clif.json" .
+    cp "$BASE_DIR/tools/${TARGET_USER}-clif.json" .
 
     # Setup sysroot path
-    local sysroot="$SCRIPT_DIR/build/$ARCH/sysroot"
+    local sysroot="$BASE_DIR/build/$ARCH/sysroot"
 
     # Build all binaries
     RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
@@ -497,7 +501,7 @@ build_simple_coreutils() {
         -Zbuild-std-features=compiler_builtins/no-f16-f128
 
     # Strip and copy to share/
-    local output_dir="$SCRIPT_DIR/share"
+    local output_dir="$BASE_DIR/share"
     mkdir -p "$output_dir"
 
     local binaries=(
@@ -516,13 +520,13 @@ build_simple_coreutils() {
 
     success "Built and stripped $count simple-coreutils binaries to share/"
 
-    cd "$SCRIPT_DIR"
+    cd "$BASE_DIR"
 }
 
 build_orbital() {
     log "Building Orbital compositor for $ARCH with Cranelift"
 
-    local orbital_dir="$SCRIPT_DIR/recipes/gui/orbital/source"
+    local orbital_dir="$BASE_DIR/recipes/gui/orbital/source"
     if [ ! -d "$orbital_dir" ]; then
         error "Orbital source not found. Clone it first:
   cd recipes/gui/orbital
@@ -532,10 +536,10 @@ build_orbital() {
     cd "$orbital_dir"
 
     # Copy target spec
-    cp "$SCRIPT_DIR/tools/${TARGET_USER}-clif.json" .
+    cp "$BASE_DIR/tools/${TARGET_USER}-clif.json" .
 
     # Setup sysroot path
-    local sysroot="$SCRIPT_DIR/build/$ARCH/sysroot"
+    local sysroot="$BASE_DIR/build/$ARCH/sysroot"
 
     # Build orbital
     RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
@@ -548,16 +552,27 @@ build_orbital() {
     local orbital_bin="target/${TARGET_USER}-clif/release/orbital"
     if [ -f "$orbital_bin" ]; then
         # Strip and copy to share/
-        $STRIP -o "$SCRIPT_DIR/share/orbital" "$orbital_bin"
+        $STRIP -o "$BASE_DIR/share/orbital" "$orbital_bin"
         success "Orbital built and stripped to share/orbital"
-        ls -lh "$SCRIPT_DIR/share/orbital"
+        ls -lh "$BASE_DIR/share/orbital"
     else
         error "Orbital build failed"
     fi
 
-    cd "$SCRIPT_DIR"
+    cd "$BASE_DIR"
 }
 
+build_all() {
+    log "Full Cranelift build for $ARCH"
+
+    rebuild_cookbook
+    build_relibc
+    build_kernel
+    build_drivers
+    build_simple_coreutils
+
+    success "Full build complete for $ARCH"
+}
 
 # ============================================================================
 # Make Integration
@@ -665,7 +680,64 @@ main() {
     local cmd="${1:-help}"
     shift 2>/dev/null || true
 
-    build_kernel
+    case "$cmd" in
+        kernel)
+            build_kernel
+            ;;
+        relibc)
+            build_relibc
+            ;;
+        relibc-rust-math)
+            build_relibc_with_rust_math
+            ;;
+        drivers)
+            build_drivers
+            ;;
+        coreutils|simple-coreutils)
+            build_simple_coreutils
+            ;;
+        orbital)
+            build_orbital
+            ;;
+        all)
+            build_all
+            ;;
+        shell)
+            show_env
+            log "Starting Cranelift build shell"
+            exec bash
+            ;;
+        env|info)
+            show_env
+            ;;
+        clean)
+            log "Cleaning build artifacts"
+            rm -rf build/$ARCH/sysroot
+            rm -rf recipes/core/kernel/source/target/${TARGET_KERNEL}
+            rm -rf recipes/core/relibc/source/target/${TARGET_USER}-clif
+            rm -rf recipes/core/base/source/target/${TARGET_USER}-clif
+            success "Cleaned"
+            ;;
+        cookbook)
+            rebuild_cookbook
+            ;;
+        # Make targets - pass through to make
+        r.kernel|cr.relibc|r.base|r.drivers-initfs|live|qemu|repo)
+            make_target "$cmd" "$@"
+            ;;
+        help|--help|-h)
+            usage
+            ;;
+        *)
+            # Assume it's a make target
+            if [ -n "$cmd" ]; then
+                make_target "$cmd" "$@"
+            else
+                usage
+                exit 1
+            fi
+            ;;
+    esac
 }
 
 echo "you may also need to run these commands to rebuild parts:"

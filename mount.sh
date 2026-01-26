@@ -25,7 +25,8 @@ fi
 
 echo "Mounted at: $MOUNT_POINT"
 
-./stamp.sh # add date so we know which commit belongs to pure-rust.working.img
+# Don't auto-stamp otherwise we lose the information when this build is from 
+# ./stamp.sh # add date so we know which commit belongs to pure-rust.working.img
 
 # echo "Run 'umount $MOUNT_POINT' when done"
 echo "⚠️ the Main filesystem outside of share is currently configured as snapshot, so any changes outside /scheme/9p.hostshare/ will be lost upon shutdown. On the other hand, it means we NEVER NEED TO UNMOUNT. "

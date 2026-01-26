@@ -25,7 +25,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         Ty::Null => "null",
         Ty::Zero => "zero",
     };
-    let socket = Socket::create(name).expect("zerod: failed to create zero scheme");
+    let socket = Socket::create(name)
+        .unwrap_or_else(|e| panic!("{}: failed to create {} scheme: {}",
+            std::env::args().next().unwrap(), name, e));
     let mut zero_scheme = ZeroScheme(ty);
 
     libredox::call::setrens(0, 0).expect("zerod: failed to enter null namespace");

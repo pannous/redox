@@ -1,6 +1,9 @@
 #!/bin/bash
 # Inject new initfs into existing IMG
 
+echo "inject after rebuild:"
+echo "build_scripts/build-initfs.sh"
+
 set -e
 
 IMG="${1:-/opt/other/redox/build/aarch64/pure-rust.img}"
