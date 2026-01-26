@@ -1,8 +1,8 @@
 
-## grep -E Support Missing
+## grep -E Support Missing [RESOLVED]
 - **Date**: 2026-01-26
 - **Issue**: Redox grep doesn't support -E flag for extended regular expressions
 - **Impact**: Common grep patterns that rely on extended regex syntax don't work
-- **Workaround**: Use basic regex syntax or alternative tools
-- **Status**: Needs implementation in uutils or custom grep
+- **Resolution**: Implemented full grep with -E support in simple-coreutils (commit 13104ecb4)
+- **Status**: ✅ RESOLVED - See notes/grep-implementation.md for details
 
