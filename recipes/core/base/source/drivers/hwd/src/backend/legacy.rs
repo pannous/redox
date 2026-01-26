@@ -2,7 +2,6 @@ use std::error::Error;
 
 use super::Backend;
 
-#[allow(dead_code)]
 pub struct LegacyBackend;
 
 impl Backend for LegacyBackend {

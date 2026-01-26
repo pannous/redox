@@ -2,7 +2,7 @@ use acpi::{
     aml::{
         namespace::AmlName,
         object::{
-            FieldAccessType, FieldFlags, FieldUnit, FieldUnitKind, FieldUpdateRule,
+            FieldAccessType, FieldFlags, FieldUnit, FieldUnitKind, FieldUpdateRule, MethodFlags,
             Object, ReferenceKind, WrappedObject,
         },
         op_region::{OpRegion, RegionSpace},
@@ -376,13 +376,18 @@ impl AmlSerdeValue {
             AmlSerdeValue::Device => Object::Device,
             AmlSerdeValue::Event(event) => Object::Event(Arc::new(AtomicU64::new(event))),
             AmlSerdeValue::Method {
-                arg_count: _,
-                serialize: _,
-                sync_level: _,
-            } => {
-                //TODO figure out what to do here - methods cannot be serialized
-                return None;
-            }
+                arg_count,
+                serialize,
+                sync_level,
+            } => Object::Method {
+                code: (return None), //TODO figure out what to do here
+                //TODO check specs to see if all bit patterns are allowed
+                flags: MethodFlags(
+                    (arg_count as u8).clamp(0, 7)
+                        + (serialize as u8).shl(3)
+                        + sync_level.clamp(0, 15).shl(4),
+                ),
+            },
             //TODO: handle native method?
             AmlSerdeValue::Buffer(buffer_data) => Object::Buffer(buffer_data),
             AmlSerdeValue::BufferField {

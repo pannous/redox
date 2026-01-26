@@ -26,18 +26,9 @@ pub trait NetworkAdapter {
     fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>>;
 
     /// Write a single network packet.
-    ///
-    /// Returns `Err(EWOULDBLOCK)` when there is no room in the transmit queue.
-    /// The scheme layer handles blocking for non-O_NONBLOCK file descriptors.
+    // FIXME support back pressure on writes by returning EWOULDBLOCK or not
+    // returning from the write syscall until there is room.
     fn write_packet(&mut self, buf: &[u8]) -> Result<usize>;
-
-    /// The amount of space available for writing packets without blocking.
-    /// Returns 0 when the transmit queue is full.
-    /// Default implementation returns 1 for compatibility with drivers that
-    /// don't implement back pressure detection.
-    fn available_for_write(&mut self) -> usize {
-        1 // Assume space available by default for backwards compatibility
-    }
 }
 
 pub struct NetworkScheme<T: NetworkAdapter> {
@@ -61,9 +52,12 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
         daemon: daemon::Daemon,
         scheme_name: String,
     ) -> Self {
-        let socket = Socket::nonblock(&scheme_name).expect("failed to create network scheme");
+        assert!(scheme_name.starts_with("network"));
+        let socket = Socket::nonblock().expect("failed to create network scheme");
         let adapter = adapter_fn();
-        let scheme = NetworkSchemeInner::new(adapter, scheme_name.clone());
+        let mut scheme = NetworkSchemeInner::new(adapter, scheme_name.clone());
+        redox_scheme::scheme::register_sync_scheme(&socket, &scheme_name, &mut scheme)
+            .expect("failed to regitster network scheme");
         daemon.ready();
         Self {
             scheme,
@@ -182,22 +176,13 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
             let _ = self.socket.write_response(resp, SignalBehavior::Restart)?;
         }
 
-        // Notify about incoming read/write events
+        // Notify readers about incoming events
         let available_for_read = self.scheme.adapter.available_for_read();
-        let available_for_write = self.scheme.adapter.available_for_write();
-
-        let mut event_flags = 0;
         if available_for_read > 0 {
-            event_flags |= syscall::flag::EVENT_READ.bits();
-        }
-        if available_for_write > 0 {
-            event_flags |= syscall::flag::EVENT_WRITE.bits();
-        }
-
-        if event_flags != 0 {
             for &handle_id in self.scheme.handles.keys() {
-                post_fevent(&self.socket, handle_id, event_flags)?;
+                post_fevent(&self.socket, handle_id, syscall::flag::EVENT_READ.bits())?;
             }
+            return Ok(());
         }
 
         Ok(())
@@ -214,6 +199,7 @@ struct NetworkSchemeInner<T: NetworkAdapter> {
 enum Handle {
     Data,
     Mac,
+    SchemeRoot,
 }
 
 impl<T: NetworkAdapter> NetworkSchemeInner<T> {
@@ -228,7 +214,27 @@ impl<T: NetworkAdapter> NetworkSchemeInner<T> {
 }
 
 impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
-    fn open(&mut self, path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+    fn scheme_root(&mut self) -> Result<usize> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+
+    fn openat(
+        &mut self,
+        fd: usize,
+        path: &str,
+        _flags: usize,
+        _fcntl_flags: u32,
+        ctx: &CallerCtx,
+    ) -> Result<OpenResult> {
+        if !matches!(
+            self.handles.get(&fd).ok_or(Error::new(EINVAL))?,
+            Handle::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
+        }
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -265,6 +271,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
                 buf[..i].copy_from_slice(&data[..i]);
                 return Ok(i);
             }
+            _ => return Err(Error::new(EBADF)),
         };
 
         match self.adapter.read_packet(buf)? {
@@ -284,7 +291,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
         id: usize,
         buf: &[u8],
         _offset: u64,
-        fcntl_flags: u32,
+        _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -292,20 +299,10 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
         match handle {
             Handle::Data => {}
             Handle::Mac { .. } => return Err(Error::new(EINVAL)),
+            _ => return Err(Error::new(EBADF)),
         }
 
-        match self.adapter.write_packet(buf) {
-            Ok(count) => Ok(count),
-            Err(Error { errno: syscall::EWOULDBLOCK }) => {
-                // TX queue full - handle blocking vs non-blocking
-                if fcntl_flags & O_NONBLOCK as u32 != 0 {
-                    Err(Error::new(EAGAIN))
-                } else {
-                    Err(Error::new(EWOULDBLOCK))
-                }
-            }
-            Err(e) => Err(e),
-        }
+        Ok(self.adapter.write_packet(buf)?)
     }
 
     fn fevent(&mut self, id: usize, _flags: EventFlags, _ctx: &CallerCtx) -> Result<EventFlags> {
@@ -335,6 +332,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
         let path = match handle {
             Handle::Data { .. } => &b""[..],
             Handle::Mac { .. } => &b"mac"[..],
+            _ => &b""[..],
         };
 
         j = 0;
@@ -358,6 +356,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
                 stat.st_mode = MODE_FILE | 0o400;
                 stat.st_size = 6;
             }
+            _ => return Err(Error::new(EBADF)),
         }
 
         Ok(())

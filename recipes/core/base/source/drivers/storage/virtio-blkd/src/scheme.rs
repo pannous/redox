@@ -11,7 +11,6 @@ use crate::BlockVirtRequest;
 trait BlkExtension {
     async fn read(&self, block: u64, target: &mut [u8]) -> usize;
     async fn write(&self, block: u64, target: &[u8]) -> usize;
-    async fn flush(&self);
 }
 
 impl BlkExtension for Queue<'_> {
@@ -37,9 +36,7 @@ impl BlkExtension for Queue<'_> {
             .build();
 
         // XXX: Subtract 1 because the of status byte.
-        let written = self.send(chain)
-            .expect("virtio-blkd: no descriptors available for read")
-            .await as usize - 1;
+        let written = self.send(chain).await as usize - 1;
         assert_eq!(*status, 0);
 
         target[..written].copy_from_slice(&result);
@@ -69,33 +66,10 @@ impl BlkExtension for Queue<'_> {
             .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.send(chain)
-            .expect("virtio-blkd: no descriptors available for write")
-            .await;
+        self.send(chain).await as usize;
         assert_eq!(*status, 0);
 
         target.len()
-    }
-
-    async fn flush(&self) {
-        let req = Dma::new(BlockVirtRequest {
-            ty: BlockRequestTy::Flush,
-            reserved: 0,
-            sector: 0,
-        })
-        .unwrap();
-
-        let status = Dma::new(u8::MAX).unwrap();
-
-        let chain = ChainBuilder::new()
-            .chain(Buffer::new(&req))
-            .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
-            .build();
-
-        self.send(chain)
-            .expect("virtio-blkd: no descriptors available for flush")
-            .await;
-        assert_eq!(*status, 0);
     }
 }
 
@@ -125,10 +99,5 @@ impl driver_block::Disk for VirtioDisk<'_> {
 
     async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
         Ok(self.queue.write(block, buffer).await)
-    }
-
-    async fn flush(&mut self) -> syscall::Result<()> {
-        self.queue.flush().await;
-        Ok(())
     }
 }

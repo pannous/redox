@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{self, prelude::*};
 use std::num::NonZeroU8;
 
-use crate::driver_interface::msi::MsixTableEntry;
+use crate::driver_interface::msi::{MsiAddrAndData, MsixTableEntry};
 
 /// Read the local APIC ID of the bootstrap processor.
 pub fn read_bsp_apic_id() -> io::Result<usize> {
@@ -234,7 +234,6 @@ pub struct InterruptVector {
     kind: InterruptVectorKind,
 }
 
-#[allow(dead_code)]
 enum InterruptVectorKind {
     Legacy,
     Msi,

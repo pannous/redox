@@ -54,11 +54,9 @@ pub const fn queue_part_sizes(queue_size: usize) -> (usize, usize, usize) {
     )
 }
 
-pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>, isr_status: Option<*const u8>) {
+pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) {
     let irq_fd = irq_handle.as_raw_fd();
     let queue_copy = queue.clone();
-    // Convert pointer to usize for Send-safety across thread boundary
-    let isr_addr = isr_status.map(|p| p as usize);
 
     std::thread::spawn(move || {
         let event_queue = RawEventQueue::new().unwrap();
@@ -67,13 +65,7 @@ pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>, isr_stat
             .subscribe(irq_fd as usize, 0, event::EventFlags::READ)
             .unwrap();
 
-        for _event in event_queue.map(Result::unwrap) {
-            // For legacy INTx interrupts (aarch64), read ISR to acknowledge the interrupt.
-            // This clears the interrupt line so it can fire again.
-            if let Some(isr) = isr_addr {
-                unsafe { core::ptr::read_volatile(isr as *const u8) };
-            }
-
+        for event in event_queue.map(Result::unwrap) {
             // Wake up the tasks waiting on the queue.
             for (_, task) in queue_copy.waker.lock().unwrap().iter() {
                 task.wake_by_ref();
@@ -103,56 +95,42 @@ impl<'a> Future for PendingRequest<'a> {
             .unwrap()
             .insert(self.first_descriptor, cx.waker().clone());
 
-        // Memory barrier to ensure device writes to used ring are visible on aarch64
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            core::arch::asm!("dsb sy", options(nostack, preserves_flags));
+        let used_head = self.queue.used.head_index();
+
+        if used_head == self.queue.used_head.load(Ordering::SeqCst) {
+            // No new requests have been completed.
+            return Poll::Pending;
         }
 
-        // Spin-poll a few times before giving up - device may complete quickly
-        for _ in 0..1000 {
-            std::sync::atomic::compiler_fence(Ordering::SeqCst);
-            // Read through black_box to prevent compiler from optimizing away the read
-            let used_head = std::hint::black_box(self.queue.used.head_index());
-            let stored = std::hint::black_box(self.queue.used_head.load(Ordering::SeqCst));
-            if used_head != stored {
-                // Found completion, check if it's our request
-                let used_element = self.queue.used.get_element_at((used_head - 1) as usize);
-                let written = used_element.written.get();
-                let mut table_index = used_element.table_index.get();
+        let used_element = self.queue.used.get_element_at((used_head - 1) as usize);
+        let written = used_element.written.get();
 
-                if table_index == self.first_descriptor {
-                    // The request has been completed; recycle the descriptors used.
-                    while self.queue.descriptor[table_index as usize]
-                        .flags()
-                        .contains(DescriptorFlags::NEXT)
-                    {
-                        let next_index = self.queue.descriptor[table_index as usize].next();
-                        self.queue.descriptor_stack.push(table_index as u16);
-                        table_index = next_index.into();
-                    }
+        let mut table_index = used_element.table_index.get();
 
-                    // Push the last descriptor.
-                    self.queue.descriptor_stack.push(table_index as u16);
-                    self.queue
-                        .waker
-                        .lock()
-                        .unwrap()
-                        .remove(&self.first_descriptor);
-
-                    self.queue.used_head.store(used_head, Ordering::SeqCst);
-                    return Poll::Ready(written);
-                }
+        if table_index == self.first_descriptor {
+            // The request has been completed; recycle the descriptors used.
+            while self.queue.descriptor[table_index as usize]
+                .flags()
+                .contains(DescriptorFlags::NEXT)
+            {
+                let next_index = self.queue.descriptor[table_index as usize].next();
+                self.queue.descriptor_stack.push(table_index as u16);
+                table_index = next_index.into();
             }
-            // Small spin delay
-            for _ in 0..100 {
-                core::hint::spin_loop();
-            }
+
+            // Push the last descriptor.
+            self.queue.descriptor_stack.push(table_index as u16);
+            self.queue
+                .waker
+                .lock()
+                .unwrap()
+                .remove(&self.first_descriptor);
+
+            self.queue.used_head.store(used_head, Ordering::SeqCst);
+            return Poll::Ready(written);
+        } else {
+            return Poll::Pending;
         }
-
-        // Still no completion after spinning, return Pending
-        std::thread::yield_now();
-        Poll::Pending
     }
 }
 
@@ -211,61 +189,13 @@ impl<'a> Queue<'a> {
         (0..self.descriptor.len() as u16).for_each(|i| self.descriptor_stack.push(i));
     }
 
-    /// Try to reclaim any completed TX descriptors.
-    /// Call this periodically to prevent descriptor exhaustion.
-    pub fn reclaim_completed(&self) {
-        let used_head = self.used.head_index();
-        let last_known = self.used_head.load(Ordering::SeqCst);
-
-        // Process all completed requests since last check
-        let mut current = last_known;
-        while current != used_head {
-            let element = self.used.get_element_at(current as usize);
-            let mut table_index = element.table_index.get();
-
-            // Recycle all descriptors in this chain
-            while self.descriptor[table_index as usize]
-                .flags()
-                .contains(DescriptorFlags::NEXT)
-            {
-                let next_index = self.descriptor[table_index as usize].next();
-                self.descriptor_stack.push(table_index as u16);
-                table_index = next_index.into();
-            }
-            // Push the last descriptor
-            self.descriptor_stack.push(table_index as u16);
-
-            current = current.wrapping_add(1);
-        }
-
-        self.used_head.store(used_head, Ordering::SeqCst);
-    }
-
-    /// Returns the number of available descriptors.
-    pub fn available_descriptors(&self) -> usize {
-        self.descriptor_stack.len()
-    }
-
     #[must_use = "The function returns a future that must be awaited to ensure the sent request is completed."]
-    pub fn send(&self, chain: Vec<Buffer>) -> Option<PendingRequest<'a>> {
-        // Try to reclaim completed descriptors before checking availability
-        self.reclaim_completed();
-
-        let chain_len = chain.len();
-        if self.descriptor_stack.len() < chain_len {
-            log::warn!(
-                "virtio-core: not enough descriptors ({} available, {} needed)",
-                self.descriptor_stack.len(),
-                chain_len
-            );
-            return None;
-        }
-
+    pub fn send(&self, chain: Vec<Buffer>) -> PendingRequest<'a> {
         let mut first_descriptor: Option<usize> = None;
         let mut last_descriptor: Option<usize> = None;
 
         for buffer in chain.iter() {
-            let descriptor = self.descriptor_stack.pop()? as usize;
+            let descriptor = self.descriptor_stack.pop().unwrap() as usize;
 
             if first_descriptor.is_none() {
                 first_descriptor = Some(descriptor);
@@ -294,148 +224,17 @@ impl<'a> Queue<'a> {
             .set_table_index(first_descriptor as u16);
 
         self.available.set_head_idx(index as u16 + 1);
-
-        // Memory barrier to ensure descriptor and available ring writes are visible
-        // to the device before we ring the notification bell (aarch64)
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            core::arch::asm!("dsb sy", options(nostack, preserves_flags));
-        }
-
         self.notification_bell.ring(self.queue_index);
 
-        Some(PendingRequest {
+        PendingRequest {
             queue: self.sref.upgrade().unwrap(),
             first_descriptor: first_descriptor as u32,
-        })
-    }
-
-    /// Synchronous blocking send - sends a request and busy-waits for completion.
-    /// Use this when async/block_on doesn't work (e.g., inside scheme handlers).
-    #[must_use = "Returns the number of bytes written by the device"]
-    pub fn send_blocking(&self, chain: Vec<Buffer>) -> Option<u32> {
-        // Try to reclaim completed descriptors before checking availability
-        self.reclaim_completed();
-
-        let chain_len = chain.len();
-        if self.descriptor_stack.len() < chain_len {
-            log::warn!(
-                "virtio-core: send_blocking: not enough descriptors ({} available, {} needed)",
-                self.descriptor_stack.len(),
-                chain_len
-            );
-            return None;
-        }
-
-        let mut first_descriptor: Option<usize> = None;
-        let mut last_descriptor: Option<usize> = None;
-
-        for buffer in chain.iter() {
-            let descriptor = self.descriptor_stack.pop()? as usize;
-
-            if first_descriptor.is_none() {
-                first_descriptor = Some(descriptor);
-            }
-
-            self.descriptor[descriptor].set_addr(buffer.buffer as u64);
-            self.descriptor[descriptor].set_flags(buffer.flags);
-            self.descriptor[descriptor].set_size(buffer.size as u32);
-
-            if let Some(index) = last_descriptor {
-                self.descriptor[index].set_next(Some(descriptor as u16));
-            }
-
-            last_descriptor = Some(descriptor);
-        }
-
-        let last_descriptor = last_descriptor.unwrap();
-        let first_descriptor = first_descriptor.unwrap() as u32;
-
-        self.descriptor[last_descriptor as usize].set_next(None);
-
-        let index = self.available.head_index() as usize;
-
-        self.available
-            .get_element_at(index)
-            .set_table_index(first_descriptor as u16);
-
-        self.available.set_head_idx(index as u16 + 1);
-
-        // Memory barrier to ensure descriptor and available ring writes are visible
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            core::arch::asm!("dsb sy", options(nostack, preserves_flags));
-        }
-
-        self.notification_bell.ring(self.queue_index);
-
-        // Busy-wait for completion
-        let mut iterations = 0u64;
-        loop {
-            // Memory barrier before reading used ring
-            #[cfg(target_arch = "aarch64")]
-            unsafe {
-                core::arch::asm!("dsb sy", options(nostack, preserves_flags));
-            }
-            std::sync::atomic::compiler_fence(Ordering::SeqCst);
-
-            let used_head = std::hint::black_box(self.used.head_index());
-            let stored = std::hint::black_box(self.used_head.load(Ordering::SeqCst));
-
-            if used_head != stored {
-                let used_element = self.used.get_element_at((used_head.wrapping_sub(1)) as usize);
-                let written = used_element.written.get();
-                let mut table_index = used_element.table_index.get();
-
-                if table_index == first_descriptor as u32 {
-                    // Recycle descriptors
-                    while self.descriptor[table_index as usize]
-                        .flags()
-                        .contains(DescriptorFlags::NEXT)
-                    {
-                        let next_index = self.descriptor[table_index as usize].next();
-                        self.descriptor_stack.push(table_index as u16);
-                        table_index = next_index.into();
-                    }
-                    self.descriptor_stack.push(table_index as u16);
-                    self.used_head.store(used_head, Ordering::SeqCst);
-                    return Some(written);
-                }
-            }
-
-            iterations += 1;
-            if iterations % 10000 == 0 {
-                // Yield periodically to avoid starving other processes
-                std::thread::yield_now();
-            }
-
-            // Give up after ~10 seconds (assuming ~1M iterations/second)
-            if iterations > 10_000_000 {
-                log::error!("virtio-core: send_blocking timed out after {} iterations", iterations);
-                return None;
-            }
-
-            // Small spin
-            for _ in 0..10 {
-                core::hint::spin_loop();
-            }
         }
     }
 
     /// Returns the number of descriptors in the descriptor table of this queue.
     pub fn descriptor_len(&self) -> usize {
         self.descriptor.len()
-    }
-
-    /// Recycle a descriptor back into the available ring for reuse by the device.
-    /// Call this after processing a received buffer so the device can reuse it.
-    pub fn recycle_descriptor(&self, descriptor_idx: u16) {
-        // Re-add to available ring so device can use it for new RX.
-        // The descriptor table entry still has the original buffer address/size/flags.
-        let index = self.available.head_index() as usize;
-        self.available.get_element_at(index).set_table_index(descriptor_idx);
-        self.available.set_head_idx(index as u16 + 1);
-        self.notification_bell.ring(self.queue_index);
     }
 }
 
@@ -449,7 +248,6 @@ pub struct Available<'a> {
 pub struct Borrowed<'a> {
     phys: usize,
     virt: usize,
-    #[allow(dead_code)]
     size: usize,
     _unused: &'a (),
 }
@@ -706,10 +504,6 @@ pub trait Transport: Sync + Send {
     /// This function panics if the device is running.
     fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue<'_>>, Error>;
 
-    /// Creates a new queue without spawning an IRQ thread.
-    /// Use this when IRQ handling is done in the driver's main event loop.
-    fn setup_queue_no_irq(&self, vector: u16) -> Result<Arc<Queue<'_>>, Error>;
-
     // TODO(andypython): Should this function be unsafe?
     fn reinit_queue(&self, queue: Arc<Queue>);
     fn insert_status(&self, status: DeviceStatusFlags);
@@ -729,8 +523,6 @@ pub struct StandardTransport<'a> {
     notify: *const u8,
     notify_mul: u32,
     device_space: *const u8,
-    /// ISR status register address (for legacy interrupt acknowledgment on aarch64)
-    isr_status: Option<*const u8>,
 
     queue_index: AtomicU16,
 }
@@ -741,16 +533,14 @@ impl<'a> StandardTransport<'a> {
         notify: *const u8,
         notify_mul: u32,
         device_space: *const u8,
-        isr_status: Option<*const u8>,
     ) -> Arc<Self> {
         Arc::new(Self {
             common: Mutex::new(common),
             notify,
             notify_mul,
-            device_space,
-            isr_status,
 
             queue_index: AtomicU16::new(0),
+            device_space,
         })
     }
 }
@@ -860,7 +650,7 @@ impl Transport for StandardTransport<'_> {
             &mut *(self.notify.add(offset as usize) as *mut AtomicU16)
         };
 
-        log::debug!("virtio-core: enabled queue #{queue_index} (size={queue_size})");
+        log::info!("virtio-core: enabled queue #{queue_index} (size={queue_size})");
 
         let queue = Queue::new(
             descriptor,
@@ -871,52 +661,8 @@ impl Transport for StandardTransport<'_> {
             vector,
         );
 
-        spawn_irq_thread(irq_handle, &queue, self.isr_status);
+        spawn_irq_thread(irq_handle, &queue);
         Ok(queue)
-    }
-
-    fn setup_queue_no_irq(&self, vector: u16) -> Result<Arc<Queue<'_>>, Error> {
-        let mut common = self.common.lock().unwrap();
-
-        let queue_index = self.queue_index.fetch_add(1, Ordering::SeqCst);
-        common.queue_select.set(queue_index);
-
-        let queue_size = common.queue_size.get() as usize;
-        let queue_notify_idx = common.queue_notify_off.get();
-
-        let descriptor = unsafe {
-            Dma::<[Descriptor]>::zeroed_slice(queue_size)
-                .map_err(Error::SyscallError)?
-                .assume_init()
-        };
-
-        let avail = Available::new(queue_size)?;
-        let used = Used::new(queue_size)?;
-
-        common.queue_desc.set(descriptor.physical() as u64);
-        common.queue_driver.set(avail.phys_addr() as u64);
-        common.queue_device.set(used.phys_addr() as u64);
-
-        common.queue_msix_vector.set(vector);
-        assert!(common.queue_msix_vector.get() == vector);
-
-        common.queue_enable.set(1);
-
-        let notification_bell = unsafe {
-            let offset = self.notify_mul * queue_notify_idx as u32;
-            &mut *(self.notify.add(offset as usize) as *mut AtomicU16)
-        };
-
-        log::debug!("virtio-core: enabled queue #{queue_index} (size={queue_size}) [no IRQ thread]");
-
-        Ok(Queue::new(
-            descriptor,
-            avail,
-            used,
-            StandardBell(notification_bell),
-            queue_index,
-            vector,
-        ))
     }
 
     fn insert_status(&self, status: DeviceStatusFlags) {

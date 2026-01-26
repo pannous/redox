@@ -21,6 +21,28 @@ pub mod timeout;
 
 pub use logger::{file_level, output_level, setup_logging};
 
+use std::sync::OnceLock;
+
+static MEMORY_ROOT_FD: OnceLock<libredox::Fd> = OnceLock::new();
+
+pub fn init() {
+    if MEMORY_ROOT_FD
+        .set(
+            libredox::Fd::open("/scheme/memory/scheme-root", 0, 0)
+                .expect("drivers common: failed to open memory root fd"),
+        )
+        .is_err()
+    {
+        panic!("drivers common: failed to set memory root fd");
+    }
+}
+
+pub fn memory_root_fd() -> &'static libredox::Fd {
+    MEMORY_ROOT_FD
+        .get()
+        .expect("drivers common: memory root fd not initialized. Please call `common::init` in your main function.")
+}
+
 /// Specifies the write behavior for a specific region of memory
 ///
 /// These types indicate to the driver how writes to a specific memory region are handled by the
@@ -136,7 +158,7 @@ pub unsafe fn physmap(
     }
 
     let path = format!(
-        "/scheme/memory/physical@{}",
+        "physical@{}",
         match ty {
             MemoryType::Writeback => "wb",
             MemoryType::Uncacheable => "uc",
@@ -158,16 +180,15 @@ pub unsafe fn physmap(
         prot |= flag::PROT_WRITE;
     }
 
-    let fd = Fd::open(&path, O_CLOEXEC | mode, 0)?;
-    let result = libredox::call::mmap(MmapArgs {
+    let fd = memory_root_fd().openat(&path, O_CLOEXEC | mode, 0)?;
+    Ok(libredox::call::mmap(MmapArgs {
         fd: fd.raw(),
         offset: base_phys as u64,
         length: len.next_multiple_of(PAGE_SIZE),
         flags: flag::MAP_SHARED,
         prot,
         addr: core::ptr::null_mut(),
-    })?;
-    Ok(result as *mut ())
+    })? as *mut ())
 }
 
 impl std::fmt::Display for MemoryType {
@@ -246,18 +267,6 @@ impl Drop for PhysBorrowed {
     }
 }
 
-// TODO: temporary wrapper in redox_syscall?
-unsafe fn sys_call(fd: usize, buf: &mut [u8], metadata: &[u64]) -> Result<usize> {
-    Ok(syscall::syscall5(
-        syscall::SYS_CALL,
-        fd,
-        buf.as_mut_ptr() as usize,
-        buf.len(),
-        metadata.len(),
-        metadata.as_ptr() as usize,
-    )?)
-}
-
 /// Instructs the kernel to enable I/O ports for this (usermode) process (x86-specific).
 ///
 /// On Redox, x86 privilege ring 3 represents userspace. Most Redox drivers run in userspace to
@@ -269,7 +278,14 @@ pub fn acquire_port_io_rights() -> Result<()> {
         fn redox_cur_thrfd_v0() -> usize;
     }
     let kernel_fd = syscall::dup(unsafe { redox_cur_thrfd_v0() }, b"open_via_dup")?;
-    let res = unsafe { sys_call(kernel_fd, &mut [], &[ProcSchemeVerb::Iopl as u64]) };
+    let res = unsafe {
+        libredox::call::call_wo(
+            kernel_fd,
+            &[],
+            syscall::CallFlags::empty(),
+            &[ProcSchemeVerb::Iopl as u64],
+        )
+    };
     let _ = syscall::close(kernel_fd);
     res?;
     Ok(())
@@ -288,14 +304,14 @@ impl VirtaddrTranslationHandle {
     /// Create a new handle, requires uid=0 but this may change.
     pub fn new() -> Result<Self> {
         Ok(Self {
-            fd: Fd::open("/scheme/memory/translation", O_CLOEXEC, 0)?,
+            fd: memory_root_fd().openat("translation", O_CLOEXEC, 0)?,
         })
     }
     /// Translate physical => virtual.
     pub fn translate(&self, physical: usize) -> Result<usize> {
         let mut buf = physical.to_ne_bytes();
         unsafe {
-            sys_call(self.fd.raw(), &mut buf, &[])?;
+            libredox::call::call_ro(self.fd.raw(), &mut buf, syscall::CallFlags::empty(), &[])?;
         }
         Ok(usize::from_ne_bytes(buf))
     }

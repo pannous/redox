@@ -7,7 +7,6 @@ pub struct DeviceTreeBackend {
 }
 
 impl DeviceTreeBackend {
-    #[allow(dead_code)]
     fn dump(node: &fdt::node::FdtNode<'_, '_>, level: usize) {
         let mut line = String::new();
         for _ in 0..level {
@@ -31,7 +30,7 @@ impl DeviceTreeBackend {
 impl Backend for DeviceTreeBackend {
     fn new() -> Result<Self, Box<dyn Error>> {
         let dtb = fs::read("/scheme/kernel.dtb")?;
-        let _dt = fdt::Fdt::new(&dtb).map_err(|err| format!("failed to parse dtb: {}", err))?;
+        let dt = fdt::Fdt::new(&dtb).map_err(|err| format!("failed to parse dtb: {}", err))?;
         Ok(Self { dtb })
     }
 

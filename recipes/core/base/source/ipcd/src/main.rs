@@ -1,5 +1,5 @@
 use event::{EventFlags, EventQueue};
-use redox_scheme::{wrappers::ReadinessBased, Socket};
+use redox_scheme::{scheme::register_sync_scheme, wrappers::ReadinessBased, Socket};
 use std::sync::Mutex;
 
 mod chan;
@@ -12,14 +12,8 @@ use self::uds::dgram::UdsDgramScheme;
 use self::uds::stream::UdsStreamScheme;
 
 fn main() {
-    eprintln!("ipcd: main() A");
-    let _ = std::io::stderr().flush();
-    eprintln!("ipcd: main() B - calling Daemon::new");
-    let _ = std::io::stderr().flush();
     daemon::Daemon::new(daemon_runner);
 }
-
-use std::io::Write;
 
 fn daemon_runner(daemon: daemon::Daemon) -> ! {
     // TODO: Better error handling
@@ -33,7 +27,6 @@ fn daemon_runner(daemon: daemon::Daemon) -> ! {
 }
 
 fn inner(daemon: daemon::Daemon) -> anyhow::Result<()> {
-    eprintln!("ipcd: inner() called - before any fork related code");
     event::user_data! {
         enum EventSource {
             ChanSocket,
@@ -44,26 +37,20 @@ fn inner(daemon: daemon::Daemon) -> anyhow::Result<()> {
     }
 
     // Prepare chan scheme
-    eprintln!("ipcd: creating chan scheme...");
-    let chan_socket = Socket::nonblock("chan")
-        .map_err(|e| anyhow::anyhow!("failed to create chan scheme: {e}"))?;
-    eprintln!("ipcd: chan scheme created");
+    let chan_socket =
+        Socket::nonblock().map_err(|e| anyhow::anyhow!("failed to create chan scheme: {e}"))?;
     let chan = Mutex::new(ChanScheme::new(&chan_socket));
     let mut chan_handler = ReadinessBased::new(&chan_socket, 16);
 
     // Prepare shm scheme
-    eprintln!("ipcd: creating shm scheme...");
     let shm_socket =
-        Socket::nonblock("shm").map_err(|e| anyhow::anyhow!("failed to create shm socket: {e}"))?;
-    eprintln!("ipcd: shm scheme created");
+        Socket::nonblock().map_err(|e| anyhow::anyhow!("failed to create shm socket: {e}"))?;
     let shm = Mutex::new(ShmScheme::new());
     let mut shm_handler = ReadinessBased::new(&shm_socket, 16);
 
     // Prepare uds stream scheme
-    eprintln!("ipcd: creating uds_stream scheme...");
-    let uds_stream_socket = Socket::nonblock("uds_stream")
+    let uds_stream_socket = Socket::nonblock()
         .map_err(|e| anyhow::anyhow!("failed to create uds stream scheme: {e}"))?;
-    eprintln!("ipcd: uds_stream scheme created");
     let uds_stream = Mutex::new(
         UdsStreamScheme::new(&uds_stream_socket)
             .map_err(|e| anyhow::anyhow!("failed to create uds stream scheme: {e}"))?,
@@ -71,17 +58,36 @@ fn inner(daemon: daemon::Daemon) -> anyhow::Result<()> {
     let mut uds_stream_handler = ReadinessBased::new(&uds_stream_socket, 16);
 
     // Prepare uds dgram scheme
-    eprintln!("ipcd: creating uds_dgram scheme...");
-    let uds_dgram_socket = Socket::nonblock("uds_dgram")
+    let uds_dgram_socket = Socket::nonblock()
         .map_err(|e| anyhow::anyhow!("failed to create uds dgram scheme: {e}"))?;
-    eprintln!("ipcd: uds_dgram scheme created");
     let uds_dgram = Mutex::new(
         UdsDgramScheme::new(&uds_dgram_socket)
             .map_err(|e| anyhow::anyhow!("failed to create uds dgram scheme: {e}"))?,
     );
     let mut uds_dgram_handler = ReadinessBased::new(&uds_dgram_socket, 16);
 
-    eprintln!("ipcd: calling daemon.ready()");
+    {
+        let mut chan_guard = chan.lock().unwrap();
+        register_sync_scheme(&chan_socket, "chan", &mut *chan_guard)
+            .map_err(|e| anyhow::anyhow!("failed to register chan scheme: {e}"))?;
+    }
+    {
+        let mut shm_guard = shm.lock().unwrap();
+        register_sync_scheme(&shm_socket, "shm", &mut *shm_guard)
+            .map_err(|e| anyhow::anyhow!("failed to register shm scheme: {e}"))?;
+    }
+    {
+        let mut uds_stream_guard = uds_stream.lock().unwrap();
+        register_sync_scheme(&uds_stream_socket, "uds_stream", &mut *uds_stream_guard)
+            .map_err(|e| anyhow::anyhow!("failed to register uds stream scheme: {e}"))?;
+    }
+    {
+        let mut uds_dgram_guard = uds_dgram.lock().unwrap();
+        // Register schemes to namespace
+        register_sync_scheme(&uds_dgram_socket, "uds_dgram", &mut *uds_dgram_guard)
+            .map_err(|e| anyhow::anyhow!("failed to register uds dgram scheme: {e}"))?;
+    }
+
     daemon.ready();
 
     // Create event listener for both files

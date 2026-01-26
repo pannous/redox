@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, thread, time};
 
 use inputd::ProducerHandle;
 use orbclient::KeyEvent as OrbKeyEvent;
@@ -12,16 +12,9 @@ use xhcid_interface::{
     XhciClientHandle,
 };
 
-mod keymap;
 mod reqs;
 
-fn send_key_event(
-    display: &mut ProducerHandle,
-    usage_page: u16,
-    usage: u16,
-    pressed: bool,
-    shift_opt: Option<bool>,
-) {
+fn send_key_event(display: &mut ProducerHandle, usage_page: u16, usage: u16, pressed: bool) {
     let scancode = match usage_page {
         0x07 => match usage {
             0x04 => orbclient::K_A,
@@ -71,6 +64,7 @@ fn send_key_event(
             0x30 => orbclient::K_BRACE_CLOSE,
             0x31 => orbclient::K_BACKSLASH,
             // 0x32 non-us # and ~
+            0x32 => 0x56,
             0x33 => orbclient::K_SEMICOLON,
             0x34 => orbclient::K_QUOTE,
             0x35 => orbclient::K_TICK,
@@ -90,10 +84,10 @@ fn send_key_event(
             0x43 => orbclient::K_F10,
             0x44 => orbclient::K_F11,
             0x45 => orbclient::K_F12,
-            // 0x46 print screen
-            // 0x47 scroll lock
+            0x46 => orbclient::K_PRTSC,
+            0x47 => orbclient::K_SCROLL,
             // 0x48 pause
-            // 0x49 insert
+            0x49 => orbclient::K_INS,
             0x4A => orbclient::K_HOME,
             0x4B => orbclient::K_PGUP,
             0x4C => orbclient::K_DEL,
@@ -103,12 +97,12 @@ fn send_key_event(
             0x50 => orbclient::K_LEFT,
             0x51 => orbclient::K_DOWN,
             0x52 => orbclient::K_UP,
-            // 0x53 num lock
-            // 0x54 num /
-            // 0x55 num *
-            // 0x56 num -
-            // 0x57 num +
-            // 0x58 num enter
+            0x53 => orbclient::K_NUM,
+            0x54 => orbclient::K_NUM_SLASH,
+            0x55 => orbclient::K_NUM_ASTERISK,
+            0x56 => orbclient::K_NUM_MINUS,
+            0x57 => orbclient::K_NUM_PLUS,
+            0x58 => orbclient::K_NUM_ENTER,
             0x59 => orbclient::K_NUM_1,
             0x5A => orbclient::K_NUM_2,
             0x5B => orbclient::K_NUM_3,
@@ -121,18 +115,18 @@ fn send_key_event(
             0x62 => orbclient::K_NUM_0,
             // 0x62 num .
             // 0x64 non-us \ and |
-            // 0x64 app
-            // 0x66 power
+            0x64 => orbclient::K_APP,
+            0x66 => orbclient::K_POWER,
             // 0x67 num =
             // unmapped values
-            0xE0 => orbclient::K_CTRL, // TODO: left control
+            0xE0 => orbclient::K_LEFT_CTRL,
             0xE1 => orbclient::K_LEFT_SHIFT,
             0xE2 => orbclient::K_ALT,
-            0xE3 => 0x5B,              // left super
-            0xE4 => orbclient::K_CTRL, // TODO: right control
+            0xE3 => orbclient::K_LEFT_SUPER,
+            0xE4 => orbclient::K_RIGHT_CTRL,
             0xE5 => orbclient::K_RIGHT_SHIFT,
             0xE6 => orbclient::K_ALT_GR,
-            // 0xE7 right super
+            0xE7 => orbclient::K_RIGHT_SUPER,
             // reserved values
             _ => {
                 log::warn!("unknown usage_page {:#x} usage {:#x}", usage_page, usage);
@@ -145,15 +139,8 @@ fn send_key_event(
         }
     };
 
-    //TODO: other keymaps
-    let character = if let Some(shift) = shift_opt {
-        keymap::us::get_char(scancode, shift)
-    } else {
-        '\0'
-    };
-
     let key_event = OrbKeyEvent {
-        character,
+        character: '\0',
         scancode,
         pressed,
     };
@@ -186,23 +173,30 @@ fn main() {
     let name = format!("{}_{}_{}_hid", scheme, port, interface_num);
     common::setup_logging(
         "usb",
-        "device",
+        "usbhid",
         &name,
         common::output_level(),
         common::file_level(),
     );
 
-    log::debug!(
+    log::info!(
         "USB HID driver spawned with scheme `{}`, port {}, interface {}",
         scheme,
         port,
         interface_num
     );
 
-    let handle = XhciClientHandle::new(scheme, port);
+    let handle = XhciClientHandle::new(scheme, port).expect("Failed to open XhciClientHandle");
     let desc: DevDesc = handle
         .get_standard_descs()
         .expect("Failed to get standard descriptors");
+
+    log::info!(
+        "USB HID driver: {:?} serial {:?}",
+        desc.product_str.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        desc.serial_str.as_ref().map(|s| s.as_str()).unwrap_or(""),
+    );
+
     log::debug!("{:X?}", desc);
 
     let mut endp_count = 0;
@@ -294,7 +288,11 @@ fn main() {
     let mut last_buttons = [false, false, false];
     loop {
         //TODO: get frequency from device
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        //TODO: use sleeps when accuracy is better: thread::sleep(time::Duration::from_millis(10));
+        let mut timer = time::Instant::now();
+        while timer.elapsed() < time::Duration::from_millis(1) {
+            thread::yield_now();
+        }
 
         if let Some(endpoint) = &mut endpoint_opt {
             // interrupt transfer
@@ -323,7 +321,7 @@ fn main() {
             .handle(&report_buffer)
             .expect("failed to parse report")
         {
-            log::debug!("{:X?}", event);
+            log::debug!("{}", event);
             if event.usage_page == UsagePage::GenericDesktop as u16 {
                 if event.usage == GenericDesktopUsage::X as u16 {
                     if event.relative {
@@ -345,7 +343,7 @@ fn main() {
                         log::warn!("absolute mouse wheel not supported");
                     }
                 } else {
-                    log::debug!(
+                    log::info!(
                         "unsupported generic desktop usage 0x{:X}:0x{:X} value {}",
                         event.usage_page,
                         event.usage,
@@ -363,18 +361,12 @@ fn main() {
                 } else if event.usage == 0xE5 {
                     right_shift = pressed;
                 }
-                send_key_event(
-                    &mut display,
-                    event.usage_page,
-                    event.usage,
-                    pressed,
-                    shift_opt,
-                );
+                send_key_event(&mut display, event.usage_page, event.usage, pressed);
             } else if event.usage_page == UsagePage::Button as u16 {
                 if event.usage > 0 && event.usage as usize <= buttons.len() {
                     buttons[event.usage as usize - 1] = event.value != 0;
                 } else {
-                    log::debug!(
+                    log::info!(
                         "unsupported buttons usage 0x{:X}:0x{:X} value {}",
                         event.usage_page,
                         event.usage,
@@ -384,7 +376,7 @@ fn main() {
             } else if event.usage_page >= 0xFF00 {
                 // Ignore vendor defined event
             } else {
-                log::debug!(
+                log::info!(
                     "unsupported usage 0x{:X}:0x{:X} value {}",
                     event.usage_page,
                     event.usage,
@@ -396,9 +388,11 @@ fn main() {
         if mouse_pos != last_mouse_pos {
             last_mouse_pos = mouse_pos;
 
+            // TODO
             // ps2d uses 0..=65535 as range, while usb uses 0..=32767. orbital
-            // expects the former range, so multiply by two here to translate
-            // the usb coordinates to what orbital expects.
+            // expects the former range, so multiply by two here to temporarily
+            // align with orbital expectation. This workaround will make cursor
+            //  looks out of sync in QEMU using virtio-vga with usb-tablet.
             let mouse_event = orbclient::event::MouseEvent {
                 x: mouse_pos.0 * 2,
                 y: mouse_pos.1 * 2,
@@ -413,15 +407,18 @@ fn main() {
         }
 
         if mouse_dx != 0 || mouse_dy != 0 {
-            let mouse_event = orbclient::event::MouseRelativeEvent {
-                dx: mouse_dx,
-                dy: mouse_dy,
-            };
+            // TODO: This is a filter to prevent random mouse jumps
+            if mouse_dx > -127 && mouse_dx < 127 {
+                let mouse_event = orbclient::event::MouseRelativeEvent {
+                    dx: mouse_dx,
+                    dy: mouse_dy,
+                };
 
-            match display.write_event(mouse_event.to_event()) {
-                Ok(_) => (),
-                Err(err) => {
-                    log::warn!("failed to send mouse event to orbital: {}", err);
+                match display.write_event(mouse_event.to_event()) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        log::warn!("failed to send mouse event to orbital: {}", err);
+                    }
                 }
             }
         }
@@ -453,5 +450,7 @@ fn main() {
                 }
             }
         }
+
+        // log::trace!("took {}ms", timer.elapsed().as_millis())
     }
 }

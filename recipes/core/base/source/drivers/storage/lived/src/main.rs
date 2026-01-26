@@ -84,19 +84,20 @@ impl Disk for LiveDisk {
     }
 
     async fn write(&mut self, mut block: u64, buffer: &[u8]) -> syscall::Result<usize> {
-        let offset = (block as usize) * PAGE_SIZE;
+        let mut offset = (block as usize) * PAGE_SIZE;
         if offset + buffer.len() > self.original.len() {
             return Err(syscall::Error::new(EINVAL));
         }
         for chunk in buffer.chunks(PAGE_SIZE) {
             self.overlay.entry(block).or_insert_with(|| {
-                let blk_offset = (block as usize) * PAGE_SIZE;
-                self.original[blk_offset..blk_offset + PAGE_SIZE]
+                let offset = (block as usize) * PAGE_SIZE;
+                self.original[offset..offset + PAGE_SIZE]
                     .to_vec()
                     .into_boxed_slice()
             })[..chunk.len()]
                 .copy_from_slice(chunk);
             block += 1;
+            offset += PAGE_SIZE;
         }
         Ok(buffer.len())
     }

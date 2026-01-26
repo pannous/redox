@@ -4,7 +4,6 @@ mod acpi;
 mod devicetree;
 mod legacy;
 
-#[allow(unused_imports)]
 pub use self::{acpi::AcpiBackend, devicetree::DeviceTreeBackend, legacy::LegacyBackend};
 
 pub trait Backend {

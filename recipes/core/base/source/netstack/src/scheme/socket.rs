@@ -10,21 +10,30 @@ use std::rc::Rc;
 use std::str;
 
 use libredox::flag::CLOCK_MONOTONIC;
+use redox_rt::protocol::SocketCall;
 use redox_scheme::{
-    scheme::{Op, SchemeSync},
+    scheme::{register_scheme_inner, Op, SchemeSync},
     CallerCtx, OpenResult, Socket,
 };
 use syscall::data::TimeSpec;
 use syscall::flag::{EVENT_READ, EVENT_WRITE};
 use syscall::schemev2::NewFdFlags;
-use syscall::{Error as SyscallError, EventFlags as SyscallEventFlags, Result as SyscallResult};
+use syscall::{
+    Error as SyscallError, EventFlags as SyscallEventFlags, Result as SyscallResult, EINVAL,
+    EOPNOTSUPP,
+};
 
 use super::Interface;
 use crate::router::route_table::RouteTable;
 use crate::scheme::smoltcp::iface::SocketHandle;
+use crate::scheme::Router;
+use crate::Smolnetd;
 use smoltcp::socket::AnySocket;
 
 use super::SocketSet;
+
+const SO_RCVBUF: usize = 8;
+const SO_SNDBUF: usize = 7;
 
 pub struct Context {
     pub iface: Interface,
@@ -35,6 +44,8 @@ pub struct NullFile {
     pub flags: usize,
     pub uid: u32,
     pub gid: u32,
+    pub read_enabled: bool,
+    pub write_enabled: bool,
 }
 
 pub struct SocketFile<DataT> {
@@ -47,6 +58,8 @@ pub struct SocketFile<DataT> {
     write_notified: bool,
     read_timeout: Option<TimeSpec>,
     write_timeout: Option<TimeSpec>,
+    pub read_enabled: bool,
+    pub write_enabled: bool,
 }
 
 impl<DataT> SocketFile<DataT> {
@@ -59,6 +72,8 @@ impl<DataT> SocketFile<DataT> {
             read_timeout: self.read_timeout,
             write_timeout: self.write_timeout,
             socket_handle: self.socket_handle,
+            read_enabled: self.read_enabled,
+            write_enabled: self.write_enabled,
             data,
         }
     }
@@ -71,6 +86,8 @@ impl<DataT> SocketFile<DataT> {
             write_notified: false,
             read_timeout: None,
             write_timeout: None,
+            read_enabled: true,
+            write_enabled: true,
             socket_handle,
             data,
         }
@@ -121,13 +138,14 @@ where
             events,
             ref mut read_notified,
             ref mut write_notified,
+            ref data,
             ..
         }) = self
         {
-            let socket = socket_set.get::<SocketT>(socket_handle);
+            let socket = socket_set.get_mut::<SocketT>(socket_handle);
 
             if events & syscall::EVENT_READ.bits() == syscall::EVENT_READ.bits()
-                && (socket.can_recv() || !socket.may_recv())
+                && (socket.can_recv(data) || !socket.may_recv())
             {
                 if !*read_notified {
                     *read_notified = true;
@@ -168,7 +186,7 @@ where
     fn new_scheme_data() -> Self::SchemeDataT;
 
     fn can_send(&self) -> bool;
-    fn can_recv(&self) -> bool;
+    fn can_recv(&mut self, data: &Self::DataT) -> bool;
     fn may_recv(&self) -> bool;
 
     fn hop_limit(&self) -> u8;
@@ -216,6 +234,33 @@ where
         path: &str,
         data: &mut Self::SchemeDataT,
     ) -> SyscallResult<DupResult<Self>>;
+
+    fn handle_get_peer_name(
+        &self,
+        file: &SchemeFile<Self>,
+        payload: &mut [u8],
+    ) -> SyscallResult<usize>;
+
+    fn handle_shutdown(&mut self, file: &mut SchemeFile<Self>, how: usize) -> SyscallResult<usize>;
+
+    fn get_sock_opt(
+        &self,
+        file: &SchemeFile<Self>,
+        name: usize,
+        buf: &mut [u8],
+    ) -> SyscallResult<usize> {
+        // Return Err for default implementation
+        Err(SyscallError::new(syscall::ENOPROTOOPT))
+    }
+}
+
+pub enum Handle<SocketT>
+where
+    SocketT: SchemeSocket,
+{
+    SchemeRoot,
+    Null(NullFile),
+    File(SchemeFile<SocketT>),
 }
 
 pub struct SocketScheme<SocketT>
@@ -223,8 +268,7 @@ where
     SocketT: SchemeSocket + AnySocket<'static>,
 {
     next_fd: usize,
-    nulls: BTreeMap<usize, NullFile>,
-    pub files: BTreeMap<usize, SchemeFile<SocketT>>,
+    pub handles: BTreeMap<usize, Handle<SocketT>>,
     ref_counts: BTreeMap<SocketHandle, usize>,
     context: Context,
     pub socket_set: Rc<RefCell<SocketSet>>,
@@ -238,33 +282,36 @@ where
     SocketT: SchemeSocket + AnySocket<'static>,
 {
     pub fn new(
+        name: &str,
         iface: Interface,
         route_table: Rc<RefCell<RouteTable>>,
         socket_set: Rc<RefCell<SocketSet>>,
         scheme_file: Socket,
-    ) -> SocketScheme<SocketT> {
-        SocketScheme {
+    ) -> SyscallResult<SocketScheme<SocketT>> {
+        let mut scheme = SocketScheme {
             next_fd: 1,
-            nulls: BTreeMap::new(),
-            files: BTreeMap::new(),
+            handles: BTreeMap::new(),
             ref_counts: BTreeMap::new(),
             socket_set,
             scheme_data: SocketT::new_scheme_data(),
             scheme_file,
             _phantom_socket: PhantomData,
             context: Context { iface, route_table },
-        }
+        };
+        let cap_id = scheme.scheme_root()?;
+        register_scheme_inner(&scheme.scheme_file, name, cap_id)?;
+        Ok(scheme)
     }
 
     pub fn handle_block(&mut self, op: &Op) -> SyscallResult<Option<TimeSpec>> {
         let fd = op.file_id().expect("op is not fd based request");
         let (read_timeout, write_timeout) = {
-            let file = self
-                .files
+            let handle = self
+                .handles
                 .get(&fd)
                 .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
 
-            if let SchemeFile::Socket(ref scheme_file) = *file {
+            if let Handle::File(SchemeFile::Socket(ref scheme_file)) = *handle {
                 Ok((scheme_file.read_timeout, scheme_file.write_timeout))
             } else {
                 Err(SyscallError::new(syscall::EBADF))
@@ -298,14 +345,13 @@ where
         buf: &mut [u8],
     ) -> SyscallResult<usize> {
         let file = self
-            .files
+            .handles
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
         let file = match *file {
-            SchemeFile::Socket(ref mut file) => file,
-            _ => {
-                return Err(SyscallError::new(syscall::EBADF));
-            }
+            Handle::File(SchemeFile::Socket(ref mut file)) => file,
+            _ => return Err(SyscallError::new(syscall::EBADF)),
         };
 
         match setting {
@@ -348,14 +394,12 @@ where
         buf: &[u8],
     ) -> SyscallResult<usize> {
         let file = self
-            .files
+            .handles
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
         let file = match *file {
-            SchemeFile::Socket(ref mut file) => file,
-            _ => {
-                return Err(SyscallError::new(syscall::EBADF));
-            }
+            Handle::File(SchemeFile::Socket(ref mut file)) => file,
+            _ => return Err(SyscallError::new(syscall::EBADF)),
         };
         match setting {
             Setting::ReadTimeout | Setting::WriteTimeout => {
@@ -395,20 +439,136 @@ where
         }
     }
 
+    fn call_inner(
+        &mut self,
+        fd: usize,
+        payload: &mut [u8],
+        metadata: &[u64],
+        ctx: &CallerCtx,
+    ) -> SyscallResult<usize> {
+        // metadata to Vec<u8>
+        let Some(verb) = SocketCall::try_from_raw(metadata[0] as usize) else {
+            warn!("Invalid verb in metadata: {:?}", metadata);
+            return Err(SyscallError::new(EINVAL));
+        };
+        match verb {
+            // TODO
+            // SocketCall::Bind => self.handle_bind(id, &payload),
+            // SocketCall::Connect => self.handle_connect(id, &payload),
+            SocketCall::SetSockOpt => {
+                // currently not used
+                // self.handle_setsockopt(id, metadata[1] as i32, &payload)
+                // TODO: SO_REUSEADDR from null socket
+                Ok(0)
+            }
+            SocketCall::GetSockOpt => {
+                let handle = self
+                    .handles
+                    .get_mut(&fd)
+                    .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
+                match *handle {
+                    Handle::File(ref mut file) => {
+                        let mut socket_set = self.socket_set.borrow_mut();
+                        let socket = socket_set.get_mut::<SocketT>(file.socket_handle());
+                        SocketT::get_sock_opt(socket, file, metadata[1] as usize, payload)
+                    }
+                    Handle::Null(_) => {
+                        // TODO
+                        // The socket exists but hasn't been bound/connected yet.
+                        // We return default values for buffer sizes to satisfy apps like iperf3.
+                        // Figure out maybe a better way?
+                        let name = metadata[1] as usize;
+                        if name == SO_RCVBUF || name == SO_SNDBUF {
+                            let val: i32 = (Router::MTU * Smolnetd::SOCKET_BUFFER_SIZE) as i32;
+                            let bytes = val.to_ne_bytes();
+
+                            if payload.len() < bytes.len() {
+                                return Err(SyscallError::new(syscall::EINVAL));
+                            }
+                            payload[..bytes.len()].copy_from_slice(&bytes);
+                            Ok(bytes.len())
+                        } else {
+                            Err(SyscallError::new(syscall::EINVAL))
+                        }
+                    }
+                    Handle::SchemeRoot => Err(SyscallError::new(syscall::EBADF)),
+                }
+            }
+            // SocketCall::SendMsg => self.handle_sendmsg(id, payload, ctx),
+            // SocketCall::RecvMsg => self.handle_recvmsg(id, payload),
+            // SocketCall::Unbind => self.handle_unbind(id),
+            // SocketCall::GetToken => self.handle_get_token(id, payload),
+            SocketCall::GetPeerName => {
+                let file = self
+                    .handles
+                    .get_mut(&fd)
+                    .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
+                let file = match *file {
+                    Handle::File(ref mut f) => f,
+                    _ => return Err(SyscallError::new(syscall::EBADF)),
+                };
+                let mut socket_set = self.socket_set.borrow_mut();
+                let socket = socket_set.get_mut::<SocketT>(file.socket_handle());
+
+                SocketT::handle_get_peer_name(socket, file, payload)
+            }
+            SocketCall::Shutdown => {
+                let how = metadata[1] as usize;
+
+                match self
+                    .handles
+                    .get_mut(&fd)
+                    .ok_or_else(|| SyscallError::new(syscall::EBADF))?
+                {
+                    Handle::File(file) => {
+                        let mut socket_set = self.socket_set.borrow_mut();
+                        let socket = socket_set.get_mut::<SocketT>(file.socket_handle());
+
+                        SocketT::handle_shutdown(socket, file, how)
+                    }
+                    Handle::Null(null_file) => {
+                        match how {
+                            0 => null_file.read_enabled = false,
+                            1 => null_file.write_enabled = false,
+                            2 => {
+                                null_file.read_enabled = false;
+                                null_file.write_enabled = false;
+                            }
+                            _ => return Err(SyscallError::new(EINVAL)),
+                        }
+                        Ok(0)
+                    }
+                    Handle::SchemeRoot => Err(SyscallError::new(syscall::EBADF)),
+                }
+            }
+            _ => Err(SyscallError::new(EOPNOTSUPP)),
+        }
+    }
+
     fn open_inner(
         &mut self,
         path: &str,
         flags: usize,
         uid: u32,
         gid: u32,
+        read_enabled: bool,
+        write_enabled: bool,
     ) -> SyscallResult<OpenResult> {
         if path.is_empty() {
-            let null = NullFile { flags, uid, gid };
+            let null = NullFile {
+                flags,
+                uid,
+                gid,
+                read_enabled,
+                write_enabled,
+            };
 
             let id = self.next_fd;
             self.next_fd += 1;
 
-            self.nulls.insert(id, null);
+            self.handles.insert(id, Handle::Null(null));
 
             Ok(OpenResult::ThisScheme {
                 number: id,
@@ -431,6 +591,8 @@ where
                 write_notified: false,
                 write_timeout: None,
                 read_timeout: None,
+                read_enabled: read_enabled,
+                write_enabled: write_enabled,
                 data,
             });
 
@@ -438,7 +600,7 @@ where
             self.next_fd += 1;
 
             self.ref_counts.insert(socket_handle, 1);
-            self.files.insert(id, file);
+            self.handles.insert(id, Handle::File(file));
 
             Ok(OpenResult::ThisScheme {
                 number: id,
@@ -452,27 +614,48 @@ impl<SocketT> SchemeSync for SocketScheme<SocketT>
 where
     SocketT: SchemeSocket + AnySocket<'static>,
 {
-    fn open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> SyscallResult<OpenResult> {
-        self.open_inner(path, flags, ctx.uid, ctx.gid)
+    fn scheme_root(&mut self) -> SyscallResult<usize> {
+        let id = self.next_fd;
+        self.next_fd += 1;
+        self.handles.insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+
+    fn openat(
+        &mut self,
+        fd: usize,
+        path: &str,
+        flags: usize,
+        _fcntl_flags: u32,
+        ctx: &CallerCtx,
+    ) -> SyscallResult<OpenResult> {
+        let handle = self
+            .handles
+            .get(&fd)
+            .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
+        match handle {
+            Handle::SchemeRoot => self.open_inner(path, flags, ctx.uid, ctx.gid, true, true),
+            _ => Err(SyscallError::new(syscall::EACCES)),
+        }
+    }
+
+    fn call(
+        &mut self,
+        id: usize,
+        payload: &mut [u8],
+        metadata: &[u64],
+        ctx: &CallerCtx,
+    ) -> SyscallResult<usize> {
+        self.call_inner(id, payload, metadata, ctx)
     }
 
     fn on_close(&mut self, fd: usize) {
-        if let Some(_null) = self.nulls.remove(&fd) {
+        let handle = if let Some(handle) = self.handles.remove(&fd) {
+            handle
+        } else {
             return;
-        }
-
-        let socket_handle = {
-            let Some(file) = self.files.get(&fd) else {
-                return;
-            };
-            file.socket_handle()
         };
-        let scheme_file = self.files.remove(&fd);
-        let mut socket_set = self.socket_set.borrow_mut();
-        if let Some(scheme_file) = scheme_file {
-            let socket = socket_set.get::<SocketT>(socket_handle);
-            let _ = socket.close_file(&scheme_file, &mut self.scheme_data);
-        }
 
         // incorrect, and kernel can't send close until all references are gone
         /*self.wait_queue.retain(
@@ -482,30 +665,42 @@ where
              }| a != fd,
         );*/
 
-        let remove = match self.ref_counts.entry(socket_handle) {
-            Entry::Vacant(_) => {
-                warn!("Closing a socket_handle with no ref");
-                true
-            }
-            Entry::Occupied(mut e) => {
-                if *e.get() == 0 {
-                    warn!("Closing a socket_handle with no ref");
-                    e.remove();
-                    true
-                } else {
-                    *e.get_mut() -= 1;
-                    if *e.get() == 0 {
-                        e.remove();
+        match handle {
+            Handle::SchemeRoot => return,
+            Handle::Null(_) => return,
+            Handle::File(scheme_file) => {
+                let socket_handle = scheme_file.socket_handle();
+                let mut socket_set = self.socket_set.borrow_mut();
+
+                let socket = socket_set.get::<SocketT>(socket_handle);
+                let _ = socket.close_file(&scheme_file, &mut self.scheme_data);
+
+                let remove = match self.ref_counts.entry(socket_handle) {
+                    Entry::Vacant(_) => {
+                        warn!("Closing a socket_handle with no ref");
                         true
-                    } else {
-                        false
                     }
+                    Entry::Occupied(mut e) => {
+                        if *e.get() == 0 {
+                            warn!("Closing a socket_handle with no ref");
+                            e.remove();
+                            true
+                        } else {
+                            *e.get_mut() -= 1;
+                            if *e.get() == 0 {
+                                e.remove();
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    }
+                };
+
+                if remove {
+                    socket_set.remove(socket_handle);
                 }
             }
-        };
-
-        if remove {
-            socket_set.remove(socket_handle);
         }
     }
 
@@ -519,15 +714,15 @@ where
     ) -> SyscallResult<usize> {
         let (fd, setting) = {
             let file = self
-                .files
+                .handles
                 .get_mut(&fd)
                 .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
 
             match *file {
-                SchemeFile::Setting(ref setting_handle) => {
+                Handle::File(SchemeFile::Setting(ref setting_handle)) => {
                     (setting_handle.fd, setting_handle.setting)
                 }
-                SchemeFile::Socket(ref mut file) => {
+                Handle::File(SchemeFile::Socket(ref mut file)) => {
                     let mut socket_set = self.socket_set.borrow_mut();
                     let socket = socket_set.get_mut::<SocketT>(file.socket_handle);
                     let ret = SocketT::write_buf(socket, file, buf);
@@ -538,6 +733,7 @@ where
                     }
                     return ret;
                 }
+                _ => return Err(SyscallError::new(syscall::EBADF)),
             }
         };
         self.update_setting(fd, setting, buf)
@@ -553,14 +749,14 @@ where
     ) -> SyscallResult<usize> {
         let (fd, setting) = {
             let file = self
-                .files
+                .handles
                 .get_mut(&fd)
                 .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
             match *file {
-                SchemeFile::Setting(ref setting_handle) => {
+                Handle::File(SchemeFile::Setting(ref setting_handle)) => {
                     (setting_handle.fd, setting_handle.setting)
                 }
-                SchemeFile::Socket(ref mut file) => {
+                Handle::File(SchemeFile::Socket(ref mut file)) => {
                     let mut socket_set = self.socket_set.borrow_mut();
                     let socket = socket_set.get_mut::<SocketT>(file.socket_handle);
 
@@ -573,6 +769,7 @@ where
 
                     return ret;
                 }
+                _ => return Err(SyscallError::new(syscall::EBADF)),
             }
         };
         self.get_setting(fd, setting, buf)
@@ -581,19 +778,27 @@ where
     fn dup(&mut self, fd: usize, buf: &[u8], _ctx: &CallerCtx) -> SyscallResult<OpenResult> {
         let path = str::from_utf8(buf).or_else(|_| Err(SyscallError::new(syscall::EINVAL)))?;
 
-        if let Some((flags, uid, gid)) = self
-            .nulls
-            .get(&fd)
-            .map(|null| (null.flags, null.uid, null.gid))
-        {
-            return self.open_inner(path, flags, uid, gid);
-        }
-
         let new_file = {
-            let file = self
-                .files
+            let handle = self
+                .handles
                 .get_mut(&fd)
                 .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
+            let file = match *handle {
+                Handle::SchemeRoot => return Err(SyscallError::new(syscall::EBADF)),
+                Handle::Null(ref null) => {
+                    let (flags, uid, gid, read_enabled, write_enabled) = (
+                        null.flags,
+                        null.uid,
+                        null.gid,
+                        null.read_enabled,
+                        null.write_enabled,
+                    );
+                    // dup from empty path to a new path
+                    return self.open_inner(path, flags, uid, gid, read_enabled, write_enabled);
+                }
+                Handle::File(ref mut file) => file,
+            };
 
             let socket_handle = file.socket_handle();
 
@@ -642,7 +847,10 @@ where
                         .and_modify(|e| *e = e.saturating_sub(1))
                         .or_insert(0);
 
-                    *self.ref_counts.entry(socket_handle).or_insert(0) += 1;
+                    *self
+                        .ref_counts
+                        .entry(new_handle.socket_handle())
+                        .or_insert(0) += 1;
 
                     file.socket_handle = socket_handle;
                     file.data = data;
@@ -656,7 +864,7 @@ where
         };
 
         let id = self.next_fd;
-        self.files.insert(id, new_file);
+        self.handles.insert(id, Handle::File(new_file));
         self.next_fd += 1;
 
         Ok(OpenResult::ThisScheme {
@@ -672,9 +880,15 @@ where
         _ctx: &CallerCtx,
     ) -> SyscallResult<SyscallEventFlags> {
         let file = self
-            .files
+            .handles
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
+        let file = match *file {
+            Handle::File(ref mut f) => f,
+            _ => return Err(SyscallError::new(syscall::EBADF)),
+        };
+
         match *file {
             SchemeFile::Setting(_) => return Err(SyscallError::new(syscall::EBADF)),
             SchemeFile::Socket(ref mut file) => {
@@ -691,7 +905,7 @@ where
     fn fsync(&mut self, fd: usize, _ctx: &CallerCtx) -> SyscallResult<()> {
         {
             let _file = self
-                .files
+                .handles
                 .get_mut(&fd)
                 .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
         }
@@ -702,9 +916,14 @@ where
 
     fn fpath(&mut self, fd: usize, buf: &mut [u8], _ctx: &CallerCtx) -> SyscallResult<usize> {
         let file = self
-            .files
+            .handles
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
+        let file = match *file {
+            Handle::File(ref mut f) => f,
+            _ => return Err(SyscallError::new(syscall::EBADF)),
+        };
 
         let socket_set = self.socket_set.borrow();
         let socket = socket_set.get::<SocketT>(file.socket_handle());
@@ -719,33 +938,29 @@ where
         arg: usize,
         _ctx: &CallerCtx,
     ) -> SyscallResult<usize> {
-        if let Some(ref mut null) = self.nulls.get_mut(&fd) {
-            match cmd {
+        let handle = self
+            .handles
+            .get_mut(&fd)
+            .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
+
+        match *handle {
+            Handle::File(SchemeFile::Socket(ref mut socket_file)) => match cmd {
+                syscall::F_GETFL => Ok(socket_file.flags),
+                syscall::F_SETFL => {
+                    socket_file.flags = arg & !syscall::O_ACCMODE;
+                    Ok(0)
+                }
+                _ => Err(SyscallError::new(syscall::EINVAL)),
+            },
+            Handle::Null(ref mut null) => match cmd {
                 syscall::F_GETFL => Ok(null.flags),
                 syscall::F_SETFL => {
                     null.flags = arg & !syscall::O_ACCMODE;
                     Ok(0)
                 }
                 _ => Err(SyscallError::new(syscall::EINVAL)),
-            }
-        } else {
-            let file = self
-                .files
-                .get_mut(&fd)
-                .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
-
-            if let SchemeFile::Socket(ref mut socket_file) = *file {
-                match cmd {
-                    syscall::F_GETFL => Ok(socket_file.flags),
-                    syscall::F_SETFL => {
-                        socket_file.flags = arg & !syscall::O_ACCMODE;
-                        Ok(0)
-                    }
-                    _ => Err(SyscallError::new(syscall::EINVAL)),
-                }
-            } else {
-                Err(SyscallError::new(syscall::EBADF))
-            }
+            },
+            _ => Err(SyscallError::new(syscall::EBADF)),
         }
     }
 }

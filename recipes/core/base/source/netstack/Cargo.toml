@@ -8,33 +8,31 @@ name = "smolnetd"
 path = "src/main.rs"
 
 [dependencies]
-log = { version = "0.4", features = ["release_max_level_warn"] }
-redox-log = "0.1"
-event = { package = "redox_event", version = "0.4.1" }
+redox_event.workspace = true
 daemon = { path = "../daemon" }
-redox_syscall = "0.6"
-libredox = { version = "0.1.10", features = ["call"] }
-redox-scheme = "0.8.3"
-anyhow = "1"
-libc = "0.2"
-syscall = { package = "redox_syscall", version = "0.6" }
+redox_syscall = { workspace = true, features = ["std"] }
+redox-log.workspace = true
+libredox = { workspace = true, features = ["mkns"] }
+anyhow = "1.0.81"
+redox-scheme.workspace = true
+
+[dependencies.log]
+workspace = true
+default-features = false
+features = ["release_max_level_warn"]
 
 [dependencies.smoltcp]
 version = "0.12.0"
 default-features = false
 features = [
     "std",
-    "alloc",
-    "medium-ethernet",
-    "medium-ip",
+    "medium-ethernet", "medium-ip",
     "proto-ipv4",
-    "socket-raw",
-    "socket-icmp",
-    "socket-udp",
-    "socket-tcp",
-    "log",
+    "socket-raw", "socket-icmp", "socket-udp", "socket-tcp", "socket-tcp-cubic",
+    "iface-max-addr-count-8",
+    "log"
 ]
 #For debugging: "log", "verbose"
 
 [target.'cfg(target_os = "redox")'.dependencies]
-redox-rt = { git = "https://gitlab.redox-os.org/redox-os/relibc.git", default-features = false }
+redox-rt = { workspace = true, default-features = false }
