@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, Read, Write};

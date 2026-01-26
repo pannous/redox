@@ -4,8 +4,8 @@ use std::sync::Arc;
 use common::{dma::Dma, sgl};
 use driver_graphics::objects::{DrmConnectorStatus, DrmObjectId, DrmObjects};
 use driver_graphics::{
-    modeinfo_for_size, CursorFramebuffer, CursorPlane, Framebuffer, GraphicsAdapter,
-    GraphicsScheme, StandardProperties,
+    modeinfo_for_size, modeinfo_from_detailed_timing, CursorFramebuffer, CursorPlane,
+    DetailedTimingParams, Framebuffer, GraphicsAdapter, GraphicsScheme, StandardProperties,
 };
 use drm_sys::{DRM_MODE_DPMS_ON, DRM_MODE_TYPE_PREFERRED};
 use graphics_ipc::v1::Damage;
@@ -17,6 +17,7 @@ use syscall::{EINVAL, PAGE_SIZE};
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, Transport};
 
+use crate::venus::*;
 use crate::*;
 
 impl Into<GpuRect> for Damage {
@@ -64,7 +65,9 @@ impl Drop for VirtGpuFramebuffer<'_> {
                 .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
                 .build();
 
-            self.queue.send(command).await;
+            self.queue.send(command)
+                .expect("virtio-gpud: no descriptors for resource unref")
+                .await;
         });
     }
 }
@@ -91,7 +94,11 @@ pub struct VirtGpuAdapter<'a> {
     cursor_queue: Arc<Queue<'a>>,
     transport: Arc<dyn Transport>,
     has_edid: bool,
+    has_venus: bool,
+    num_capsets: u32,
     displays: Vec<Display>,
+    // Venus context state
+    venus_ctx: Option<VenusContext>,
 }
 
 impl<'a> fmt::Debug for VirtGpuAdapter<'a> {
@@ -153,7 +160,22 @@ impl VirtGpuAdapter<'_> {
             .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.control_queue.send(command).await;
+        self.control_queue.send(command)
+            .expect("virtio-gpud: no descriptors for request")
+            .await;
+        Ok(header)
+    }
+
+    /// Synchronous blocking version of send_request for use when async doesn't work
+    fn send_request_blocking<T>(&self, request: Dma<T>) -> Result<Dma<ControlHeader>, Error> {
+        let header = Dma::new(ControlHeader::default())?;
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue.send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed");
         Ok(header)
     }
 
@@ -165,20 +187,23 @@ impl VirtGpuAdapter<'_> {
             .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.control_queue.send(command).await;
+        self.control_queue.send(command)
+            .expect("virtio-gpud: no descriptors for fenced request")
+            .await;
         Ok(header)
     }
 
     async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
         let header = Dma::new(ControlHeader::with_ty(CommandTy::GetDisplayInfo))?;
-
         let response = Dma::new(GetDisplayInfo::default())?;
         let command = ChainBuilder::new()
             .chain(Buffer::new(&header))
             .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.control_queue.send(command).await;
+        self.control_queue.send(command)
+            .expect("virtio-gpud: no descriptors for get_display_info")
+            .await;
         assert!(response.header.ty == CommandTy::RespOkDisplayInfo);
 
         Ok(response)
@@ -193,7 +218,9 @@ impl VirtGpuAdapter<'_> {
             .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.control_queue.send(command).await;
+        self.control_queue.send(command)
+            .expect("virtio-gpud: no descriptors for get_edid")
+            .await;
         assert!(response.header.ty == CommandTy::RespOkEdid);
 
         Ok(response)
@@ -228,7 +255,9 @@ impl VirtGpuAdapter<'_> {
         .unwrap();
         futures::executor::block_on(async {
             let command = ChainBuilder::new().chain(Buffer::new(&request)).build();
-            self.cursor_queue.send(command).await;
+            self.cursor_queue.send(command)
+                .expect("virtio-gpud: no descriptors for cursor update")
+                .await;
         });
     }
 
@@ -237,8 +266,309 @@ impl VirtGpuAdapter<'_> {
 
         futures::executor::block_on(async {
             let command = ChainBuilder::new().chain(Buffer::new(&request)).build();
-            self.cursor_queue.send(command).await;
+            self.cursor_queue.send(command)
+                .expect("virtio-gpud: no descriptors for cursor move")
+                .await;
         });
+    }
+
+    // ========================================================================
+    // Venus/3D Methods
+    // ========================================================================
+
+    /// Check if Venus/Vulkan support is available
+    pub fn has_venus(&self) -> bool {
+        self.has_venus
+    }
+
+    /// Get capset info for a given index
+    pub fn get_capset_info(&self, capset_index: u32) -> Result<CapsetInfoResp, Error> {
+        let request = Dma::new(GetCapsetInfo::new(capset_index))?;
+        let response = Dma::new(CapsetInfoResp::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for get_capset_info");
+
+        if response.header.ty != CommandTy::RespOkCapsetInfo {
+            log::error!("virtio-gpud: get_capset_info failed: {:?}", response.header.ty);
+        }
+
+        // Copy out the response before Dma is dropped
+        Ok(CapsetInfoResp {
+            header: ControlHeader {
+                ty: response.header.ty,
+                flags: response.header.flags,
+                fence_id: response.header.fence_id,
+                ctx_id: response.header.ctx_id,
+                ring_index: response.header.ring_index,
+                padding: response.header.padding,
+            },
+            capset_id: response.capset_id,
+            capset_max_version: response.capset_max_version,
+            capset_max_size: response.capset_max_size,
+            padding: response.padding,
+        })
+    }
+
+    /// Find Venus capset among available capsets
+    pub fn find_venus_capset(&self) -> Option<(u32, u32)> {
+        for i in 0..self.num_capsets {
+            if let Ok(info) = self.get_capset_info(i) {
+                log::info!(
+                    "virtio-gpud: capset[{}] id={} version={} size={}",
+                    i, info.capset_id, info.capset_max_version, info.capset_max_size
+                );
+                if info.capset_id == VIRTIO_GPU_CAPSET_VENUS {
+                    return Some((info.capset_max_version, info.capset_max_size));
+                }
+            }
+        }
+        None
+    }
+
+    /// Create a Venus 3D context
+    pub fn create_venus_context(&mut self) -> Result<u32, Error> {
+        if !self.has_venus {
+            log::error!("virtio-gpud: Venus not supported");
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let ctx = VenusContext::new(VIRTIO_GPU_CAPSET_VENUS);
+        let ctx_id = ctx.ctx_id;
+
+        let request = Dma::new(CtxCreate::new(ctx_id, VIRTIO_GPU_CAPSET_VENUS, "venus"))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: create_venus_context failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        log::info!("virtio-gpud: created Venus context {}", ctx_id);
+        self.venus_ctx = Some(ctx);
+        Ok(ctx_id)
+    }
+
+    /// Destroy the Venus context
+    pub fn destroy_venus_context(&mut self) -> Result<(), Error> {
+        if let Some(ctx) = self.venus_ctx.take() {
+            let request = Dma::new(CtxDestroy::new(ctx.ctx_id))?;
+            let header = self.send_request_blocking(request)?;
+
+            if header.ty != CommandTy::RespOkNodata {
+                log::error!("virtio-gpud: destroy_venus_context failed: {:?}", header.ty);
+            } else {
+                log::info!("virtio-gpud: destroyed Venus context {}", ctx.ctx_id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Create a blob resource (host-visible memory for Vulkan)
+    ///
+    /// The size is automatically aligned to 16KB (VENUS_BLOB_ALIGN) for host compatibility,
+    /// especially on macOS/Apple Silicon where the host expects 16KB-aligned memory.
+    pub fn create_blob(
+        &mut self,
+        blob_mem: u32,
+        blob_flags: u32,
+        blob_id: u64,
+        size: u64,
+    ) -> Result<ResourceId, Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        let resource_id = ResourceId::alloc();
+
+        // Align size to 16KB for host Venus driver compatibility
+        let aligned_size = align_to_venus(size);
+
+        let request = Dma::new(ResourceCreateBlob::new(
+            ctx_id,
+            resource_id,
+            blob_mem,
+            blob_flags,
+            blob_id,
+            aligned_size,
+        ))?;
+
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: create_blob failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        log::info!(
+            "virtio-gpud: created blob resource {:?} size={} (aligned from {}) blob_id={}",
+            resource_id, aligned_size, size, blob_id
+        );
+
+        // Track resource in context
+        if let Some(ctx) = &mut self.venus_ctx {
+            ctx.resources.push(resource_id);
+        }
+
+        Ok(resource_id)
+    }
+
+    /// Map a blob resource and get cache type info
+    pub fn map_blob(&self, resource_id: ResourceId, offset: u64) -> Result<MapCacheType, Error> {
+        let request = Dma::new(ResourceMapBlob::new(resource_id, offset))?;
+        let response = Dma::new(MapInfoResp::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for map_blob");
+
+        if response.header.ty != CommandTy::RespOkMapInfo {
+            log::error!("virtio-gpud: map_blob failed: {:?}", response.header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let cache_type = match response.map_cache_type {
+            0 => MapCacheType::Cached,
+            1 => MapCacheType::Uncached,
+            2 => MapCacheType::WriteCombining,
+            _ => MapCacheType::Cached,
+        };
+
+        Ok(cache_type)
+    }
+
+    /// Unmap a blob resource
+    pub fn unmap_blob(&self, resource_id: ResourceId) -> Result<(), Error> {
+        let request = Dma::new(ResourceUnmapBlob::new(resource_id))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: unmap_blob failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
+    }
+
+    /// Attach a resource to the Venus context
+    pub fn attach_resource(&mut self, resource_id: ResourceId) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let request = Dma::new(CtxAttachResource::new(ctx_id, resource_id))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: attach_resource failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
+    }
+
+    /// Detach a resource from the Venus context
+    pub fn detach_resource(&mut self, resource_id: ResourceId) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let request = Dma::new(CtxDetachResource::new(ctx_id, resource_id))?;
+        let header = self.send_request_blocking(request)?;
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: detach_resource failed: {:?}", header.ty);
+        }
+
+        Ok(())
+    }
+
+    /// Submit a 3D command buffer to the Venus context
+    pub fn submit_3d(&self, cmd_data: &[u8]) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let request = Dma::new(Submit3d::new(ctx_id, cmd_data.len() as u32))?;
+
+        // Allocate DMA buffer for command data
+        let cmd_dma = unsafe {
+            let mut dma = Dma::<[u8]>::zeroed_slice(cmd_data.len())
+                .map_err(Error::SyscallError)?
+                .assume_init();
+            dma.copy_from_slice(cmd_data);
+            dma
+        };
+
+        let header = Dma::new(ControlHeader::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new_unsized(&cmd_dma))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for submit_3d");
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: submit_3d failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
+    }
+
+    /// Submit a fenced 3D command buffer (waits for completion)
+    pub fn submit_3d_fenced(&self, cmd_data: &[u8], fence_id: u64) -> Result<(), Error> {
+        let ctx_id = self.venus_ctx.as_ref().map(|c| c.ctx_id).unwrap_or(0);
+        if ctx_id == 0 {
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        let mut submit = Submit3d::new(ctx_id, cmd_data.len() as u32);
+        submit.header.flags |= VIRTIO_GPU_FLAG_FENCE;
+        submit.header.fence_id = fence_id;
+        let request = Dma::new(submit)?;
+
+        let cmd_dma = unsafe {
+            let mut dma = Dma::<[u8]>::zeroed_slice(cmd_data.len())
+                .map_err(Error::SyscallError)?
+                .assume_init();
+            dma.copy_from_slice(cmd_data);
+            dma
+        };
+
+        let header = Dma::new(ControlHeader::default())?;
+
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new_unsized(&cmd_dma))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue
+            .send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for submit_3d_fenced");
+
+        if header.ty != CommandTy::RespOkNodata {
+            log::error!("virtio-gpud: submit_3d_fenced failed: {:?}", header.ty);
+            return Err(Error::SyscallError(libredox::error::Error::new(EINVAL)));
+        }
+
+        Ok(())
     }
 }
 
@@ -262,6 +592,7 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
         });
 
         for display_id in 0..self.config.num_scanouts.get() {
+            log::info!("virtio-gpu: init() adding connector for display {}", display_id);
             let connector = objects.add_connector(VirtGpuConnector { display_id });
             if self.has_edid {
                 objects.add_object_property(connector, standard_properties.edid, 0);
@@ -272,6 +603,7 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
                 DRM_MODE_DPMS_ON.into(),
             );
         }
+        log::info!("virtio-gpu: init() done");
     }
 
     fn get_cap(&self, cap: u32) -> syscall::Result<u64> {
@@ -323,24 +655,38 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
                 connector.modes = edid
                     .descriptors
                     .iter()
-                    .filter_map(|descriptor| {
+                    .enumerate()
+                    .filter_map(|(idx, descriptor)| {
                         match descriptor {
-                            edid::Descriptor::DetailedTiming(detailed_timing) => {
-                                // FIXME extract full information
-                                Some(modeinfo_for_size(
-                                    u32::from(detailed_timing.horizontal_active_pixels),
-                                    u32::from(detailed_timing.vertical_active_lines),
-                                ))
+                            edid::Descriptor::DetailedTiming(dt) => {
+                                // Extract full timing information from EDID
+                                // Features byte: bits 4-3 = sync type, bit 2 = h_sync polarity, bit 1 = v_sync polarity
+                                let sync_type = (dt.features >> 3) & 0b11;
+                                let h_sync_positive = sync_type == 0b11 && (dt.features & (1 << 2)) != 0;
+                                let v_sync_positive = sync_type == 0b11 && (dt.features & (1 << 1)) != 0;
+                                let interlaced = (dt.features & (1 << 7)) != 0;
+
+                                let params = DetailedTimingParams {
+                                    pixel_clock: dt.pixel_clock as u32 * 10, // EDID stores in 10kHz units
+                                    h_active: dt.horizontal_active_pixels,
+                                    h_blanking: dt.horizontal_blanking_pixels,
+                                    h_front_porch: dt.horizontal_front_porch as u16,
+                                    h_sync_width: dt.horizontal_sync_width as u16,
+                                    v_active: dt.vertical_active_lines,
+                                    v_blanking: dt.vertical_blanking_lines,
+                                    v_front_porch: dt.vertical_front_porch as u16,
+                                    v_sync_width: dt.vertical_sync_width as u16,
+                                    h_sync_positive,
+                                    v_sync_positive,
+                                    interlaced,
+                                };
+                                // First descriptor is preferred mode
+                                Some(modeinfo_from_detailed_timing(params, idx == 0))
                             }
                             _ => None,
                         }
                     })
                     .collect::<Vec<_>>();
-
-                // First detailed timing descriptor indicates preferred mode.
-                for mode in connector.modes.iter_mut().skip(1) {
-                    mode.flags &= !DRM_MODE_TYPE_PREFERRED;
-                }
 
                 let blob = objects.add_blob(display.edid.clone());
                 objects.set_object_property(id, standard_properties.edid, blob.into());
@@ -360,62 +706,73 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
-        futures::executor::block_on(async {
-            let bpp = 32;
-            let fb_size = width as usize * height as usize * bpp / 8;
-            let sgl = sgl::Sgl::new(fb_size).unwrap();
+        // Use synchronous blocking operations instead of async to avoid hangs
+        // when called from scheme handlers
+        let bpp = 32;
+        let fb_size = width as usize * height as usize * bpp / 8;
+        let sgl = sgl::Sgl::new(fb_size).unwrap();
 
-            unsafe {
-                core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 255, fb_size);
+        // Fill with gradient pattern as background
+        unsafe {
+            let ptr = sgl.as_ptr() as *mut u32;
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    let r = ((x * 255) / width as usize) as u8;
+                    let g = ((y * 255) / height as usize) as u8;
+                    let b = 128u8;
+                    // BGRX format
+                    *ptr.add(y * width as usize + x) = (b as u32) | ((g as u32) << 8) | ((r as u32) << 16);
+                }
             }
+        }
 
-            let res_id = ResourceId::alloc();
+        let res_id = ResourceId::alloc();
 
-            // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
-            let request = Dma::new(ResourceCreate2d::new(
-                res_id,
-                ResourceFormat::Bgrx,
-                width,
-                height,
-            ))
-            .unwrap();
+        // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
+        let request = Dma::new(ResourceCreate2d::new(
+            res_id,
+            ResourceFormat::Bgrx,
+            width,
+            height,
+        ))
+        .unwrap();
 
-            let header = self.send_request(request).await.unwrap();
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
+        let header = self.send_request_blocking(request).unwrap();
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
 
-            // Use the allocated framebuffer from the guest ram, and attach it as backing
-            // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
+        // Use the allocated framebuffer from the guest ram, and attach it as backing
+        // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
 
-            let mut mem_entries =
-                unsafe { Dma::zeroed_slice(sgl.chunks().len()).unwrap().assume_init() };
-            for (entry, chunk) in mem_entries.iter_mut().zip(sgl.chunks().iter()) {
-                *entry = MemEntry {
-                    address: chunk.phys as u64,
-                    length: chunk.length.next_multiple_of(PAGE_SIZE) as u32,
-                    padding: 0,
-                };
-            }
+        let mut mem_entries =
+            unsafe { Dma::zeroed_slice(sgl.chunks().len()).unwrap().assume_init() };
+        for (entry, chunk) in mem_entries.iter_mut().zip(sgl.chunks().iter()) {
+            *entry = MemEntry {
+                address: chunk.phys as u64,
+                length: chunk.length.next_multiple_of(PAGE_SIZE) as u32,
+                padding: 0,
+            };
+        }
 
-            let attach_request =
-                Dma::new(AttachBacking::new(res_id, mem_entries.len() as u32)).unwrap();
-            let header = Dma::new(ControlHeader::default()).unwrap();
-            let command = ChainBuilder::new()
-                .chain(Buffer::new(&attach_request))
-                .chain(Buffer::new_unsized(&mem_entries))
-                .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
-                .build();
+        let attach_request =
+            Dma::new(AttachBacking::new(res_id, mem_entries.len() as u32)).unwrap();
+        let header = Dma::new(ControlHeader::default()).unwrap();
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&attach_request))
+            .chain(Buffer::new_unsized(&mem_entries))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
 
-            self.control_queue.send(command).await;
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
+        self.control_queue.send_blocking(command)
+            .expect("virtio-gpud: send_blocking failed for attach_backing");
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
 
-            VirtGpuFramebuffer {
-                queue: self.control_queue.clone(),
-                id: res_id,
-                sgl,
-                width,
-                height,
-            }
-        })
+        VirtGpuFramebuffer {
+            queue: self.control_queue.clone(),
+            id: res_id,
+            sgl,
+            width,
+            height,
+        }
     }
 
     fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8 {
@@ -423,45 +780,49 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
     }
 
     fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage) {
-        futures::executor::block_on(async {
-            let req = Dma::new(XferToHost2d::new(
+        // Use synchronous blocking operations to avoid hangs in scheme handler context
+
+        // Transfer framebuffer to host
+        let req = Dma::new(XferToHost2d::new(
+            framebuffer.id,
+            GpuRect {
+                x: 0,
+                y: 0,
+                width: framebuffer.width,
+                height: framebuffer.height,
+            },
+            0,
+        ))
+        .unwrap();
+        let header = self.send_request_blocking(req).unwrap();
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
+
+        // Set scanout if not already active for this resource
+        if self.displays[display_id].active_resource != Some(framebuffer.id) {
+            let scanout_request = Dma::new(SetScanout::new(
+                display_id as u32,
                 framebuffer.id,
-                GpuRect {
-                    x: 0,
-                    y: 0,
-                    width: framebuffer.width,
-                    height: framebuffer.height,
-                },
-                0,
+                GpuRect::new(0, 0, framebuffer.width, framebuffer.height),
             ))
             .unwrap();
-            let header = self.send_request(req).await.unwrap();
+            let header = self.send_request_blocking(scanout_request).unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
+            self.displays[display_id].active_resource = Some(framebuffer.id);
+        }
 
-            // FIXME once we support resizing we also need to check that the current and target size match
-            if self.displays[display_id].active_resource != Some(framebuffer.id) {
-                let scanout_request = Dma::new(SetScanout::new(
-                    display_id as u32,
-                    framebuffer.id,
-                    GpuRect::new(0, 0, framebuffer.width, framebuffer.height),
-                ))
-                .unwrap();
-                let header = self.send_request(scanout_request).await.unwrap();
-                assert_eq!(header.ty, CommandTy::RespOkNodata);
-                self.displays[display_id].active_resource = Some(framebuffer.id);
-            }
-
-            let flush = ResourceFlush::new(
-                framebuffer.id,
-                damage.clip(framebuffer.width, framebuffer.height).into(),
-            );
-            let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
-        });
+        // Flush the display
+        let flush = ResourceFlush::new(
+            framebuffer.id,
+            damage.clip(framebuffer.width, framebuffer.height).into(),
+        );
+        let header = self.send_request_blocking(Dma::new(flush).unwrap()).unwrap();
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
     }
 
     fn supports_hw_cursor(&self) -> bool {
-        true
+        // Disabled for now - create_cursor_framebuffer uses block_on(async) which hangs
+        // TODO: convert to sync like create_dumb_framebuffer
+        false
     }
 
     fn create_cursor_framebuffer(&mut self) -> VirtGpuCursor {
@@ -502,7 +863,9 @@ impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
                 .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
                 .build();
 
-            self.control_queue.send(command).await;
+            self.control_queue.send(command)
+                .expect("virtio-gpud: no descriptors for cursor attach_backing")
+                .await;
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
             //Transfering cursor resource to host
@@ -555,6 +918,8 @@ impl<'a> GpuScheme {
         cursor_queue: Arc<Queue<'a>>,
         transport: Arc<dyn Transport>,
         has_edid: bool,
+        has_venus: bool,
+        num_capsets: u32,
     ) -> Result<(GraphicsScheme<VirtGpuAdapter<'a>>, DisplayHandle), Error> {
         let adapter = VirtGpuAdapter {
             config,
@@ -562,7 +927,10 @@ impl<'a> GpuScheme {
             cursor_queue,
             transport,
             has_edid,
+            has_venus,
+            num_capsets,
             displays: vec![],
+            venus_ctx: None,
         };
 
         let scheme = GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned());

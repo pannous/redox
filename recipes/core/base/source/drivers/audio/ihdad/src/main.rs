@@ -3,7 +3,6 @@ extern crate event;
 extern crate spin;
 extern crate syscall;
 
-use redox_scheme::scheme::register_sync_scheme;
 use redox_scheme::wrappers::ReadinessBased;
 use redox_scheme::Socket;
 use std::cell::RefCell;
@@ -61,14 +60,12 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> ! {
 
         let event_queue =
             EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
-        let socket = Socket::nonblock().expect("ihdad: failed to create socket");
         let device = RefCell::new(unsafe {
             hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")
         });
+        let socket = Socket::nonblock("audiohw").expect("ihdad: failed to create socket");
         let mut readiness_based = ReadinessBased::new(&socket, 16);
 
-        register_sync_scheme(&socket, "audiohw", &mut *device.borrow_mut())
-            .expect("ihdad: failed to register audiohw scheme to namespace");
         daemon.ready();
 
         event_queue

@@ -3,12 +3,24 @@ use std::str::FromStr;
 use libredox::{flag, Fd};
 use redox_log::{OutputBuilder, RedoxLogger};
 
+/// Returns the log level for console output based on RUST_LOG environment variable.
 pub fn output_level() -> log::LevelFilter {
-    log::LevelFilter::Info
+    // Check RUST_LOG env var, default to Info if not set
+    match std::env::var("RUST_LOG").ok().as_deref() {
+        Some("error") => log::LevelFilter::Error,
+        Some("warn") => log::LevelFilter::Warn,
+        Some("info") => log::LevelFilter::Info,
+        Some("debug") => log::LevelFilter::Debug,
+        Some("trace") => log::LevelFilter::Trace,
+        Some("off") => log::LevelFilter::Off,
+        _ => log::LevelFilter::Info, // default
+    }
 }
 
+/// Returns the log level for file output (Debug level for troubleshooting).
 pub fn file_level() -> log::LevelFilter {
-    log::LevelFilter::Info
+    // File logging at Debug level for troubleshooting
+    log::LevelFilter::Debug
 }
 
 /// Configures logging for a single driver.
@@ -20,7 +32,6 @@ pub fn setup_logging(
     mut output_level: log::LevelFilter,
     file_level: log::LevelFilter,
 ) {
-    RedoxLogger::init_timezone();
     if let Some(log_level) = read_bootloader_log_level_env(category, subcategory) {
         output_level = log_level;
     }

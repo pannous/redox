@@ -1,9 +1,8 @@
 //! <https://www.qemu.org/docs/master/specs/standard-vga.html>
 
-use common::acquire_port_io_rights;
 use inputd::ProducerHandle;
 use pcid_interface::PciFunctionHandle;
-use redox_scheme::{scheme::register_sync_scheme, RequestKind, SignalBehavior, Socket};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
 use crate::bga::Bga;
 use crate::scheme::BgaScheme;
@@ -33,7 +32,7 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> ! {
 
     log::info!("BGA {}", pci_config.func.display());
 
-    let socket = Socket::create().expect("bgad: failed to create bga scheme");
+    let socket = Socket::create("bga").expect("bgad: failed to create bga scheme");
 
     let bar = unsafe { pcid_handle.map_bar(2) }.ptr.as_ptr();
 
@@ -47,11 +46,9 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> ! {
 
     scheme.update_size();
 
-    register_sync_scheme(&socket, "bga", &mut scheme).expect("bgad: failed to register bga scheme");
+    libredox::call::setrens(0, 0).expect("bgad: failed to enter null namespace");
 
     daemon.ready();
-
-    libredox::call::setrens(0, 0).expect("bgad: failed to enter null namespace");
 
     loop {
         let Some(request) = socket

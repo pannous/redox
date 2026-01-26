@@ -6,7 +6,6 @@ use xhcid_interface::{
 };
 
 fn main() {
-    common::init();
     let mut args = env::args().skip(1);
 
     const USAGE: &'static str = "usbhubd <scheme> <port> <interface>";
@@ -39,8 +38,7 @@ fn main() {
         common::file_level(),
     );
 
-    let handle =
-        XhciClientHandle::new(scheme.clone(), port_id).expect("Failed to open XhciClientHandle");
+    let handle = XhciClientHandle::new(scheme.clone(), port_id);
     let desc: DevDesc = handle
         .get_standard_descs()
         .expect("Failed to get standard descriptors");
@@ -148,8 +146,7 @@ fn main() {
             } else {
                 usb::HubPortStatus::V2(usb::HubPortStatusV2::default())
             },
-            handle: XhciClientHandle::new(scheme.clone(), child_port_id)
-                .expect("Failed to open XhciClientHandle"),
+            handle: XhciClientHandle::new(scheme.clone(), child_port_id),
             attached: false,
         });
     }

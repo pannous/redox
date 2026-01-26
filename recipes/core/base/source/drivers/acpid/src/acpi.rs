@@ -257,12 +257,12 @@ impl AmlSymbols {
         }
     }
 
-    pub fn init(&mut self, pci_fd: Option<&libredox::Fd>) -> Result<(), Box<dyn Error>> {
+    pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
         if self.aml_context.is_some() {
             return Err("AML interpreter already initialized".into());
         }
         let format_err = |err| format!("{:?}", err);
-        let handler = AmlPhysMemHandler::new(pci_fd, Arc::clone(&self.page_cache));
+        let handler = AmlPhysMemHandler::new(Arc::clone(&self.page_cache));
         //TODO: use these parsed tables for the rest of acpid
         let rsdp_address = usize::from_str_radix(&std::env::var("RSDP_ADDR")?, 16)?;
         let tables =
@@ -276,12 +276,10 @@ impl AmlSymbols {
         Ok(())
     }
 
-    pub fn aml_context_mut(
-        &mut self,
-        pci_fd: Option<&libredox::Fd>,
-    ) -> &mut Interpreter<AmlPhysMemHandler> {
+    pub fn aml_context_mut(&mut self) -> &mut Interpreter<AmlPhysMemHandler> {
+        // PCID must be running by this time!
         if self.aml_context.is_none() {
-            match self.init(pci_fd) {
+            match self.init() {
                 Ok(()) => (),
                 Err(err) => {
                     log::error!("failed to initialize AML context: {}", err);
@@ -305,8 +303,8 @@ impl AmlSymbols {
         None
     }
 
-    pub fn build_cache(&mut self, pci_fd: Option<&libredox::Fd>) {
-        let aml_context = self.aml_context_mut(pci_fd);
+    pub fn build_cache(&mut self) {
+        let aml_context = self.aml_context_mut();
 
         let mut symbol_list: Vec<(AmlName, String)> = Vec::with_capacity(5000);
 
@@ -393,7 +391,7 @@ impl AcpiContext {
         args: Vec<AmlSerdeValue>,
     ) -> Result<AmlSerdeValue, AmlEvalError> {
         let mut symbols = self.aml_symbols.write();
-        let interpreter = symbols.aml_context_mut(None);
+        let interpreter = symbols.aml_context_mut();
         interpreter.acquire_global_lock(16)?;
 
         let args = args
@@ -522,17 +520,14 @@ impl AcpiContext {
     }
 
     pub fn aml_lookup(&self, symbol: &str) -> Option<String> {
-        if let Ok(aml_symbols) = self.aml_symbols(None) {
+        if let Ok(aml_symbols) = self.aml_symbols() {
             aml_symbols.lookup(symbol)
         } else {
             None
         }
     }
 
-    pub fn aml_symbols(
-        &self,
-        pci_fd: Option<&libredox::Fd>,
-    ) -> Result<RwLockReadGuard<'_, AmlSymbols>, AmlError> {
+    pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, AmlSymbols>, AmlError> {
         // return the cached value if it exists
         let symbols = self.aml_symbols.read();
         if !symbols.symbols_cache().is_empty() {
@@ -546,7 +541,7 @@ impl AcpiContext {
 
         let mut aml_symbols = self.aml_symbols.write();
 
-        aml_symbols.build_cache(pci_fd);
+        aml_symbols.build_cache();
 
         // return the cached value
         Ok(RwLockWriteGuard::downgrade(aml_symbols))

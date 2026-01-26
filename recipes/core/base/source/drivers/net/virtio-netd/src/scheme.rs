@@ -23,24 +23,32 @@ pub struct VirtioNet<'a> {
 }
 
 impl<'a> VirtioNet<'a> {
-    pub fn new(mac_address: [u8; 6], rx: Arc<Queue<'a>>, tx: Arc<Queue<'a>>) -> Self {
+    pub fn new(mac_address: [u8; 6], rx: Arc<Queue<'a>>, tx: Arc<Queue<'a>>) -> Result<Self, syscall::Error> {
         // Populate all of the `rx_queue` with buffers to maximize performence.
         let mut rx_buffers = vec![];
         for i in 0..(rx.descriptor_len() as usize) {
-            rx_buffers.push(unsafe {
-                Dma::<[u8]>::zeroed_slice(MAX_BUFFER_LEN)
-                    .unwrap()
-                    .assume_init()
-            });
+            let dma_buf = unsafe {
+                match Dma::<[u8]>::zeroed_slice(MAX_BUFFER_LEN) {
+                    Ok(buf) => buf.assume_init(),
+                    Err(e) => {
+                        log::error!("virtio-netd: failed to allocate RX buffer {}: {:?}", i, e);
+                        return Err(e.into());
+                    }
+                }
+            };
+            rx_buffers.push(dma_buf);
 
             let chain = ChainBuilder::new()
                 .chain(Buffer::new_unsized(&rx_buffers[i]).flags(DescriptorFlags::WRITE_ONLY))
                 .build();
 
-            let _ = rx.send(chain);
+            // RX buffers are recycled via recycle_descriptor(), so we can ignore the future
+            if rx.send(chain).is_none() {
+                log::warn!("virtio-netd: failed to add RX buffer {} - no descriptors", i);
+            }
         }
 
-        Self {
+        Ok(Self {
             mac_address,
 
             rx,
@@ -48,7 +56,7 @@ impl<'a> VirtioNet<'a> {
             tx,
 
             recv_head: 0,
-        }
+        })
     }
 
     /// Returns the number of bytes read. Returns `0` if the operation would block.
@@ -73,11 +81,17 @@ impl<'a> VirtioNet<'a> {
         let _header = unsafe { &*(buffer.as_ptr() as *const VirtHeader) };
         let packet = &buffer[header_size..(header_size + payload_size)];
 
-        // Copy the packet into the buffer.
-        target[..payload_size].copy_from_slice(&packet);
+        // Copy only as much as fits in the target buffer
+        let copy_size = core::cmp::min(payload_size, target.len());
+        target[..copy_size].copy_from_slice(&packet[..copy_size]);
 
         self.recv_head = self.rx.used.head_index();
-        payload_size
+
+        // Recycle the RX buffer back to the available ring for future packets
+        log::info!("Recycling RX descriptor {} (recv_head now {})", descriptor_idx, self.recv_head);
+        self.rx.recycle_descriptor(descriptor_idx as u16);
+
+        copy_size
     }
 }
 
@@ -88,6 +102,13 @@ impl<'a> NetworkAdapter for VirtioNet<'a> {
 
     fn available_for_read(&mut self) -> usize {
         (self.rx.used.head_index() - self.recv_head).into()
+    }
+
+    fn available_for_write(&mut self) -> usize {
+        // Reclaim any completed TX descriptors first
+        self.tx.reclaim_completed();
+        // Need at least 2 descriptors per packet (header + payload)
+        self.tx.available_descriptors().saturating_sub(1) / 2
     }
 
     fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
@@ -102,17 +123,37 @@ impl<'a> NetworkAdapter for VirtioNet<'a> {
     }
 
     fn write_packet(&mut self, buffer: &[u8]) -> syscall::Result<usize> {
-        let header = unsafe { Dma::<VirtHeader>::zeroed()?.assume_init() };
+        // Allocate DMA buffers for header and payload
+        let header = match Dma::<VirtHeader>::zeroed() {
+            Ok(h) => Box::leak(Box::new(unsafe { h.assume_init() })),
+            Err(e) => {
+                log::error!("virtio-netd: DMA header alloc failed: {:?}", e);
+                return Err(e.into());
+            }
+        };
 
-        let mut payload = unsafe { Dma::<[u8]>::zeroed_slice(buffer.len())?.assume_init() };
+        let payload = match Dma::<[u8]>::zeroed_slice(buffer.len()) {
+            Ok(p) => Box::leak(Box::new(unsafe { p.assume_init() })),
+            Err(e) => {
+                log::error!("virtio-netd: DMA payload alloc failed: {:?}", e);
+                return Err(e.into());
+            }
+        };
         payload.copy_from_slice(buffer);
 
         let chain = ChainBuilder::new()
-            .chain(Buffer::new(&header))
-            .chain(Buffer::new_unsized(&payload))
+            .chain(Buffer::new(header))
+            .chain(Buffer::new_unsized(payload))
             .build();
 
-        futures::executor::block_on(self.tx.send(chain));
-        Ok(buffer.len())
+        // send() now reclaims completed TX descriptors automatically before checking availability
+        match self.tx.send(chain) {
+            Some(_) => Ok(buffer.len()),
+            None => {
+                // No descriptors available even after reclaiming - would block
+                log::warn!("virtio-netd: TX queue full, dropping packet ({} bytes)", buffer.len());
+                Err(syscall::Error::new(syscall::EWOULDBLOCK))
+            }
+        }
     }
 }

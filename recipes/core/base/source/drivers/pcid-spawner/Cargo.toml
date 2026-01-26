@@ -7,9 +7,9 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-log.workspace = true
+log = "0.4"
 pico-args = "0.5"
-redox_syscall.workspace = true
+redox_syscall = "0.6"
 serde = { version = "1", features = ["derive"] }
 toml = "0.5"
 

@@ -63,24 +63,24 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
         .context("failed to get mac address from network adapter")?;
 
     trace!("opening ip scheme socket");
-    let ip_fd = Socket::nonblock()
-        .map_err(|e| anyhow!("failed to open create ip scheme socket: {:?}", e))?;
+    let ip_fd = Socket::nonblock("ip")
+        .map_err(|e| anyhow!("failed to open create ip scheme socket: {}", e))?;
 
     trace!("opening udp scheme socket");
     let udp_fd =
-        Socket::nonblock().map_err(|e| anyhow!("failed to open udp scheme socket: {:?}", e))?;
+        Socket::nonblock("udp").map_err(|e| anyhow!("failed to open udp scheme socket: {}", e))?;
 
     trace!("opening tcp scheme socket");
     let tcp_fd =
-        Socket::nonblock().map_err(|e| anyhow!("failed to open tcp scheme socket: {:?}", e))?;
+        Socket::nonblock("tcp").map_err(|e| anyhow!("failed to open tcp scheme socket: {}", e))?;
 
     trace!("opening icmp scheme socket");
-    let icmp_fd =
-        Socket::nonblock().map_err(|e| anyhow!("failed to open icmp scheme socket: {:?}", e))?;
+    let icmp_fd = Socket::nonblock("icmp")
+        .map_err(|e| anyhow!("failed to open icmp scheme socket: {}", e))?;
 
     trace!("opening netcfg scheme socket");
-    let netcfg_fd =
-        Socket::nonblock().map_err(|e| anyhow!("failed to open netcfg scheme socket {:?}", e))?;
+    let netcfg_fd = Socket::nonblock("netcfg")
+        .map_err(|e| anyhow!("failed to open netcfg scheme socket {}", e))?;
 
     let time_path = format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC);
     let time_fd = Fd::open(&time_path, O_RDWR, 0).context("failed to open /scheme/time")?;
@@ -97,18 +97,17 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
         }
     }
 
-    let event_queue = EventQueue::<EventSource>::new()
-        .map_err(|e| anyhow!("failed to create event queue: {:?}", e))?;
+    let event_queue = EventQueue::<EventSource>::new().context("failed to create event queue")?;
 
     daemon.ready();
 
     event_queue
         .subscribe(network_fd.raw(), EventSource::Network, EventFlags::READ)
-        .map_err(|e| anyhow!("failed to listen to network events: {:?}", e))?;
+        .context("failed to listen to network events")?;
 
     event_queue
         .subscribe(time_fd.raw(), EventSource::Time, EventFlags::READ)
-        .map_err(|e| anyhow!("failed to listen to timer events: {:?}", e))?;
+        .context("failed to listen to timer events")?;
 
     event_queue
         .subscribe(ip_fd.inner().raw(), EventSource::IpScheme, EventFlags::READ)
@@ -155,21 +154,23 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
         icmp_fd,
         time_fd,
         netcfg_fd,
-    )
-    .context("smolnetd: failed to initialize smolnetd")?;
+    );
 
-    libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
+    // DISABLED: setrens(0,0) breaks event delivery - smolnetd would block forever
+    // libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
+    debug!("setrens DISABLED - staying in ENS=1");
 
-    let all = {
+    debug!("entering event loop");
+    let all: [std::result::Result<EventSource, std::io::Error>; 7] = {
         use EventSource::*;
-        [Network, Time, IpScheme, UdpScheme, IcmpScheme, NetcfgScheme].map(Ok)
+        [Network, Time, IpScheme, UdpScheme, TcpScheme, IcmpScheme, NetcfgScheme].map(Ok)
     };
 
-    for event_res in all
-        .into_iter()
-        .chain(event_queue.map(|r| r.map(|e| e.user_data)))
-    {
-        match event_res.map_err(|e| anyhow!("event result is error: {:?}", e))? {
+    debug!("processing initial events");
+    for (i, event_res) in all.into_iter().enumerate() {
+        trace!("initial event {}", i);
+        let event = event_res?;
+        match event {
             EventSource::Network => smolnetd.on_network_scheme_event(),
             EventSource::Time => smolnetd.on_time_event(),
             EventSource::IpScheme => smolnetd.on_ip_scheme_event(),
@@ -180,6 +181,22 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
         }
         .map_err(|e| error!("Received packet error: {:?}", e));
     }
+    debug!("initial events processed, entering polling loop");
+
+    for event_res in event_queue.map(|r| r.map(|e| e.user_data)) {
+        let event = event_res?;
+        match event {
+            EventSource::Network => smolnetd.on_network_scheme_event(),
+            EventSource::Time => smolnetd.on_time_event(),
+            EventSource::IpScheme => smolnetd.on_ip_scheme_event(),
+            EventSource::UdpScheme => smolnetd.on_udp_scheme_event(),
+            EventSource::TcpScheme => smolnetd.on_tcp_scheme_event(),
+            EventSource::IcmpScheme => smolnetd.on_icmp_scheme_event(),
+            EventSource::NetcfgScheme => smolnetd.on_netcfg_scheme_event(),
+        }
+        .map_err(|e| error!("Received packet error: {:?}", e));
+    }
+    info!("event loop exited!");
     Ok(())
 }
 

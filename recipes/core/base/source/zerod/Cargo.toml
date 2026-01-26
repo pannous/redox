@@ -5,7 +5,7 @@ authors = ["Alex Lyon <arcterus@mail.com>"]
 edition = "2021"
 
 [dependencies]
-redox_syscall.workspace = true
-redox-scheme.workspace = true
+redox_syscall = "0.6"
+redox-scheme = "0.8.3"
 daemon = { path = "../daemon" }
-libredox.workspace = true
+libredox = "0.1.11"

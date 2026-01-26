@@ -135,6 +135,13 @@ pub struct FrameBuffer {
 impl FrameBuffer {
     pub unsafe fn new(phys: usize, width: usize, height: usize, stride: usize) -> Self {
         let size = stride * height;
+
+        // Use DeviceMemory on aarch64 since WriteCombining isn't implemented there
+        #[cfg(target_arch = "aarch64")]
+        let memory_type = common::MemoryType::DeviceMemory;
+        #[cfg(not(target_arch = "aarch64"))]
+        let memory_type = common::MemoryType::WriteCombining;
+
         let virt = common::physmap(
             phys,
             size * 4,
@@ -142,9 +149,11 @@ impl FrameBuffer {
                 read: true,
                 write: true,
             },
-            common::MemoryType::WriteCombining,
+            memory_type,
         )
         .expect("vesad: failed to map framebuffer") as *mut u32;
+
+        eprintln!("vesad: FrameBuffer phys={:#x} virt={:p} size={}", phys, virt, size);
 
         let onscreen = ptr::slice_from_raw_parts_mut(virt, size);
 
@@ -239,7 +248,7 @@ impl GraphicScreen {
         let h: usize = sync_rect.height.try_into().unwrap();
 
         let offscreen_ptr = self.ptr.as_ptr() as *mut u32;
-        let onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
+        let onscreen_ptr = framebuffer.onscreen as *mut u32;
 
         for row in start_y..start_y + h {
             unsafe {
@@ -249,6 +258,12 @@ impl GraphicScreen {
                     w,
                 );
             }
+        }
+
+        // aarch64: Ensure writes to device memory are visible to external devices
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            core::arch::asm!("dsb sy", options(nostack, preserves_flags));
         }
     }
 }

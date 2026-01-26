@@ -5,9 +5,8 @@ edition = "2018"
 
 [dependencies]
 fdt = "0.1.5"
-log.workspace = true
+log = "0.4"
 ron = "0.8.1"
-libredox = { version = "0.1.12", default-features = false, features = ["std", "call"] }
 
 amlserde = { path = "../amlserde" }
 common = { path = "../common" }

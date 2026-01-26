@@ -1,14 +1,20 @@
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use std::cell::Cell;
-use std::convert::TryFrom;
 use std::sync::Mutex;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use std::convert::TryFrom;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use common::io::{Io as _, Pio};
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use log::info;
+
 use pci_types::{ConfigRegionAccess, PciAddress};
 
 pub(crate) struct Pci {
+    #[allow(dead_code)]
     lock: Mutex<()>,
 }
 
@@ -19,6 +25,7 @@ impl Pci {
         }
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn set_iopl() {
         // The IO privilege level is per-thread, so we need to do the initialization on every thread.
         thread_local! {
@@ -38,6 +45,7 @@ impl Pci {
         });
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn address(address: PciAddress, offset: u8) -> u32 {
         assert_eq!(
             address.segment(),
@@ -85,12 +93,22 @@ impl ConfigRegionAccess for Pci {
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 impl ConfigRegionAccess for Pci {
     unsafe fn read(&self, addr: PciAddress, offset: u16) -> u32 {
-        let _guard = self.lock.lock().unwrap();
-        todo!("Pci::CfgAccess::read on this architecture")
+        // PCI 3.0 I/O port config access (0xCF8/0xCFC) is x86-specific.
+        // On ARM/aarch64, PCI config is ONLY available via memory-mapped ECAM.
+        // If we reach here, ECAM setup failed completely - this is a fatal error.
+        panic!(
+            "PCI config read at {:02x}:{:02x}.{} offset 0x{:03x}: \
+             No ECAM available. PCI 3.0 I/O ports don't exist on this architecture. \
+             Check ACPI MCFG, device tree, or hardcoded ECAM fallback.",
+            addr.bus(), addr.device(), addr.function(), offset
+        )
     }
 
     unsafe fn write(&self, addr: PciAddress, offset: u16, value: u32) {
-        let _guard = self.lock.lock().unwrap();
-        todo!("Pci::CfgAccess::write on this architecture")
+        panic!(
+            "PCI config write at {:02x}:{:02x}.{} offset 0x{:03x} value 0x{:08x}: \
+             No ECAM available. PCI 3.0 I/O ports don't exist on this architecture.",
+            addr.bus(), addr.device(), addr.function(), offset, value
+        )
     }
 }

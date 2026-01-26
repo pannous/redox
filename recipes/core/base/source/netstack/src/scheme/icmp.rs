@@ -40,8 +40,8 @@ impl<'a> SchemeSocket for IcmpSocket<'a> {
         self.can_send()
     }
 
-    fn can_recv(&mut self, _data: &Self::DataT) -> bool {
-        smoltcp::socket::icmp::Socket::can_recv(self)
+    fn can_recv(&self) -> bool {
+        self.can_recv()
     }
 
     fn may_recv(&self) -> bool {
@@ -171,9 +171,7 @@ impl<'a> SchemeSocket for IcmpSocket<'a> {
         file: &mut SocketFile<Self::DataT>,
         buf: &[u8],
     ) -> SyscallResult<usize> {
-        if !file.write_enabled {
-            return Err(SyscallError::new(syscall::EPIPE));
-        } else if self.can_send() {
+        if self.can_send() {
             match file.data.socket_type {
                 IcmpSocketType::Echo => {
                     if buf.len() < mem::size_of::<u16>() {
@@ -209,10 +207,7 @@ impl<'a> SchemeSocket for IcmpSocket<'a> {
         file: &mut SocketFile<Self::DataT>,
         buf: &mut [u8],
     ) -> SyscallResult<usize> {
-        if !file.read_enabled {
-            return Ok(0);
-        }
-        while self.can_recv(&file.data) {
+        while self.can_recv() {
             let (payload, _) = self.recv().expect("Can't recv icmp packet");
             let icmp_packet = Icmpv4Packet::new_unchecked(&payload);
             //TODO: replace default with actual caps
@@ -279,31 +274,5 @@ impl<'a> SchemeSocket for IcmpSocket<'a> {
         } else {
             Err(SyscallError::new(syscall::EBADF))
         }
-    }
-
-    fn handle_get_peer_name(
-        &self,
-        file: &SchemeFile<Self>,
-        buf: &mut [u8],
-    ) -> SyscallResult<usize> {
-        self.fpath(file, buf)
-    }
-
-    fn handle_shutdown(&mut self, file: &mut SchemeFile<Self>, how: usize) -> SyscallResult<usize> {
-        let socket_file = match file {
-            SchemeFile::Socket(ref mut file) => file,
-            _ => return Err(SyscallError::new(syscall::EBADF)),
-        };
-
-        match how {
-            0 => socket_file.read_enabled = false,  // SHUT_RD
-            1 => socket_file.write_enabled = false, // SHUT_WR
-            2 => {
-                socket_file.read_enabled = false;
-                socket_file.write_enabled = false;
-            } // SHUT_RDWR
-            _ => return Err(SyscallError::new(syscall::EINVAL)),
-        }
-        Ok(0)
     }
 }

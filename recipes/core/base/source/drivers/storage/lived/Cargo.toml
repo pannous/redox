@@ -9,8 +9,8 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-libredox.workspace = true
+libredox = "0.1.11"
 daemon = { path = "../../../daemon" }
-redox_syscall = { workspace = true, features = ["std"] }
-redox_event.workspace = true
+redox_syscall = { version = "0.6", features = ["std"] }
+redox_event = "0.4"
 driver-block = { path = "../driver-block" }

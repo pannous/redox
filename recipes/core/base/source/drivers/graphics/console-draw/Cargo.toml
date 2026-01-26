@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 drm = "0.14"
-orbclient.workspace = true
+orbclient = "0.3.27"
 ransid = "0.4"
 
 graphics-ipc = { path = "../graphics-ipc" }

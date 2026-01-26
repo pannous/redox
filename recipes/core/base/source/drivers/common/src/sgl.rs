@@ -16,10 +16,12 @@ use crate::VirtaddrTranslationHandle;
 pub struct Sgl {
     /// A raw pointer to the SGL in virtual memory
     virt: *mut u8,
-    /// The length of the allocated memory, guaranteed to be a multiple of [PAGE_SIZE].
+    /// The length of the allocated memory, guaranteed to be a multiple of alignment.
     aligned_length: usize,
-    /// The length of the allocated memory. This value is NOT guaranteed to be a multiple of [PAGE_SIZE]
+    /// The length of the allocated memory. This value is NOT guaranteed to be a multiple of alignment
     unaligned_length: NonZeroUsize,
+    /// The alignment used for this SGL (PAGE_SIZE or larger, e.g., 16KB for Venus)
+    alignment: usize,
     /// The vector of chunks tracked by this [Sgl] object. This is the sparsely-populated vector in the SGL algorithm.
     chunks: Vec<Chunk>,
 }
@@ -38,17 +40,32 @@ pub struct Chunk {
 }
 
 impl Sgl {
-    /// Constructor for the scatter/gather list.
+    /// Constructor for the scatter/gather list with default PAGE_SIZE alignment.
     ///
     /// # Arguments
     ///
     /// 'unaligned_length: [usize]' - The length of the SGL, not necessarily aligned to the nearest
     /// page.
     pub fn new(unaligned_length: usize) -> Result<Self> {
+        Self::new_aligned(unaligned_length, PAGE_SIZE)
+    }
+
+    /// Constructor for the scatter/gather list with custom alignment.
+    ///
+    /// # Arguments
+    ///
+    /// * `unaligned_length` - The length of the SGL, not necessarily aligned
+    /// * `alignment` - The alignment to use (must be a power of 2 and >= PAGE_SIZE)
+    ///
+    /// This is useful for Venus/Vulkan blobs which require 16KB alignment on some hosts.
+    pub fn new_aligned(unaligned_length: usize, alignment: usize) -> Result<Self> {
         let unaligned_length = NonZeroUsize::new(unaligned_length).ok_or(Error::new(EINVAL))?;
 
-        // TODO: Both PAGE_SIZE and MAX_ALLOC_SIZE should be dynamic.
-        let aligned_length = unaligned_length.get().next_multiple_of(PAGE_SIZE);
+        // Ensure alignment is at least PAGE_SIZE and a power of 2
+        let alignment = alignment.max(PAGE_SIZE);
+        debug_assert!(alignment.is_power_of_two(), "alignment must be power of 2");
+
+        let aligned_length = unaligned_length.get().next_multiple_of(alignment);
         const MAX_ALLOC_SIZE: usize = 1 << 22;
 
         unsafe {
@@ -67,6 +84,7 @@ impl Sgl {
                 virt,
                 aligned_length,
                 unaligned_length,
+                alignment,
                 chunks: Vec::new(),
             };
 
@@ -118,6 +136,11 @@ impl Sgl {
     /// Returns the length of the scatter-gather list.
     pub fn len(&self) -> usize {
         self.unaligned_length.get()
+    }
+
+    /// Returns the alignment used for this SGL.
+    pub fn alignment(&self) -> usize {
+        self.alignment
     }
 }
 

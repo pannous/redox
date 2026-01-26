@@ -4,7 +4,7 @@ use crate::link::{loopback::LoopbackDevice, DeviceList};
 use crate::router::route_table::{RouteTable, Rule};
 use crate::router::Router;
 use crate::scheme::smoltcp::iface::SocketSet as SmoltcpSocketSet;
-use crate::scheme::socket::{Handle, SchemeSocket, SocketScheme};
+use crate::scheme::socket::{SchemeSocket, SocketScheme};
 use libredox::flag;
 use libredox::Fd;
 use redox_scheme::{
@@ -47,7 +47,8 @@ mod udp;
 type SocketSet = SmoltcpSocketSet<'static>;
 type Interface = Rc<RefCell<SmoltcpInterface>>;
 
-const MAX_DURATION: Duration = Duration::from_micros(u64::MAX);
+// Use 100ms max poll interval to ensure timely processing of ping/TCP retransmissions
+const MAX_DURATION: Duration = Duration::from_millis(100);
 const MIN_DURATION: Duration = Duration::from_micros(0);
 
 fn getcfg(key: &str) -> Result<String> {
@@ -55,6 +56,18 @@ fn getcfg(key: &str) -> Result<String> {
     let mut file = File::open(format!("/etc/net/{key}"))?;
     file.read_to_string(&mut value)?;
     Ok(value.trim().to_string())
+}
+
+fn subnet_to_prefix(subnet: &str) -> u8 {
+    let octets: Vec<u8> = subnet.split('.').filter_map(|s| s.parse().ok()).collect();
+    if octets.len() != 4 {
+        return 24;
+    }
+    let mask: u32 = ((octets[0] as u32) << 24)
+        | ((octets[1] as u32) << 16)
+        | ((octets[2] as u32) << 8)
+        | (octets[3] as u32);
+    mask.count_ones() as u8
 }
 
 pub struct Smolnetd {
@@ -87,7 +100,7 @@ impl Smolnetd {
         icmp_file: Socket,
         time_file: Fd,
         netcfg_file: Socket,
-    ) -> Result<Smolnetd> {
+    ) -> Smolnetd {
         let protocol_addrs = vec![
             //This is a placeholder IP for DHCP
             IpCidr::new(IpAddress::v4(0, 0, 0, 0), 8),
@@ -127,51 +140,77 @@ impl Smolnetd {
             File::from_raw_fd(network_file.into_raw() as RawFd)
         });
         eth0.set_mac_address(hardware_addr);
+        let eth0_name = Rc::clone(eth0.name());
 
         devices.borrow_mut().push(loopback);
         devices.borrow_mut().push(eth0);
 
-        Ok(Smolnetd {
+        // Configure eth0 IP address from /etc/net/ip and /etc/net/ip_subnet
+        if let (Ok(ip_str), Ok(subnet_str)) = (getcfg("ip"), getcfg("ip_subnet")) {
+            if let Ok(ip) = Ipv4Address::from_str(&ip_str) {
+                if !ip.is_unspecified() {
+                    let prefix = subnet_to_prefix(&subnet_str);
+                    let cidr = IpCidr::new(IpAddress::Ipv4(ip), prefix);
+
+                    // Set IP on eth0 device
+                    if let Some(eth0_dev) = devices.borrow_mut().get_mut("eth0") {
+                        eth0_dev.set_ip_address(cidr);
+                    }
+
+                    // Add IP to interface (insert at 0 for UDP source selection)
+                    iface.borrow_mut().update_ip_addrs(|addrs| {
+                        let _ = addrs.insert(0, cidr);
+                    });
+
+                    // Add route for local network
+                    let network_cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(ip, prefix).network());
+                    route_table.borrow_mut().insert_rule(Rule::new(
+                        network_cidr,
+                        None,
+                        eth0_name,
+                        cidr.address(),
+                    ));
+                }
+            }
+        }
+
+        Smolnetd {
             iface: Rc::clone(&iface),
             router_device: network_device,
             socket_set: Rc::clone(&socket_set),
             timer: ::std::time::Instant::now(),
             time_file: unsafe { File::from_raw_fd(time_file.into_raw() as RawFd) },
             ip_scheme: IpScheme::new(
-                "ip",
                 Rc::clone(&iface),
                 Rc::clone(&route_table),
                 Rc::clone(&socket_set),
                 ip_file,
-            )?,
+            ),
             udp_scheme: UdpScheme::new(
-                "udp",
                 Rc::clone(&iface),
                 Rc::clone(&route_table),
                 Rc::clone(&socket_set),
                 udp_file,
-            )?,
+            ),
             tcp_scheme: TcpScheme::new(
-                "tcp",
                 Rc::clone(&iface),
                 Rc::clone(&route_table),
                 Rc::clone(&socket_set),
                 tcp_file,
-            )?,
+            ),
             icmp_scheme: IcmpScheme::new(
-                "icmp",
                 Rc::clone(&iface),
                 Rc::clone(&route_table),
                 Rc::clone(&socket_set),
                 icmp_file,
-            )?,
+            ),
             netcfg_scheme: NetCfgScheme::new(
                 Rc::clone(&iface),
                 netcfg_file,
                 Rc::clone(&route_table),
                 Rc::clone(&devices),
-            )?,
-        })
+            ),
+        }
     }
 
     pub fn on_network_scheme_event(&mut self) -> Result<()> {
@@ -204,7 +243,9 @@ impl Smolnetd {
     }
 
     pub fn on_time_event(&mut self) -> Result<()> {
+        trace!("TIME EVENT received");
         let timeout = self.poll()?;
+        trace!("scheduling next time event in {:?}", timeout);
         self.schedule_time_event(timeout)?;
         //TODO: Fix network scheme to ensure events are not missed
         self.on_network_scheme_event()
@@ -323,19 +364,15 @@ where
     SocketT: SchemeSocket + AnySocket<'static>,
 {
     pub fn new(
-        name: &str,
         iface: Interface,
         route_table: Rc<RefCell<RouteTable>>,
         socket_set: Rc<RefCell<SocketSet>>,
         scheme_file: Socket,
-    ) -> Result<Self> {
-        Ok(Self {
-            scheme: SocketScheme::<SocketT>::new(name, iface, route_table, socket_set, scheme_file)
-                .map_err(|e| {
-                    Error::from_syscall_error(e, &format!("failed to initialize {} scheme", name))
-                })?,
+    ) -> Self {
+        Self {
+            scheme: SocketScheme::<SocketT>::new(iface, route_table, socket_set, scheme_file),
             wait_queue: Vec::new(),
-        })
+        }
     }
     pub fn on_scheme_event(&mut self) -> Result<Option<()>> {
         let result = loop {
@@ -450,10 +487,7 @@ where
         // Notify non-blocking sockets
         let scheme = &mut self.scheme;
 
-        for (&fd, handle) in &mut scheme.handles {
-            let Handle::File(file) = handle else {
-                continue;
-            };
+        for (&fd, ref mut file) in &mut scheme.files {
             let events = {
                 let mut socket_set = scheme.socket_set.borrow_mut();
                 file.events(&mut socket_set)

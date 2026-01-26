@@ -69,12 +69,12 @@ pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32) {
 }
 
 pub fn enable(relative: bool) -> bool {
-    trace!("Enable vmmouse");
+    trace!("ps2d: Enable vmmouse");
 
     unsafe {
         let (eax, ebx, _, _) = cmd(GETVERSION, 0);
         if ebx != MAGIC || eax == 0xFFFFFFFF {
-            info!("No vmmouse support");
+            info!("ps2d: No vmmouse support");
             return false;
         }
 
@@ -82,14 +82,14 @@ pub fn enable(relative: bool) -> bool {
 
         let (status, _, _, _) = cmd(ABSPOINTER_STATUS, 0);
         if (status & 0x0000ffff) == 0 {
-            info!("No vmmouse");
+            info!("ps2d: No vmmouse");
             return false;
         }
 
         let (version, _, _, _) = cmd(ABSPOINTER_DATA, 1);
         if version != VERSION {
             error!(
-                "Invalid vmmouse version: {} instead of {}",
+                "ps2d: Invalid vmmouse version: {} instead of {}",
                 version, VERSION
             );
             let _ = cmd(ABSPOINTER_COMMAND, CMD_DISABLE);

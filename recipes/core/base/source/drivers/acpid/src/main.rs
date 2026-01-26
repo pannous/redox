@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 use std::convert::TryFrom;
 use std::fs::File;
 use std::mem;
@@ -6,10 +8,7 @@ use std::sync::Arc;
 
 use ::acpi::aml::op_region::{RegionHandler, RegionSpace};
 use event::{EventFlags, RawEventQueue};
-use redox_scheme::{
-    scheme::{register_sync_scheme, SchemeSync},
-    RequestKind, Response, SignalBehavior, Socket,
-};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::{EAGAIN, EWOULDBLOCK};
 
 mod acpi;
@@ -27,8 +26,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         common::output_level(),
         common::file_level(),
     );
-
-    log::info!("acpid start");
 
     let rxsdt_raw_data: Arc<[u8]> = std::fs::read("/scheme/kernel.acpi/rxsdt")
         .expect("acpid: failed to read `/scheme/kernel.acpi/rxsdt`")
@@ -83,9 +80,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         .expect("acpid: failed to open `/scheme/kernel.acpi/kstop`");
 
     let mut event_queue = RawEventQueue::new().expect("acpid: failed to create event queue");
-    let socket = Socket::nonblock().expect("acpid: failed to create disk scheme");
+    let socket = Socket::nonblock("acpi").expect("acpid: failed to create disk scheme");
 
-    let mut scheme = self::scheme::AcpiScheme::new(&acpi_context, &socket);
+    daemon.ready();
+
+    //TODO: needs to open /scheme/pci/access later! libredox::call::setrens(0, 0).expect("acpid: failed to enter null namespace");
 
     event_queue
         .subscribe(shutdown_pipe.as_raw_fd() as usize, 0, EventFlags::READ)
@@ -94,12 +93,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         .subscribe(socket.inner().raw(), 1, EventFlags::READ)
         .expect("acpid: failed to register scheme socket for event queue");
 
-    register_sync_scheme(&socket, "acpi", &mut scheme)
-        .expect("acpid: failed to register acpi scheme to namespace");
-
-    daemon.ready();
-
-    libredox::call::setrens(0, 0).expect("acpid: failed to enter null namespace");
+    let mut scheme = self::scheme::AcpiScheme::new(&acpi_context);
 
     let mut mounted = true;
     while mounted {
@@ -127,6 +121,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                         }
                     }
                 };
+
                 match req.kind() {
                     RequestKind::Call(call) => {
                         let response = call.handle_sync(&mut scheme);
@@ -136,15 +131,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                     }
                     RequestKind::OnClose { id } => {
                         scheme.on_close(id);
-                    }
-                    RequestKind::SendFd(sendfd_request) => {
-                        let result = scheme.on_sendfd(&sendfd_request);
-                        socket
-                            .write_response(
-                                Response::new(result, sendfd_request),
-                                SignalBehavior::Restart,
-                            )
-                            .expect("acpid: failed to write response");
                     }
                     _ => (),
                 }
@@ -167,6 +153,5 @@ fn daemon(daemon: daemon::Daemon) -> ! {
 }
 
 fn main() {
-    common::init();
     daemon::Daemon::new(daemon);
 }

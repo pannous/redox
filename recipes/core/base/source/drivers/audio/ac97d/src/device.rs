@@ -22,7 +22,6 @@ const SUB_BUFF_SIZE: usize = 2048;
 
 enum Handle {
     Todo,
-    SchemeRoot,
 }
 
 #[allow(dead_code)]
@@ -263,26 +262,7 @@ impl Ac97 {
 }
 
 impl SchemeSync for Ac97 {
-    fn scheme_root(&mut self) -> Result<usize> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.lock().insert(id, Handle::SchemeRoot);
-        Ok(id)
-    }
-    fn openat(
-        &mut self,
-        dirfd: usize,
-        _path: &str,
-        _flags: usize,
-        _fcntl_flags: u32,
-        ctx: &CallerCtx,
-    ) -> Result<OpenResult> {
-        {
-            let mut handles = self.handles.lock();
-            let handle = handles.get(&dirfd).ok_or(Error::new(EBADF))?;
-            if !matches!(handle, Handle::SchemeRoot) {
-                return Err(Error::new(EACCES));
-            }
-        }
+    fn open(&mut self, _path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         if ctx.uid == 0 {
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
             self.handles.lock().insert(id, Handle::Todo);
@@ -305,10 +285,7 @@ impl SchemeSync for Ac97 {
     ) -> Result<usize> {
         {
             let mut handles = self.handles.lock();
-            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-            if !matches!(handle, Handle::Todo) {
-                return Err(Error::new(EBADF));
-            }
+            let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
         }
 
         if buf.len() != SUB_BUFF_SIZE {
@@ -333,13 +310,8 @@ impl SchemeSync for Ac97 {
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
-        {
-            let mut handles = self.handles.lock();
-            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-            if !matches!(handle, Handle::Todo) {
-                return Err(Error::new(EBADF));
-            }
-        }
+        let mut handles = self.handles.lock();
+        let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
         let scheme_path = b"/scheme/audiohw";

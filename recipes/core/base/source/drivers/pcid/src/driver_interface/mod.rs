@@ -43,8 +43,9 @@ impl LegacyInterruptLine {
                     "unexpected number of IRQ description cells for phandle {phandle}: {cells}"
                 ),
             };
-            File::create(path)
-                .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
+            // Try to open existing IRQ file first, then create if it doesn't exist
+            File::open(&path).or_else(|_| File::create(&path))
+                .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file {path}: {err}"))
         } else {
             File::open(format!("/scheme/irq/{}", self.irq))
                 .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
@@ -486,7 +487,6 @@ impl PciFunctionHandle {
 
 pub fn pci_daemon<F: FnOnce(Daemon, PciFunctionHandle) -> !>(f: F) -> ! {
     Daemon::new(|daemon| {
-        common::init();
         let pcid_handle = PciFunctionHandle::connect_default();
         f(daemon, pcid_handle)
     })

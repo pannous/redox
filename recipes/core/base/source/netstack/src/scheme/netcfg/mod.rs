@@ -3,8 +3,7 @@ mod nodes;
 mod notifier;
 
 use redox_scheme::{
-    scheme::register_scheme_inner, scheme::SchemeSync, CallerCtx, OpenResult, RequestKind,
-    Response, SignalBehavior, Socket,
+    scheme::SchemeSync, CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket,
 };
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address};
 use std::cell::RefCell;
@@ -244,7 +243,11 @@ fn mk_root_node(
                                     // ip address when sending UDP packets.
                                     // This behavior will have to be fixed as it's our route table
                                     // job to find give this source.
-                                    iface.borrow_mut().update_ip_addrs(|addrs| addrs.insert(0, cidr).unwrap());
+                                    iface.borrow_mut().update_ip_addrs(|addrs| {
+                                        // First remove if it already exists to avoid duplicate error
+                                        addrs.retain(|addr| *addr != cidr);
+                                        let _ = addrs.insert(0, cidr);
+                                    });
 
                                     let IpCidr::Ipv4(v4_cidr) = cidr;
                                     let network_cidr = IpCidr::Ipv4(v4_cidr.network());
@@ -325,15 +328,10 @@ impl NetCfgFile {
     }
 }
 
-enum Handle {
-    SchemeRoot,
-    File(NetCfgFile),
-}
-
 pub struct NetCfgScheme {
     scheme_file: Socket,
     next_fd: usize,
-    handles: BTreeMap<usize, Handle>,
+    files: BTreeMap<usize, NetCfgFile>,
     root_node: CfgNodeRef,
     notifier: NotifierRef,
 }
@@ -344,15 +342,15 @@ impl NetCfgScheme {
         scheme_file: Socket,
         route_table: Rc<RefCell<RouteTable>>,
         devices: Rc<RefCell<DeviceList>>,
-    ) -> Result<NetCfgScheme> {
+    ) -> NetCfgScheme {
         let notifier = Notifier::new_ref();
         let dns_config = Rc::new(RefCell::new(DNSConfig {
             name_server: Ipv4Address::new(8, 8, 8, 8),
         }));
-        let mut scheme = NetCfgScheme {
+        NetCfgScheme {
             scheme_file,
             next_fd: 1,
-            handles: BTreeMap::new(),
+            files: BTreeMap::new(),
             root_node: mk_root_node(
                 iface,
                 Rc::clone(&notifier),
@@ -361,14 +359,7 @@ impl NetCfgScheme {
                 devices,
             ),
             notifier,
-        };
-        let cap_id = scheme
-            .scheme_root()
-            .map_err(|e| Error::from_syscall_error(e, "failed to get scheme root id"))?;
-        register_scheme_inner(&scheme.scheme_file, "netcfg", cap_id).map_err(|e| {
-            Error::from_syscall_error(e, "failed to register netcfg scheme to namespace")
-        })?;
-        Ok(scheme)
+        }
     }
 
     pub fn on_scheme_event(&mut self) -> Result<Option<()>> {
@@ -431,32 +422,7 @@ impl NetCfgScheme {
 }
 
 impl SchemeSync for NetCfgScheme {
-    fn scheme_root(&mut self) -> SyscallResult<usize> {
-        let id = self.next_fd;
-        self.next_fd += 1;
-        self.handles.insert(id, Handle::SchemeRoot);
-        Ok(id)
-    }
-
-    fn openat(
-        &mut self,
-        dirfd: usize,
-        path: &str,
-        _flags: usize,
-        _fcntl_flags: u32,
-        ctx: &CallerCtx,
-    ) -> SyscallResult<OpenResult> {
-        {
-            let handle = self
-                .handles
-                .get(&dirfd)
-                .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
-
-            if !matches!(handle, Handle::SchemeRoot) {
-                return Err(SyscallError::new(syscall::EACCES));
-            }
-        }
-
+    fn open(&mut self, path: &str, _flags: usize, ctx: &CallerCtx) -> SyscallResult<OpenResult> {
         let mut current_node = Rc::clone(&self.root_node);
         for part in path.split('/') {
             if part.is_empty() {
@@ -473,9 +439,9 @@ impl SchemeSync for NetCfgScheme {
         let fd = self.next_fd;
         trace!("open {} {}", fd, path);
         self.next_fd += 1;
-        self.handles.insert(
+        self.files.insert(
             fd,
-            Handle::File(NetCfgFile {
+            NetCfgFile {
                 path: path.to_owned(),
                 is_dir: current_node.is_dir(),
                 is_writable: current_node.is_writable(),
@@ -490,7 +456,7 @@ impl SchemeSync for NetCfgScheme {
                 read_buf,
                 write_buf: vec![],
                 done: false,
-            }),
+            },
         );
         Ok(OpenResult::ThisScheme {
             number: fd,
@@ -500,17 +466,10 @@ impl SchemeSync for NetCfgScheme {
 
     fn on_close(&mut self, fd: usize) {
         trace!("close {}", fd);
-        if let Some(handle) = self.handles.remove(&fd) {
-            match handle {
-                Handle::SchemeRoot => {
-                    // SchemeRoot closed, nothing specific to clean up
-                }
-                Handle::File(mut file) => {
-                    self.notifier.borrow_mut().unsubscribe(&file.path, fd);
-                    if !file.done {
-                        let _ = file.commit().map(|_| 0);
-                    }
-                }
+        if let Some(mut file) = self.files.remove(&fd) {
+            self.notifier.borrow_mut().unsubscribe(&file.path, fd);
+            if !file.done {
+                let _ = file.commit().map(|_| 0);
             }
         }
     }
@@ -523,15 +482,10 @@ impl SchemeSync for NetCfgScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> SyscallResult<usize> {
-        let handle = self
-            .handles
+        let file = self
+            .files
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
-
-        let file = match handle {
-            Handle::File(file) => file,
-            Handle::SchemeRoot => return Err(SyscallError::new(syscall::EBADF)),
-        };
 
         if file.done {
             return Err(SyscallError::new(syscall::EBADF));
@@ -564,15 +518,10 @@ impl SchemeSync for NetCfgScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> SyscallResult<usize> {
-        let handle = self
-            .handles
+        let file = self
+            .files
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
-
-        let file = match handle {
-            Handle::File(file) => file,
-            Handle::SchemeRoot => return Err(SyscallError::new(syscall::EBADF)),
-        };
 
         let mut i = 0;
         while i < buf.len() && file.pos < file.read_buf.len() {
@@ -584,26 +533,21 @@ impl SchemeSync for NetCfgScheme {
     }
 
     fn fstat(&mut self, fd: usize, stat: &mut Stat, _ctx: &CallerCtx) -> SyscallResult<()> {
-        let handle = self
-            .handles
+        let file = self
+            .files
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
 
-        match handle {
-            Handle::SchemeRoot => return Err(SyscallError::new(syscall::EBADF)),
-            Handle::File(file) => {
-                stat.st_mode = if file.is_dir { MODE_DIR } else { MODE_FILE };
-                if file.is_writable {
-                    stat.st_mode |= 0o222;
-                }
-                if file.is_readable {
-                    stat.st_mode |= 0o444;
-                }
-                stat.st_uid = 0;
-                stat.st_gid = 0;
-                stat.st_size = file.read_buf.len() as u64;
-            }
+        stat.st_mode = if file.is_dir { MODE_DIR } else { MODE_FILE };
+        if file.is_writable {
+            stat.st_mode |= 0o222;
         }
+        if file.is_readable {
+            stat.st_mode |= 0o444;
+        }
+        stat.st_uid = 0;
+        stat.st_gid = 0;
+        stat.st_size = file.read_buf.len() as u64;
 
         Ok(())
     }
@@ -614,34 +558,23 @@ impl SchemeSync for NetCfgScheme {
         events: SyscallEventFlags,
         _ctx: &CallerCtx,
     ) -> SyscallResult<SyscallEventFlags> {
-        let handle = self
-            .handles
+        let file = self
+            .files
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
-
-        match handle {
-            Handle::SchemeRoot => return Err(SyscallError::new(syscall::EBADF)),
-            Handle::File(file) => {
-                if events.contains(syscall::EVENT_READ) {
-                    self.notifier.borrow_mut().subscribe(&file.path, fd);
-                } else {
-                    self.notifier.borrow_mut().unsubscribe(&file.path, fd);
-                }
-            }
+        if events.contains(syscall::EVENT_READ) {
+            self.notifier.borrow_mut().subscribe(&file.path, fd);
+        } else {
+            self.notifier.borrow_mut().unsubscribe(&file.path, fd);
         }
         Ok(SyscallEventFlags::empty())
     }
 
     fn fsync(&mut self, fd: usize, _ctx: &CallerCtx) -> SyscallResult<()> {
-        let handle = self
-            .handles
+        let file = self
+            .files
             .get_mut(&fd)
             .ok_or_else(|| SyscallError::new(syscall::EBADF))?;
-
-        let file = match handle {
-            Handle::File(file) => file,
-            Handle::SchemeRoot => return Err(SyscallError::new(syscall::EBADF)),
-        };
 
         if !file.done {
             let res = file.commit();

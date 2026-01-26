@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(internal_features)]
-#![feature(core_intrinsics, str_from_raw_parts, never_type)]
+#![allow(unsafe_op_in_unsafe_fn)]
+#![feature(core_intrinsics, str_from_raw_parts)]
 
 #[cfg(target_arch = "aarch64")]
 #[path = "aarch64.rs"]
@@ -20,17 +21,34 @@ pub mod arch;
 
 pub mod exec;
 pub mod initfs;
-pub mod initnsmgr;
 pub mod procmgr;
 pub mod start;
+
+/// Compatibility module for syscall functions removed in redox_syscall 0.7.0
+pub mod compat {
+    use syscall::error::Result;
+    use redox_rt::proc::FdGuard;
+
+    /// SYS_OPEN was removed in 0.7.0 but kernel still supports it
+    const SYS_OPEN: usize = 0x1000_0000 | 0x0010_0000 | 5;
+
+    /// Open a file at an absolute path (legacy syscall)
+    pub fn open<T: AsRef<str>>(path: T, flags: usize) -> Result<usize> {
+        let path = path.as_ref();
+        unsafe { syscall::syscall3(SYS_OPEN, path.as_ptr() as usize, path.len(), flags) }
+    }
+
+    /// Open a file and wrap in FdGuard (using legacy syscall)
+    pub fn open_fd<T: AsRef<str>>(path: T, flags: usize) -> Result<FdGuard> {
+        open(path, flags).map(FdGuard::new)
+    }
+}
 
 extern crate alloc;
 
 use core::cell::UnsafeCell;
 
-use alloc::collections::btree_map::BTreeMap;
 use syscall::data::Map;
-use syscall::data::{GlobalSchemes, KernelSchemeInfo};
 use syscall::flag::MapFlags;
 
 #[panic_handler]
@@ -74,25 +92,23 @@ const HEAP_INCREASE_BY: usize = SIZE;
 
 unsafe impl alloc::alloc::GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        let state = unsafe { &mut (*ALLOC_STATE.0.get()) };
+        let state = &mut (*ALLOC_STATE.0.get());
         let heap = state.heap.get_or_insert_with(|| {
             state.heap_top = HEAP_OFF + SIZE;
-            let _ = unsafe {
-                syscall::fmap(
-                    !0,
-                    &Map {
-                        offset: 0,
-                        size: SIZE,
-                        address: HEAP_OFF,
-                        flags: MapFlags::PROT_WRITE
-                            | MapFlags::PROT_READ
-                            | MapFlags::MAP_PRIVATE
-                            | MapFlags::MAP_FIXED_NOREPLACE,
-                    },
-                )
-            }
+            let _ = syscall::fmap(
+                !0,
+                &Map {
+                    offset: 0,
+                    size: SIZE,
+                    address: HEAP_OFF,
+                    flags: MapFlags::PROT_WRITE
+                        | MapFlags::PROT_READ
+                        | MapFlags::MAP_PRIVATE
+                        | MapFlags::MAP_FIXED_NOREPLACE,
+                },
+            )
             .expect("failed to map initial heap");
-            unsafe { linked_list_allocator::Heap::new(HEAP_OFF as *mut u8, SIZE) }
+            linked_list_allocator::Heap::new(HEAP_OFF as *mut u8, SIZE)
         });
 
         match heap.allocate_first_fit(layout) {
@@ -102,51 +118,31 @@ unsafe impl alloc::alloc::GlobalAlloc for Allocator {
                     return core::ptr::null_mut();
                 }
 
-                let _ = unsafe {
-                    syscall::fmap(
-                        !0,
-                        &Map {
-                            offset: 0,
-                            size: HEAP_INCREASE_BY,
-                            address: state.heap_top,
-                            flags: MapFlags::PROT_WRITE
-                                | MapFlags::PROT_READ
-                                | MapFlags::MAP_PRIVATE
-                                | MapFlags::MAP_FIXED_NOREPLACE,
-                        },
-                    )
-                }
+                let _ = syscall::fmap(
+                    !0,
+                    &Map {
+                        offset: 0,
+                        size: HEAP_INCREASE_BY,
+                        address: state.heap_top,
+                        flags: MapFlags::PROT_WRITE
+                            | MapFlags::PROT_READ
+                            | MapFlags::MAP_PRIVATE
+                            | MapFlags::MAP_FIXED_NOREPLACE,
+                    },
+                )
                 .expect("failed to extend heap");
-                unsafe { heap.extend(HEAP_INCREASE_BY) };
+                heap.extend(HEAP_INCREASE_BY);
                 state.heap_top += HEAP_INCREASE_BY;
 
-                return unsafe { self.alloc(layout) };
+                return self.alloc(layout);
             }
         }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        unsafe {
-            (&mut *ALLOC_STATE.0.get())
-                .heap
-                .as_mut()
-                .unwrap()
-                .deallocate(core::ptr::NonNull::new(ptr).unwrap(), layout)
-        }
-    }
-}
-
-pub struct KernelSchemeMap(BTreeMap<GlobalSchemes, usize>);
-impl KernelSchemeMap {
-    fn new(kernel_scheme_infos: &[KernelSchemeInfo]) -> Self {
-        let mut map = BTreeMap::new();
-        for info in kernel_scheme_infos {
-            if let Some(scheme_id) = GlobalSchemes::try_from_raw(info.scheme_id) {
-                map.insert(scheme_id, info.fd);
-            }
-        }
-        Self(map)
-    }
-    fn get(&self, scheme: GlobalSchemes) -> Option<&usize> {
-        self.0.get(&scheme)
+        (&mut *ALLOC_STATE.0.get())
+            .heap
+            .as_mut()
+            .unwrap()
+            .deallocate(core::ptr::NonNull::new(ptr).unwrap(), layout)
     }
 }

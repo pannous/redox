@@ -10,9 +10,6 @@ use super::socket::{Context, DupResult, SchemeFile, SchemeSocket, SocketFile};
 use super::{parse_endpoint, SchemeWrapper, SocketSet};
 use crate::port_set::PortSet;
 
-const SO_SNDBUF: usize = 7;
-const SO_RCVBUF: usize = 8;
-
 pub type TcpScheme = SchemeWrapper<TcpSocket<'static>>;
 
 impl<'a> SchemeSocket for TcpSocket<'a> {
@@ -28,8 +25,8 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
         self.can_send()
     }
 
-    fn can_recv(&mut self, _data: &Self::DataT) -> bool {
-        smoltcp::socket::tcp::Socket::can_recv(self)
+    fn can_recv(&self) -> bool {
+        self.can_recv()
     }
 
     fn may_recv(&self) -> bool {
@@ -82,7 +79,6 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
         let tx_buffer = TcpSocketBuffer::new(tx_packets);
         let socket = TcpSocket::new(rx_buffer, tx_buffer);
 
-        // TODO: claim port with ethernet ip address
         if local_endpoint.port == 0 {
             local_endpoint.port = port_set
                 .get_port()
@@ -99,7 +95,6 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
             let local_endpoint_addr = match local_endpoint.addr {
                 Some(addr) if !addr.is_unspecified() => Some(addr),
                 _ => {
-                    // local ip is 0.0.0.0, resolve it
                     let route_table = context.route_table.borrow();
                     let addr = route_table
                         .lookup_src_addr(&remote_endpoint.addr.expect("Checked in is_specified"));
@@ -156,9 +151,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
         file: &mut SocketFile<Self::DataT>,
         buf: &[u8],
     ) -> SyscallResult<usize> {
-        if !file.write_enabled {
-            return Err(SyscallError::new(syscall::EPIPE));
-        } else if !self.is_active() {
+        if !self.is_active() {
             Err(SyscallError::new(syscall::ENOTCONN))
         } else if self.can_send() {
             self.send_slice(buf).expect("Can't send slice");
@@ -175,11 +168,9 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
         file: &mut SocketFile<Self::DataT>,
         buf: &mut [u8],
     ) -> SyscallResult<usize> {
-        if !file.read_enabled {
-            Ok(0)
-        } else if !self.is_active() {
+        if !self.is_active() {
             Err(SyscallError::new(syscall::ENOTCONN))
-        } else if self.can_recv(&file.data) {
+        } else if self.can_recv() {
             let length = self.recv_slice(buf).expect("Can't receive slice");
             Ok(length)
         } else if !self.may_recv() {
@@ -273,7 +264,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
 
     fn fpath(&self, file: &SchemeFile<Self>, buf: &mut [u8]) -> SyscallResult<usize> {
         let unspecified = "0.0.0.0:0";
-        let mut path = String::from("/scheme/tcp/");
+        let mut path = String::from("tcp:");
         match self.remote_endpoint() {
             Some(endpoint) => write!(&mut path, "{}", endpoint).unwrap(),
             None => path.push_str(unspecified),
@@ -306,68 +297,5 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
         }
 
         Ok(i)
-    }
-
-    fn handle_get_peer_name(
-        &self,
-        file: &SchemeFile<Self>,
-        buf: &mut [u8],
-    ) -> SyscallResult<usize> {
-        self.fpath(file, buf)
-    }
-
-    fn handle_shutdown(&mut self, file: &mut SchemeFile<Self>, how: usize) -> SyscallResult<usize> {
-        let socket_file = match file {
-            SchemeFile::Socket(ref mut file) => file,
-            _ => return Err(SyscallError::new(syscall::EBADF)),
-        };
-
-        match how {
-            0 => socket_file.read_enabled = false, // SHUT_RD
-            1 => {
-                socket_file.write_enabled = false;
-                self.close();
-            } // SHUT_WR
-            2 => {
-                socket_file.read_enabled = false;
-                socket_file.write_enabled = false;
-                self.close();
-            } // SHUT_RDWR
-            _ => return Err(SyscallError::new(syscall::EINVAL)),
-        }
-        Ok(0)
-    }
-
-    fn get_sock_opt(
-        &self,
-        _file: &SchemeFile<Self>,
-        name: usize,
-        buf: &mut [u8],
-    ) -> SyscallResult<usize> {
-        match name {
-            SO_RCVBUF => {
-                let val = self.recv_capacity() as i32;
-                let bytes = val.to_ne_bytes();
-
-                if buf.len() < bytes.len() {
-                    return Err(SyscallError::new(syscall::EINVAL));
-                }
-
-                buf[0..bytes.len()].copy_from_slice(&bytes);
-                Ok(bytes.len())
-            }
-            SO_SNDBUF => {
-                let val = self.send_capacity() as i32;
-                let bytes = val.to_ne_bytes();
-
-                if buf.len() < bytes.len() {
-                    return Err(SyscallError::new(syscall::EINVAL));
-                }
-
-                buf[0..bytes.len()].copy_from_slice(&bytes);
-                Ok(bytes.len())
-            }
-            _ => Err(SyscallError::new(syscall::ENOPROTOOPT)),
-        }
     }
 }

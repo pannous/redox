@@ -1,5 +1,3 @@
-#![feature(slice_as_array)]
-
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_char;
 use std::fmt::Debug;
@@ -11,20 +9,20 @@ use std::sync::Arc;
 
 use drm_sys::{
     drm_mode_modeinfo, drm_mode_property_enum, DRM_MODE_DPMS_OFF, DRM_MODE_DPMS_ON,
-    DRM_MODE_DPMS_STANDBY, DRM_MODE_DPMS_SUSPEND, DRM_MODE_PROP_ATOMIC, DRM_MODE_PROP_BITMASK,
-    DRM_MODE_PROP_BLOB, DRM_MODE_PROP_ENUM, DRM_MODE_PROP_IMMUTABLE, DRM_MODE_PROP_OBJECT,
-    DRM_MODE_PROP_RANGE, DRM_MODE_PROP_SIGNED_RANGE, DRM_PROP_NAME_LEN,
+    DRM_MODE_DPMS_STANDBY, DRM_MODE_DPMS_SUSPEND, DRM_MODE_FLAG_INTERLACE, DRM_MODE_FLAG_NHSYNC,
+    DRM_MODE_FLAG_NVSYNC, DRM_MODE_FLAG_PHSYNC, DRM_MODE_FLAG_PVSYNC, DRM_MODE_PROP_ATOMIC,
+    DRM_MODE_PROP_BITMASK, DRM_MODE_PROP_BLOB, DRM_MODE_PROP_ENUM, DRM_MODE_PROP_IMMUTABLE,
+    DRM_MODE_PROP_OBJECT, DRM_MODE_PROP_RANGE, DRM_MODE_PROP_SIGNED_RANGE, DRM_PROP_NAME_LEN,
 };
 use graphics_ipc::v1::CursorDamage;
 use graphics_ipc::v2::Damage;
+use graphics_ipc::v2::ipc::DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT;
 use inputd::{VtEvent, VtEventKind};
 use libredox::Fd;
-use redox_scheme::scheme::{register_scheme_inner, SchemeSync};
+use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, SignalBehavior, Socket};
 use syscall::schemev2::NewFdFlags;
-use syscall::{
-    CallFlags, Error, MapFlags, Result, EACCES, EAGAIN, EBADF, EINVAL, ENOENT, EOPNOTSUPP,
-};
+use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL, ENOENT, EOPNOTSUPP};
 
 use crate::objects::{DrmObjectId, DrmObjects};
 use crate::properties::DrmPropertyKind;
@@ -111,23 +109,46 @@ struct VtState<T: GraphicsAdapter> {
     cursor_plane: Option<CursorPlane<T::Cursor>>,
 }
 
+/// Client capabilities that can be enabled per-handle
+#[derive(Default)]
+struct ClientCaps {
+    cursor_plane_hotspot: bool,
+}
+
 enum Handle<T: GraphicsAdapter> {
     V1Screen {
         vt: usize,
         screen: usize,
+        client_caps: ClientCaps,
     },
     V2 {
         vt: usize,
         next_id: u32,
         fbs: HashMap<u32, Arc<T::Framebuffer>>,
+        client_caps: ClientCaps,
     },
-    SchemeRoot,
+}
+
+impl<T: GraphicsAdapter> Handle<T> {
+    fn client_caps_mut(&mut self) -> &mut ClientCaps {
+        match self {
+            Handle::V1Screen { client_caps, .. } => client_caps,
+            Handle::V2 { client_caps, .. } => client_caps,
+        }
+    }
+
+    fn client_caps(&self) -> &ClientCaps {
+        match self {
+            Handle::V1Screen { client_caps, .. } => client_caps,
+            Handle::V2 { client_caps, .. } => client_caps,
+        }
+    }
 }
 
 impl<T: GraphicsAdapter> GraphicsScheme<T> {
     pub fn new(mut adapter: T, scheme_name: String) -> Self {
         assert!(scheme_name.starts_with("display"));
-        let socket = Socket::nonblock().expect("failed to create graphics scheme");
+        let socket = Socket::nonblock(&scheme_name).expect("failed to create graphics scheme");
 
         let disable_graphical_debug = Some(
             File::open("/scheme/debug/disable-graphical-debug")
@@ -155,7 +176,42 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             adapter.probe_connector(&mut objects, &standard_properties, connector_id)
         }
 
-        let mut scheme = GraphicsScheme {
+        // Pre-create VTs during initialization since async virtio operations
+        // work here but hang when called from within scheme handlers
+        let mut vts = HashMap::new();
+        for vt_num in 1..=4 {
+            log::info!("driver-graphics: pre-creating VT {}", vt_num);
+            let mut display_fbs = vec![];
+            for display_id in 0..adapter.display_count() {
+                let (width, height) = adapter.display_size(display_id);
+                display_fbs.push(Arc::new(adapter.create_dumb_framebuffer(width, height)));
+            }
+            let cursor_plane = adapter.supports_hw_cursor().then(|| CursorPlane {
+                x: 0,
+                y: 0,
+                hot_x: 0,
+                hot_y: 0,
+                framebuffer: adapter.create_cursor_framebuffer(),
+            });
+            vts.insert(vt_num, VtState { display_fbs, cursor_plane });
+            log::info!("driver-graphics: VT {} pre-created", vt_num);
+        }
+
+        // Set up initial scanout for VT 2 so display isn't blank
+        // This calls update_plane which does XferToHost2d + SetScanout + ResourceFlush
+        if let Some(vt_state) = vts.get(&2) {
+            log::info!("driver-graphics: setting initial scanout for VT 2");
+            for (display_id, fb) in vt_state.display_fbs.iter().enumerate() {
+                let (width, height) = adapter.display_size(display_id);
+                adapter.update_plane(
+                    display_id,
+                    fb,
+                    Damage { x: 0, y: 0, width, height },
+                );
+            }
+        }
+
+        GraphicsScheme {
             adapter,
             scheme_name,
             disable_graphical_debug,
@@ -164,17 +220,9 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             standard_properties,
             next_id: 0,
             handles: BTreeMap::new(),
-            active_vt: 0,
-            vts: HashMap::new(),
-        };
-
-        let cap_id = scheme
-            .scheme_root()
-            .expect("failed to get this scheme root");
-        register_scheme_inner(&scheme.socket, &scheme.scheme_name, cap_id)
-            .expect("failed to register graphics scheme root");
-
-        scheme
+            active_vt: 2, // VT 2 is the initial active VT (set up above)
+            vts,
+        }
     }
 
     pub fn event_handle(&self) -> &Fd {
@@ -249,13 +297,20 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
     pub fn tick(&mut self) -> io::Result<()> {
         loop {
             let request = match self.socket.next_request(SignalBehavior::Restart) {
-                Ok(Some(request)) => request,
+                Ok(Some(request)) => {
+                    request
+                }
                 Ok(None) => {
                     // Scheme likely got unmounted
                     std::process::exit(0);
                 }
-                Err(err) if err.errno == EAGAIN => break,
-                Err(err) => panic!("driver-graphics: failed to read display scheme: {err}"),
+                Err(err) if err.errno == EAGAIN => {
+                    // No more requests - normal case
+                    return Ok(());
+                }
+                Err(err) => {
+                    panic!("driver-graphics: failed to read display scheme: {err}");
+                }
             };
 
             match request.kind() {
@@ -271,8 +326,6 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                 _ => (),
             }
         }
-
-        Ok(())
     }
 
     fn update_whole_screen(adapter: &mut T, screen: usize, framebuffer: &T::Framebuffer) {
@@ -319,26 +372,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
 const MAP_FAKE_OFFSET_MULTIPLIER: usize = 0x10_000_000;
 
 impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
-    fn scheme_root(&mut self) -> Result<usize> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.handles.insert(id, Handle::SchemeRoot);
-        Ok(id)
-    }
-    fn openat(
-        &mut self,
-        dirfd: usize,
-        path: &str,
-        _flags: usize,
-        _fcntl_flags: u32,
-        _ctx: &CallerCtx,
-    ) -> Result<OpenResult> {
-        if !matches!(
-            self.handles.get(&dirfd).ok_or(Error::new(EBADF))?,
-            Handle::SchemeRoot
-        ) {
-            return Err(Error::new(EACCES));
-        }
+    fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         if path.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -358,6 +392,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 vt,
                 next_id: 0,
                 fbs: HashMap::new(),
+                client_caps: ClientCaps::default(),
             }
         } else {
             let mut parts = path.split('/');
@@ -373,7 +408,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
             // Ensure the VT exists such that the rest of the methods can freely access it.
             Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
 
-            Handle::V1Screen { vt, screen: id }
+            Handle::V1Screen { vt, screen: id, client_caps: ClientCaps::default() }
         };
         self.next_id += 1;
         self.handles.insert(self.next_id, handle);
@@ -385,7 +420,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> syscall::Result<usize> {
         let path = match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::V1Screen { vt, screen } => {
+            Handle::V1Screen { vt, screen, .. } => {
                 let framebuffer = &self.vts[vt].display_fbs[*screen];
                 format!(
                     "{}:{vt}.{screen}/{}/{}",
@@ -398,8 +433,8 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 vt,
                 next_id: _,
                 fbs: _,
+                ..
             } => format!("/scheme/{}/v2/{vt}", self.scheme_name),
-            Handle::SchemeRoot => return Err(Error::new(EOPNOTSUPP)),
         };
         buf[..path.len()].copy_from_slice(path.as_bytes());
         Ok(path.len())
@@ -407,7 +442,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
     fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> syscall::Result<()> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::V1Screen { vt, screen } => {
+            Handle::V1Screen { vt, screen, .. } => {
                 if *vt != self.active_vt {
                     // This is a protection against background VT's spamming us with flush requests. We will
                     // flush the framebuffer on the next VT switch anyway
@@ -421,7 +456,6 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 Ok(())
             }
             Handle::V2 { .. } => Err(Error::new(EOPNOTSUPP)),
-            Handle::SchemeRoot => Err(Error::new(EOPNOTSUPP)),
         }
     }
 
@@ -446,7 +480,6 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 Ok(1)
             }
             Handle::V2 { .. } => Err(Error::new(EOPNOTSUPP)),
-            Handle::SchemeRoot => Err(Error::new(EOPNOTSUPP)),
         }
     }
 
@@ -459,7 +492,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
         _ctx: &CallerCtx,
     ) -> Result<usize> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::V1Screen { vt, screen } => {
+            Handle::V1Screen { vt, screen, .. } => {
                 if *vt != self.active_vt {
                     // This is a protection against background VT's spamming us with flush requests. We will
                     // flush the framebuffer on the next VT switch anyway
@@ -526,7 +559,6 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 Ok(buf.len())
             }
             Handle::V2 { .. } => Err(Error::new(EOPNOTSUPP)),
-            Handle::SchemeRoot => Err(Error::new(EOPNOTSUPP)),
         }
     }
 
@@ -569,8 +601,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
             Handle::V1Screen { .. } => {
                 return Err(Error::new(EOPNOTSUPP));
             }
-            Handle::SchemeRoot => return Err(Error::new(EOPNOTSUPP)),
-            Handle::V2 { vt, next_id, fbs } => match metadata[0] {
+            Handle::V2 { vt, next_id, fbs, client_caps } => match metadata[0] {
                 ipc::VERSION => ipc::DrmVersion::with(payload, |mut data| {
                     data.set_version_major(1);
                     data.set_version_minor(4);
@@ -593,12 +624,18 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                     Ok(0)
                 }),
                 ipc::SET_CLIENT_CAP => ipc::DrmSetClientCap::with(payload, |data| {
-                    self.adapter.set_client_cap(
-                        data.capability()
-                            .try_into()
-                            .map_err(|_| syscall::Error::new(EINVAL))?,
-                        data.value(),
-                    )?;
+                    let cap: u32 = data.capability()
+                        .try_into()
+                        .map_err(|_| syscall::Error::new(EINVAL))?;
+                    let value = data.value();
+
+                    // Validate with adapter and track per-handle
+                    self.adapter.set_client_cap(cap, value)?;
+
+                    // Track capability per-handle for proper cursor plane visibility
+                    if cap == DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT {
+                        client_caps.cursor_plane_hotspot = value != 0;
+                    }
                     Ok(0)
                 }),
                 ipc::MODE_CARD_RES => ipc::DrmModeCardRes::with(payload, |mut data| {
@@ -911,18 +948,18 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
     ) -> syscall::Result<usize> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let (framebuffer, offset) = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
-            Handle::V1Screen { vt, screen } => (&self.vts[vt].display_fbs[*screen], offset),
+            Handle::V1Screen { vt, screen, .. } => (&self.vts[vt].display_fbs[*screen], offset),
             Handle::V2 {
                 vt: _,
                 next_id: _,
                 fbs,
+                ..
             } => (
                 fbs.get(&((offset as usize / MAP_FAKE_OFFSET_MULTIPLIER) as u32))
                     .ok_or(Error::new(EINVAL))
                     .unwrap(),
                 offset & (MAP_FAKE_OFFSET_MULTIPLIER as u64 - 1),
             ),
-            Handle::SchemeRoot => return Err(Error::new(EOPNOTSUPP)),
         };
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(unsafe { ptr.add(offset as usize) } as usize)
@@ -962,6 +999,89 @@ pub fn modeinfo_for_size(width: u32, height: u32) -> drm_mode_modeinfo {
     };
 
     let name = format!("{width}x{height}").into_bytes();
+    for (to, from) in modeinfo.name.iter_mut().zip(name) {
+        *to = from as c_char;
+    }
+
+    modeinfo
+}
+
+/// Detailed timing parameters for creating mode info
+#[derive(Clone, Copy)]
+pub struct DetailedTimingParams {
+    pub pixel_clock: u32,        // in kHz
+    pub h_active: u16,
+    pub h_blanking: u16,
+    pub h_front_porch: u16,
+    pub h_sync_width: u16,
+    pub v_active: u16,
+    pub v_blanking: u16,
+    pub v_front_porch: u16,
+    pub v_sync_width: u16,
+    pub h_sync_positive: bool,
+    pub v_sync_positive: bool,
+    pub interlaced: bool,
+}
+
+/// Create modeinfo from detailed timing parameters (extracted from EDID)
+pub fn modeinfo_from_detailed_timing(timing: DetailedTimingParams, preferred: bool) -> drm_mode_modeinfo {
+    let htotal = timing.h_active + timing.h_blanking;
+    let vtotal = timing.v_active + timing.v_blanking;
+    let hsync_start = timing.h_active + timing.h_front_porch;
+    let hsync_end = hsync_start + timing.h_sync_width;
+    let vsync_start = timing.v_active + timing.v_front_porch;
+    let vsync_end = vsync_start + timing.v_sync_width;
+
+    // Calculate refresh rate: pixel_clock / (htotal * vtotal)
+    // pixel_clock is in kHz, so result is in Hz
+    let vrefresh = if htotal > 0 && vtotal > 0 {
+        ((timing.pixel_clock as u64 * 1000) / (htotal as u64 * vtotal as u64)) as u32
+    } else {
+        60
+    };
+
+    // Build mode flags
+    let mut flags = 0u32;
+    if timing.h_sync_positive {
+        flags |= DRM_MODE_FLAG_PHSYNC;
+    } else {
+        flags |= DRM_MODE_FLAG_NHSYNC;
+    }
+    if timing.v_sync_positive {
+        flags |= DRM_MODE_FLAG_PVSYNC;
+    } else {
+        flags |= DRM_MODE_FLAG_NVSYNC;
+    }
+    if timing.interlaced {
+        flags |= DRM_MODE_FLAG_INTERLACE;
+    }
+
+    let type_ = if preferred {
+        drm_sys::DRM_MODE_TYPE_PREFERRED | drm_sys::DRM_MODE_TYPE_DRIVER
+    } else {
+        drm_sys::DRM_MODE_TYPE_DRIVER
+    };
+
+    let mut modeinfo = drm_mode_modeinfo {
+        hdisplay: timing.h_active,
+        vdisplay: timing.v_active,
+        clock: timing.pixel_clock,
+        htotal,
+        vtotal,
+        hsync_start,
+        hsync_end,
+        vsync_start,
+        vsync_end,
+        vscan: 0,
+        vrefresh,
+        hskew: 0,
+        type_,
+        flags,
+        name: [0; 32],
+    };
+
+    // Generate mode name like "1920x1080@60"
+    let name = format!("{}x{}@{}", timing.h_active, timing.v_active, vrefresh).into_bytes();
     for (to, from) in modeinfo.name.iter_mut().zip(name) {
         *to = from as c_char;
     }

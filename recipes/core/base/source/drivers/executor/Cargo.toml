@@ -7,6 +7,6 @@ license = "MIT"
 description = "Async framework for queue-based HW interfaces"
 
 [dependencies]
-log.workspace = true
-redox_event.workspace = true
+log = "0.4"
+redox_event = "0.4.1"
 slab = "0.4.9"

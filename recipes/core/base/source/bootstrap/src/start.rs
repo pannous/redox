@@ -46,43 +46,43 @@ pub unsafe extern "C" fn start() -> ! {
     let (rodata_start, rodata_end) = offsets::rodata();
     let (data_start, data_end) = offsets::data_and_bss();
 
-    // NOTE: Assuming the debug scheme root fd is always placed at this position
-    let debug_fd = syscall::UPPER_FDTBL_TAG + syscall::data::GlobalSchemes::Debug as usize;
-    let _ = syscall::openat(debug_fd, "", syscall::O_RDONLY, 0); // stdin
-    let _ = syscall::openat(debug_fd, "", syscall::O_WRONLY, 0); // stdout
-    let _ = syscall::openat(debug_fd, "", syscall::O_WRONLY, 0); // stderr
+    let _ = crate::compat::open("/scheme/debug", syscall::O_RDONLY); // stdin
+    let _ = crate::compat::open("/scheme/debug", syscall::O_WRONLY); // stdout
+    let _ = crate::compat::open("/scheme/debug", syscall::O_WRONLY); // stderr
 
-    unsafe {
-        let _ = syscall::mprotect(4096, 4096, MapFlags::PROT_READ | MapFlags::MAP_PRIVATE)
-            .expect("mprotect failed for initfs header page");
+    // Make the entire initfs read-only (header + content)
+    // The initfs header is at 4096 (after the null page)
+    let initfs_header = 4096 as *const redox_initfs::types::Header;
+    let initfs_size = (*initfs_header).initfs_size.get() as usize;
+    // Round up to page boundary
+    let initfs_pages = initfs_size.div_ceil(4096) * 4096;
+    let _ = syscall::mprotect(4096, initfs_pages, MapFlags::PROT_READ | MapFlags::MAP_PRIVATE)
+        .expect("mprotect failed for initfs");
 
-        let _ = syscall::mprotect(
-            text_start,
-            text_end - text_start,
-            MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::MAP_PRIVATE,
-        )
-        .expect("mprotect failed for .text");
-        let _ = syscall::mprotect(
-            rodata_start,
-            rodata_end - rodata_start,
-            MapFlags::PROT_READ | MapFlags::MAP_PRIVATE,
-        )
-        .expect("mprotect failed for .rodata");
-        let _ = syscall::mprotect(
-            data_start,
-            data_end - data_start,
-            MapFlags::PROT_READ | MapFlags::PROT_WRITE | MapFlags::MAP_PRIVATE,
-        )
-        .expect("mprotect failed for .data/.bss");
-        let _ = syscall::mprotect(
-            data_end,
-            crate::arch::STACK_START - data_end,
-            MapFlags::PROT_READ | MapFlags::MAP_PRIVATE,
-        )
-        .expect("mprotect failed for rest of memory");
-    }
-
-    // FIXME make the initfs read-only
+    let _ = syscall::mprotect(
+        text_start,
+        text_end - text_start,
+        MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::MAP_PRIVATE,
+    )
+    .expect("mprotect failed for .text");
+    let _ = syscall::mprotect(
+        rodata_start,
+        rodata_end - rodata_start,
+        MapFlags::PROT_READ | MapFlags::MAP_PRIVATE,
+    )
+    .expect("mprotect failed for .rodata");
+    let _ = syscall::mprotect(
+        data_start,
+        data_end - data_start,
+        MapFlags::PROT_READ | MapFlags::PROT_WRITE | MapFlags::MAP_PRIVATE,
+    )
+    .expect("mprotect failed for .data/.bss");
+    let _ = syscall::mprotect(
+        data_end,
+        crate::arch::STACK_START - data_end,
+        MapFlags::PROT_READ | MapFlags::MAP_PRIVATE,
+    )
+    .expect("mprotect failed for rest of memory");
 
     crate::exec::main();
 }

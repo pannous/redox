@@ -6,10 +6,10 @@ edition = "2021"
 [dependencies]
 bitflags = "2"
 common = { path = "../../common" }
-libredox.workspace = true
-log.workspace = true
+libredox = "0.1.11"
+log = "0.4"
 daemon = { path = "../../../daemon" }
-redox_event.workspace = true
-redox_syscall.workspace = true
+redox_event = "0.4.1"
+redox_syscall = "0.6"
 spin = "0.9"
-redox-scheme.workspace = true
+redox-scheme = "0.8.3"

@@ -1,7 +1,7 @@
 use redox_scheme::{CallerCtx, OpenResult};
 use std::collections::{BTreeMap, VecDeque};
 use std::str;
-use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, ENOENT, EWOULDBLOCK};
+use syscall::error::{Error, Result, EBADF, EINVAL, ENOENT, EWOULDBLOCK};
 
 use redox_scheme::scheme::SchemeSync;
 use syscall::schemev2::NewFdFlags;
@@ -16,7 +16,6 @@ enum Handle {
     // TODO: move volume to audiohw:?
     // TODO: Use SYS_CALL to handle this better?
     Volume,
-    SchemeRoot,
 }
 
 pub struct AudioScheme {
@@ -65,27 +64,7 @@ impl AudioScheme {
 }
 
 impl SchemeSync for AudioScheme {
-    fn scheme_root(&mut self) -> Result<usize> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.handles.insert(id, Handle::SchemeRoot);
-        Ok(id)
-    }
-    fn openat(
-        &mut self,
-        dirfd: usize,
-        path: &str,
-        _flags: usize,
-        _fcntl_flags: u32,
-        _ctx: &CallerCtx,
-    ) -> Result<OpenResult> {
-        if !matches!(
-            self.handles.get(&dirfd).ok_or(Error::new(EBADF))?,
-            Handle::SchemeRoot
-        ) {
-            return Err(Error::new(EACCES));
-        }
-
+    fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         let (handle, flags) = match path.trim_matches('/') {
             "" => (
                 Handle::Audio {
@@ -130,7 +109,6 @@ impl SchemeSync for AudioScheme {
 
                 Ok(len)
             }
-            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -180,7 +158,6 @@ impl SchemeSync for AudioScheme {
                     Ok(0)
                 }
             }
-            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 }

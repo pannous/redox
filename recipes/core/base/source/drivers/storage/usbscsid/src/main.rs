@@ -39,8 +39,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
     let disk_scheme_name = format!("disk.usb-{scheme}+{port}-scsi");
 
     // TODO: Use eventfds.
-    let handle =
-        XhciClientHandle::new(scheme.to_owned(), port).expect("Failed to open XhciClientHandle");
+    let handle = XhciClientHandle::new(scheme.to_owned(), port);
+
+    // FIXME should this wait notifying readiness until the disk scheme is created?
+    daemon.ready();
 
     let desc = handle
         .get_standard_descs()
@@ -107,9 +109,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         )]),
         &driver_block::FuturesExecutor,
     );
-
-    // FIXME should this wait notifying readiness until the disk scheme is created?
-    daemon.ready();
 
     //libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 

@@ -260,7 +260,7 @@ impl Socket {
         ))
     }
 
-    fn establish(&mut self, new_peer: usize, peer: usize) -> Result<()> {
+    fn establish(&mut self, peer: usize) -> Result<()> {
         if self.state != State::Connecting {
             eprintln!(
                 "establish(id: {}): Cannot establish connection in state: {:?}",
@@ -269,43 +269,36 @@ impl Socket {
             return Err(Error::new(EINVAL));
         }
         self.state = State::Accepted;
-        if let Some(conn) = &mut self.connection {
-            if conn.peer != peer {
-                // client is expecting other connection
-                return Err(Error::new(EAGAIN));
-            }
-            conn.peer = new_peer;
-        } else {
-            // client is dead
-            return Err(Error::new(EAGAIN));
-        }
+        self.connection = Some(Connection::new(peer));
         Ok(())
     }
 
-    fn connect(&mut self, other: &mut Socket) -> Result<()> {
+    fn connect(&mut self, other: usize, flags: usize) -> Result<()> {
         match self.state {
             State::Unbound | State::Bound => {
                 // If the socket is unbound or bound, wait for the listener to start listening.
-                if other.flags & O_NONBLOCK != O_NONBLOCK {
+                if flags & O_NONBLOCK == O_NONBLOCK {
+                    self.awaiting.push_back(other);
+                    Ok(())
+                } else {
                     // If the connecting target is not a listening,
                     // the connecting socket will block until the socket
                     // is ready to accept.
-                    return Err(Error::new(EWOULDBLOCK));
+                    Err(Error::new(EWOULDBLOCK))
                 }
             }
             State::Listening => {
                 // If the socket is already listening, it can accept connections.
+                self.awaiting.push_back(other);
+                Ok(())
             }
-            _ => return Err(Error::new(ECONNREFUSED)),
+            _ => Err(Error::new(ECONNREFUSED)),
         }
-        self.connect_unchecked(other);
-        Ok(())
     }
 
-    fn connect_unchecked(&mut self, other: &mut Socket) {
-        self.awaiting.push_back(other.primary_id);
-        other.state = State::Connecting;
-        other.connection = Some(Connection::new(self.primary_id));
+    // For socketpair, add the peer's id to the base socket's awaiting queue.
+    fn connect_socketpair(&mut self, peer: usize) {
+        self.awaiting.push_back(peer);
     }
 
     fn is_listening(&self) -> bool {
@@ -364,26 +357,8 @@ impl Socket {
     }
 }
 
-enum Handle {
-    Socket(Rc<RefCell<Socket>>),
-    SchemeRoot,
-}
-
-impl Handle {
-    fn as_socket(&self) -> Option<&Rc<RefCell<Socket>>> {
-        if let Self::Socket(socket) = self {
-            Some(socket)
-        } else {
-            None
-        }
-    }
-    fn is_scheme_root(&self) -> bool {
-        matches!(self, Self::SchemeRoot)
-    }
-}
-
 pub struct UdsStreamScheme<'sock> {
-    handles: HashMap<usize, Handle>,
+    sockets: HashMap<usize, Rc<RefCell<Socket>>>,
     next_id: usize,
     socket_paths: HashMap<String, Rc<RefCell<Socket>>>,
     socket_tokens: HashMap<u64, Rc<RefCell<Socket>>>,
@@ -395,18 +370,16 @@ pub struct UdsStreamScheme<'sock> {
 impl<'sock> UdsStreamScheme<'sock> {
     pub fn new(socket: &'sock SchemeSocket) -> Result<Self> {
         Ok(Self {
-            handles: HashMap::new(),
+            sockets: HashMap::new(),
             next_id: 0,
             socket_paths: HashMap::new(),
             socket_tokens: HashMap::new(),
             socket,
-            proc_creds_capability: {
-                libredox::call::open(
-                    "/scheme/proc/proc-creds-capability",
-                    libredox::flag::O_RDONLY,
-                    0,
-                )?
-            },
+            proc_creds_capability: libredox::call::open(
+                "/scheme/proc/proc-creds-capability",
+                libredox::flag::O_RDONLY,
+                0,
+            ).map_err(|e| syscall::Error::new(e.errno()))?,
             rng: SmallRng::from_entropy(),
         })
     }
@@ -430,20 +403,17 @@ impl<'sock> UdsStreamScheme<'sock> {
     }
 
     fn get_socket(&self, id: usize) -> Result<&Rc<RefCell<Socket>>, Error> {
-        self.handles
-            .get(&id)
-            .and_then(Handle::as_socket)
-            .ok_or(Error::new(EBADF))
+        self.sockets.get(&id).ok_or(Error::new(EBADF))
     }
 
-    fn insert_socket(&mut self, id: usize, socket: Rc<RefCell<Socket>>) {
-        self.handles.insert(id, Handle::Socket(socket));
-    }
-
-    fn get_connected_peer(&self, id: usize) -> Result<(usize, Rc<RefCell<Socket>>), Error> {
+    fn get_connected_peer(
+        &self,
+        id: usize,
+        flags: MsgFlags,
+    ) -> Result<(usize, Rc<RefCell<Socket>>), Error> {
         let mut socket = self.get_socket(id)?.borrow_mut();
 
-        let remote_id = socket.require_connection()?.peer;
+        let remote_id = socket.require_connected_connection(flags)?.peer;
         let remote_rc = self.get_socket(remote_id).map_err(|e| {
             eprintln!("get_connected_peer(id: {}): Peer socket (id: {}) has vanished. Original error: {:?}", id, remote_id, e);
             Error::new(EPIPE)
@@ -471,7 +441,7 @@ impl<'sock> UdsStreamScheme<'sock> {
             None,
             ctx,
         );
-        self.insert_socket(new_id, Rc::new(RefCell::new(new)));
+        self.sockets.insert(new_id, Rc::new(RefCell::new(new)));
         self.next_id += 1;
         new_id
     }
@@ -568,15 +538,14 @@ impl<'sock> UdsStreamScheme<'sock> {
     //
     // Phase 1: The listener is bound but not yet listening.
     //          The client is trying to connect.
-    //          If the listener is not listening, the listener will
-    //          refuse to connect until the listener starts listening.
+    //          If the listener is not listening, the client will block
+    //          and wait until the listener starts listening.
     //
     // Phase 2: The listener is now listening.
     //          The client is still trying to connect.
     //          The client pushes its ID to the listener's awaiting queue
     //          and sets its state to `Connecting`.
-    //          The client will be blocked from sending/receiving messages,
-    //          waiting for the listener to accept it.
+    //          The client then blocks, waiting for the listener to accept it.
     //
     // Phase 3: The listener accepts the client, changes its state to `Established`,
     //          and then changes the client's state to `Accepted`.
@@ -584,6 +553,12 @@ impl<'sock> UdsStreamScheme<'sock> {
     //          and changes its own state to `Established`.
     //
     // After these three phases, the socket connection is considered established.
+    //
+    // After these three phases, the socket connection is considered established.
+    //
+    // The reason why `connect` is complicated is that if the processing blocks,
+    // the SQE will be pushed back to the scheme's request queue,
+    // and the same SQE will be woken up later.
     fn handle_connect(&mut self, id: usize, token_buf: &[u8]) -> Result<usize> {
         let token = read_num::<u64>(token_buf)?;
         let (listener_id, flags) = {
@@ -596,20 +571,11 @@ impl<'sock> UdsStreamScheme<'sock> {
             let client_rc = self.get_socket(id)?.clone();
             let mut client = client_rc.borrow_mut();
 
-            // Phase 1: listener is bound but not yet listening
-            let mut listener = listener_rc.borrow_mut();
-            let listener_id = listener.primary_id;
-
             match client.state {
                 State::Connecting => {
-                    if client
-                        .connection
-                        .as_ref()
-                        .is_some_and(|c| c.peer == listener_id)
-                    {
-                        // No op
-                        return Ok(0);
-                    }
+                    // If the client is already Connecting
+                    // Fence to prevent calling connect multiple times.
+                    return Err(Error::new(EWOULDBLOCK));
                 }
                 State::Established => {
                     return Err(Error::new(EISCONN));
@@ -622,8 +588,13 @@ impl<'sock> UdsStreamScheme<'sock> {
                 _ => {}
             }
 
+            // Phase 1: listener is bound but not yet listening
+            let mut listener = listener_rc.borrow_mut();
+            let listener_id = listener.primary_id;
+
+            listener.connect(id, client.flags)?;
             // Phase 2: listener is now listening
-            listener.connect(&mut client)?;
+            client.state = State::Connecting;
 
             (listener_id, client.flags)
         };
@@ -631,6 +602,13 @@ impl<'sock> UdsStreamScheme<'sock> {
         // client, we'll do the same too (but also readable, why
         // not)
         self.post_fevent(listener_id, EVENT_READ | EVENT_WRITE)?;
+
+        // Blocking pattern
+        if flags & O_NONBLOCK == 0 {
+            return Err(Error::new(EWOULDBLOCK));
+        }
+
+        // Non-blocking pattern
         Ok(0)
     }
 
@@ -681,7 +659,7 @@ impl<'sock> UdsStreamScheme<'sock> {
         match option {
             libc::SO_DOMAIN => write_value(&AF_UNIX.to_le_bytes()),
             libc::SO_PEERCRED => {
-                let (_, remote_rc) = self.get_connected_peer(id)?;
+                let (_, remote_rc) = self.get_connected_peer(id, MsgFlags::default())?;
                 let remote = remote_rc.borrow();
                 write_value(unsafe {
                     slice::from_raw_parts(
@@ -719,7 +697,7 @@ impl<'sock> UdsStreamScheme<'sock> {
 
         let (bytes_written, remote_id) = {
             let name = self.get_socket(id)?.borrow().path.clone();
-            let (remote_id, remote_rc) = self.get_connected_peer(id)?;
+            let (remote_id, remote_rc) = self.get_connected_peer(id, msg_flags)?;
             let mut socket = remote_rc.borrow_mut();
             let connection = socket.require_connected_connection(msg_flags)?;
             let (pid, uid, gid) = get_uid_gid_from_pid(self.proc_creds_capability, ctx.pid)?;
@@ -848,7 +826,7 @@ impl<'sock> UdsStreamScheme<'sock> {
     }
 
     fn handle_get_peer_name(&self, id: usize, payload: &mut [u8]) -> Result<usize> {
-        let (_, socket_rc) = self.get_connected_peer(id)?;
+        let (_, socket_rc) = self.get_connected_peer(id, MsgFlags::default())?;
         let socket_borrow = socket_rc.borrow();
         match socket_borrow.path.as_ref() {
             Some(path_string) => Self::fpath_inner(path_string, payload),
@@ -873,12 +851,12 @@ impl<'sock> UdsStreamScheme<'sock> {
             let new = listener_socket.accept(new_id, client_id, ctx)?;
 
             let mut client_socket = client_rc.borrow_mut();
-            client_socket.establish(new_id, listener_socket.primary_id)?;
+            client_socket.establish(new_id)?;
             (new_id, new)
         };
 
         self.next_id += 1;
-        self.insert_socket(new_id, Rc::new(RefCell::new(new)));
+        self.sockets.insert(new_id, Rc::new(RefCell::new(new)));
         self.post_fevent(client_id, EVENT_READ | EVENT_WRITE)?;
         Ok(Some(OpenResult::ThisScheme {
             number: new_id,
@@ -900,21 +878,15 @@ impl<'sock> UdsStreamScheme<'sock> {
             );
             return Err(Error::new(EINVAL));
         }
-        loop {
-            // Try to accept a waiting connection
-            let Some(client_id) = socket.awaiting.pop_front() else {
-                if flags & O_NONBLOCK == O_NONBLOCK {
-                    return Err(Error::new(EAGAIN));
-                } else {
-                    return Err(Error::new(EWOULDBLOCK));
-                }
-            };
-            return match self.accept_connection(socket, client_id, ctx) {
-                Ok(conn) => Ok(conn),
-                Err(Error { errno: EAGAIN }) => continue,
-                Err(e) => Err(e),
-            };
-        }
+        // Try to accept a waiting connection
+        let Some(client_id) = socket.awaiting.pop_front() else {
+            if flags & O_NONBLOCK == O_NONBLOCK {
+                return Err(Error::new(EAGAIN));
+            } else {
+                return Ok(Some(OpenResult::WouldBlock));
+            }
+        };
+        Ok(self.accept_connection(socket, client_id, ctx)?)
     }
 
     // Transition a Bound or Unbound socket to the Listening state.
@@ -961,10 +933,10 @@ impl<'sock> UdsStreamScheme<'sock> {
     fn handle_connect_socketpair(&mut self, id: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         let new_id = self.next_id;
         let flags = self.get_socket(id)?.borrow().flags;
-        let mut new = Socket::new(
+        let new = Socket::new(
             new_id,
             None,
-            State::Unbound,
+            State::Connecting,
             HashSet::new(),
             flags,
             None,
@@ -981,7 +953,7 @@ impl<'sock> UdsStreamScheme<'sock> {
                 );
                 return Err(Error::new(EPIPE));
             }
-            socket.connect_unchecked(&mut new);
+            socket.connect_socketpair(new_id);
         }
 
         // smoltcp sends writeable whenever a listener gets a
@@ -989,7 +961,7 @@ impl<'sock> UdsStreamScheme<'sock> {
         // why not)
         self.post_fevent(id, EVENT_READ | EVENT_WRITE)?;
 
-        self.insert_socket(new_id, Rc::new(RefCell::new(new)));
+        self.sockets.insert(new_id, Rc::new(RefCell::new(new)));
 
         self.next_id += 1;
 
@@ -1223,45 +1195,9 @@ impl<'sock> UdsStreamScheme<'sock> {
 }
 
 impl<'sock> SchemeSync for UdsStreamScheme<'sock> {
-    fn scheme_root(&mut self) -> Result<usize> {
-        let new_id = self.next_id;
-        self.handles.insert(new_id, Handle::SchemeRoot);
-        self.next_id += 1;
-        Ok(new_id)
-    }
-    fn openat(
-        &mut self,
-        fd: usize,
-        path: &str,
-        mut flags: usize,
-        fcntl_flags: u32,
-        ctx: &CallerCtx,
-    ) -> Result<OpenResult> {
-        {
-            let Some(handle) = self.handles.get(&fd) else {
-                return Err(Error::new(EBADF));
-            };
-            if !handle.is_scheme_root() {
-                eprintln!(
-                    "openat(fd: {}, path: '{}'): fd is not an open capability.",
-                    fd, path
-                );
-                return Err(Error::new(EACCES));
-            }
-        }
-
-        flags |= fcntl_flags as usize;
-
+    fn open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         let new_id = if path.is_empty() {
-            if flags & O_CREAT == O_CREAT {
-                self.handle_unnamed_socket(flags, ctx)
-            } else {
-                eprintln!(
-                    "open(path: '{}'): Attempting to open an unnamed socket without O_CREAT.",
-                    path
-                );
-                return Err(Error::new(EINVAL));
-            }
+            self.handle_unnamed_socket(flags, ctx)
         } else {
             eprintln!(
                 "open(path: '{}'): Attempting to open a named socket, which is not supported.",
@@ -1302,20 +1238,16 @@ impl<'sock> SchemeSync for UdsStreamScheme<'sock> {
         _flags: u32,
         ctx: &CallerCtx,
     ) -> Result<usize> {
-        let (receiver_id, _) = self.get_connected_peer(id)?;
+        let (receiver_id, _) = self.get_connected_peer(id, MsgFlags::default())?;
         self.write_inner(receiver_id, buf, ctx)
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
-        match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::SchemeRoot => Ok(Self::fpath_inner(&String::new(), buf)?),
-            Handle::Socket(socket_rc) => {
-                let socket = socket_rc.borrow();
-                let empty = String::new();
-                let path = socket.path.as_ref().unwrap_or(&empty);
-                Ok(Self::fpath_inner(path, buf)?)
-            }
-        }
+        let socket_rc = self.get_socket(id)?;
+        let socket = socket_rc.borrow();
+        let empty = String::new();
+        let path = socket.path.as_ref().unwrap_or(&empty);
+        Ok(Self::fpath_inner(path, buf)?)
     }
 
     fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> Result<()> {
@@ -1346,7 +1278,7 @@ impl<'sock> SchemeSync for UdsStreamScheme<'sock> {
 
     fn on_sendfd(&mut self, sendfd_request: &SendFdRequest) -> Result<usize> {
         let id = sendfd_request.id();
-        let (receiver_id, _) = self.get_connected_peer(id)?;
+        let (receiver_id, _) = self.get_connected_peer(id, MsgFlags::default())?;
 
         self.sendfd_inner(receiver_id, sendfd_request)
     }
@@ -1356,7 +1288,7 @@ impl<'sock> SchemeSync for UdsStreamScheme<'sock> {
     }
 
     fn on_close(&mut self, id: usize) {
-        let Some(Handle::Socket(socket_rc)) = self.handles.remove(&id) else {
+        let Some(socket_rc) = self.sockets.remove(&id) else {
             return;
         };
 
