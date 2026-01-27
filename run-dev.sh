@@ -163,7 +163,8 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
     echo "Recording automatically to ./recordings/" >&2
     echo "Using ramfb graphics device" >&2
 
-    # Start QEMU in background
+    # Start QEMU in background with monitor socket for auto-resolution
+    rm -f "$MONSOCK"
     HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
@@ -176,8 +177,12 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
         -device qemu-xhci -device usb-kbd -device usb-tablet \
         -device ramfb \
         -display vnc=$VNC_DISPLAY \
+        -monitor unix:"$MONSOCK",server,nowait \
         -serial stdio &
     QEMU_PID=$!
+
+    # Auto-select default resolution after 2s
+    (sleep 2 && echo "sendkey ret" | socat - UNIX-CONNECT:"$MONSOCK" 2>/dev/null) &
 
     # Start recording in background
     sleep 2  # Give VNC time to start
