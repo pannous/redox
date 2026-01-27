@@ -235,7 +235,7 @@ AP_ENTRY_COUNT=0  <- BSP never sees updates
 
 ### Next Steps: Page Table Shareability
 ARM requires Normal memory regions used for inter-CPU communication to have:
-- Memory type: Normal (not Device)  
+- Memory type: Normal (not Device)
 - Shareability: Inner Shareable or Outer Shareable
 - Cacheability: Write-back (not Write-through or Non-cacheable)
 
@@ -248,6 +248,86 @@ Check in paging::init() and page table setup:
 - Assembly: recipes/core/kernel/source/src/arch/aarch64/start.rs:336-400
 - Rust entry: recipes/core/kernel/source/src/arch/aarch64/start.rs:407-430
 - Paging setup: recipes/core/kernel/source/src/paging/aarch64/mod.rs
+
+## 2026-01-27 Update #2: Tried Both Approaches - Assembly-to-Rust Transition Broken
+
+### Approach 1: Freshly-Mapped Shareable Memory
+Created `smp_sync.rs` module that:
+- Allocates a new physical frame during BSP init
+- Maps it with RMM (should have Inner Shareable attributes from rmm/src/arch/aarch64.rs)
+- Provides sync variables (AtomicU32 counters) in this freshly-mapped page
+- Avoids issues with bootloader-mapped .bss/.data sections
+
+**Result:** APs still cannot call Rust functions (no 'E' marker on serial)
+
+### Approach 2: Pure Assembly Counter Increment
+Attempted to bypass Rust entirely:
+- Added `__smp_sync_ptr_storage` global for assembly access
+- Modified kstart_ap assembly to load pointer and increment counter using LDAXR/STLXR
+- Used atomic load-exclusive/store-exclusive loop
+- Added cache clean (DC CVAC) and barriers (DMB ISH)
+
+**Result:** APs reach marker 'D' but don't execute subsequent assembly code (no 'P', 'N', or 'F' markers)
+
+### Root Cause Analysis
+
+The fundamental problem is **APs cannot successfully transition from assembly to Rust** or even execute complex assembly after page table setup.
+
+Evidence:
+- ✅ APs execute early assembly (markers A, B, C, D)
+- ✅ Page tables loaded, VBAR set, stack configured
+- ✅ PSCI CPU_ON succeeds (returns 0)
+- ❌ Cannot call ANY Rust function (even minimal serial-only function)
+- ❌ Assembly after marker D also fails to execute
+
+Possible causes:
+1. **Linker/relocation issue**: Rust functions may have relocations that don't work for AP entry
+2. **Stack setup issue**: Stack may be at wrong address or not properly mapped
+3. **Cache/MMU inconsistency**: Instructions may not be visible after MMU enable
+4. **ABI mismatch**: Calling convention may be subtly wrong
+5. **QEMU/HVF bug**: Emulator may not properly support PSCI secondary CPU boot
+
+### What Works
+- BSP can allocate shareable memory and access sync variables
+- APs boot via PSCI and execute assembly trampoline
+- Page table switching, VBAR setup all work in assembly
+
+### What Doesn't Work
+- Calling ANY Rust function from AP assembly (br x3 instruction seems to fail)
+- Even pure-assembly code after marker D doesn't execute
+
+### Files Modified (commit 8d7a9b3512e / 0202c446)
+- `src/arch/aarch64/smp_sync.rs` - New module for shareable sync variables
+- `src/arch/aarch64/mod.rs` - Added smp_sync module
+- `src/arch/aarch64/start.rs` - Initialize smp_sync, minimal start_ap, assembly counter
+- `src/acpi/madt/arch/aarch64.rs` - Use new sync helpers
+- `rmm/src/arch/aarch64.rs` - Shareability bits already present
+
+### Next Steps
+1. **Debug why assembly after marker D fails**
+   - Add more serial markers between D and pointer load
+   - Check if LDR instruction causes fault
+   - Try simpler instructions (just MOV/STR in a loop)
+
+2. **Investigate stack**
+   - Verify stack address is in properly-mapped region
+   - Try using a statically-allocated stack array
+   - Check stack alignment (must be 16-byte aligned on aarch64)
+
+3. **Try different entry approach**
+   - Have APs jump to BSP's start() function instead of separate start_ap
+   - Use shared initialization path with per-CPU branching
+   - Avoid separate Rust entry point entirely
+
+4. **Check QEMU/HVF**
+   - Test on real hardware if available
+   - Try different QEMU versions or TCG instead of HVF
+   - Enable QEMU CPU tracing (-d cpu,exec -D qemu-trace.log)
+
+5. **Last resort: Keep APs in assembly**
+   - Implement full AP init in assembly (no Rust at all)
+   - Have assembly send IPI to BSP with "AP ready" signal
+   - BSP handles all AP initialization via IPI responses
 
 
 ## 2026-01-27 Update: Page Table Shareability + ISB Fix
