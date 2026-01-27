@@ -6,7 +6,7 @@ use core::{
     arch::global_asm,
     cell::SyncUnsafeCell,
     slice,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use fdt::Fdt;
@@ -25,6 +25,9 @@ static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
+
+/// Counter to track how many APs actually entered kstart_ap
+pub static AP_ENTRY_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Enumerate CPU cores from device tree
 unsafe fn enumerate_cpus_from_dtb(dtb: &Fdt) -> u32 {
@@ -150,33 +153,76 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
         let bootstrap = {
             let args = args_ptr.read();
 
-            // Set up graphical debug
-            graphical_debug::init(args.env());
-
-            // Get hardware descriptor data
+            // Get hardware descriptor data FIRST (needed for serial init)
             //TODO: use env {DTB,RSDT}_{BASE,SIZE}?
-            debug!("DTB: hwdesc_base=0x{:x}, hwdesc_size=0x{:x}", args.hwdesc_base, args.hwdesc_size);
-            let hwdesc_data = if args.hwdesc_base != 0 {
-                debug!("DTB: Creating hwdesc_data slice");
-                Some(slice::from_raw_parts(
-                    (crate::PHYS_OFFSET + args.hwdesc_base as usize) as *const u8,
-                    args.hwdesc_size as usize,
-                ))
+            let (hwdesc_data, hwdesc_is_dtb) = if args.hwdesc_base != 0 {
+                // Peek at the data to determine if it's DTB or ACPI
+                let header_ptr = (crate::PHYS_OFFSET + args.hwdesc_base as usize) as *const u8;
+                let peek_size = core::cmp::min(args.hwdesc_size as usize, 8);
+                if peek_size >= 8 {
+                    let header_slice = slice::from_raw_parts(header_ptr, peek_size);
+
+                    // Check for DTB magic (0xd00dfeed in big-endian)
+                    let magic = u32::from_be_bytes([header_slice[0], header_slice[1], header_slice[2], header_slice[3]]);
+                    if magic == 0xd00dfeed {
+                        // This is a DTB - read actual size from header
+                        let reported_size = u32::from_be_bytes([header_slice[4], header_slice[5], header_slice[6], header_slice[7]]) as usize;
+                        let dtb_size = core::cmp::max(reported_size + 65536, args.hwdesc_size as usize);
+                        (Some(slice::from_raw_parts(header_ptr, dtb_size)), true)
+                    } else if header_slice.starts_with(b"RSD PTR ") {
+                        // This is ACPI RSDP, not DTB
+                        (None, false)
+                    } else {
+                        // Unknown format, try using it anyway
+                        (Some(slice::from_raw_parts(header_ptr, args.hwdesc_size as usize)), false)
+                    }
+                } else {
+                    // Too small to be a DTB, likely ACPI
+                    (None, false)
+                }
             } else {
-                debug!("DTB: No hwdesc_base, hwdesc_data is None");
-                None
+                (None, false)
             };
 
-            let dtb_res = hwdesc_data
-                .ok_or(fdt::FdtError::BadPtr)
-                .and_then(|data| {
-                    debug!("DTB: Parsing DTB from hwdesc_data, size={}", data.len());
-                    Fdt::new(data)
-                });
+            let dtb_res = if hwdesc_is_dtb {
+                hwdesc_data
+                    .ok_or(fdt::FdtError::BadPtr)
+                    .and_then(|data| Fdt::new(data))
+            } else {
+                // Not DTB data, don't try to parse it
+                Err(fdt::FdtError::BadPtr)
+            };
 
-            // Try to find serial port prior to logging
-            if let Ok(dtb) = &dtb_res {
-                device::serial::init_early(dtb);
+            // Initialize serial FIRST so all debug output is captured
+            // Try DTB-based init, fallback to hardcoded QEMU virt UART if DTB fails
+            match &dtb_res {
+                Ok(dtb) => {
+                    device::serial::init_early(dtb);
+                }
+                Err(_) => {
+                    // DTB failed - use hardcoded QEMU virt PL011 UART at 0x09000000
+                    error!("DTB parsing failed, using hardcoded QEMU virt UART");
+                    unsafe {
+                        use crate::devices::uart_pl011;
+                        let virt = crate::PHYS_OFFSET + 0x09000000;
+                        let mut serial_port = uart_pl011::SerialPort::new(virt, false);
+                        serial_port.init(false);
+                        *crate::device::serial::COM1.lock() =
+                            crate::devices::serial::SerialKind::Pl011(serial_port);
+                    }
+                }
+            }
+
+            // Set up graphical debug AFTER serial
+            graphical_debug::init(args.env());
+
+            // Now all these debug messages go to BOTH serial and framebuffer
+            debug!("DTB: hwdesc_base=0x{:x}, hwdesc_size=0x{:x}", args.hwdesc_base, args.hwdesc_size);
+            if let Some(data) = hwdesc_data {
+                debug!("DTB: Creating hwdesc_data slice");
+                info!("DTB: Parsed DTB from hwdesc_data, size={}", data.len());
+            } else {
+                debug!("DTB: No hwdesc_base, hwdesc_data is None");
             }
 
             info!("Redox OS starting...");
@@ -239,7 +285,14 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
                 Err(err) => {
                     //DEBUG_MARKER.store(999, AtomicOrdering::SeqCst);
                     dtb::init(None);
-                    warn!("failed to parse DTB: {}", err);
+                    // Only show error if we expected DTB but parsing failed
+                    if hwdesc_is_dtb {
+                        error!("*** FAILED to parse DTB: {:?} ***", err);
+                    } else if args.hwdesc_base != 0 {
+                        debug!("Hardware descriptor is not DTB (likely ACPI), using ACPI path");
+                    } else {
+                        debug!("No hardware descriptor provided");
+                    }
 
                     #[cfg(feature = "acpi")]
                     {
@@ -270,49 +323,102 @@ pub struct KernelArgsAp {
     pub stack_end: u64,
 }
 
-/// Assembly entry point for Application Processors
+// External declaration for assembly entry point
+unsafe extern "C" {
+    pub fn kstart_ap();
+}
+
+/// Assembly entry point for Application Processors (called by PSCI)
 ///
-/// Called by PSCI CPU_ON with:
-/// - x0 = context parameter (args_ptr)
-/// - MMU disabled
-/// - EL1
+/// CRITICAL: PSCI starts with MMU in unknown state. Symbols are linked at KERNEL_OFFSET
+/// virtual addresses, but PC is at physical/identity-mapped address.
+global_asm!("
+    .globl kstart_ap
+    kstart_ap:
+        // x0 = args_phys (physical address of KernelArgsAp struct)
+
+        // Save x0 for later - we'll need it after page table setup
+        mov x10, x0
+
+        // Load page_table (offset 8 in KernelArgsAp)
+        ldr x1, [x0, #8]
+        msr ttbr1_el1, x1
+        msr ttbr0_el1, x1
+
+        // Flush TLB
+        dsb sy
+        tlbi vmalle1
+        dsb sy
+        isb
+
+        // Load stack_end (offset 24 in KernelArgsAp)
+        ldr x2, [x0, #24]
+        mov sp, x2
+
+        // Calculate virtual address to jump to:
+        // We want to jump to .Lvirt_entry in PHYS_OFFSET space
+        // PHYS_OFFSET = physical + 0x0000800000000000
+
+        // Get physical address of .Lvirt_entry
+        adr x3, .Lvirt_entry
+        // Add PHYS_OFFSET to get virtual address
+        movz x4, #0x0000, lsl #48
+        movk x4, #0x8000, lsl #32  // x4 = 0x0000800000000000 (PHYS_OFFSET)
+        add x3, x3, x4
+
+        // Jump to virtual address in PHYS_OFFSET space
+        br x3
+
+    // This code executes at PHYS_OFFSET virtual address
+    .Lvirt_entry:
+        // DEBUG: Test if we reach here
+    .Lloop2:
+        b .Lloop2
+
+        // Now we can access global symbols!
+        // Increment AP_ENTRY_COUNT
+        adrp x3, {ap_count}
+        add x3, x3, :lo12:{ap_count}
+    .Lretry:
+        ldaxr w4, [x3]
+        add w4, w4, #1
+        stlxr w5, w4, [x3]
+        cbnz w5, .Lretry
+
+        // Restore args and call start_ap
+        mov x0, x10
+        b {start_ap}
+    ",
+    start_ap = sym start_ap,
+    ap_count = sym AP_ENTRY_COUNT,
+);
+
+/// Rust entry point for Application Processors (called from assembly kstart_ap)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
+unsafe extern "C" fn start_ap(args_phys: u64) -> ! {
+    // Increment entry counter FIRST - before ANY other operations
+    AP_ENTRY_COUNT.fetch_add(1, Ordering::SeqCst);
+
     unsafe {
         let cpu_id = {
+            // Assembly already set up MMU, stack, and VBAR
+            // Convert physical address to virtual address
+            let args_ptr = (args_phys as usize + crate::PHYS_OFFSET) as *const KernelArgsAp;
             let args = &*args_ptr;
 
             let cpu_id = crate::cpu_set::LogicalCpuId::new(args.cpu_id as u32);
 
-            // Set up exception vectors (VBAR_EL1)
-            core::arch::asm!(
-                "ldr x9, =exception_vector_base",
-                "msr vbar_el1, x9",
-                out("x9") _,
-            );
-
-            // Set up stack pointer from args
-            core::arch::asm!(
-                "mov sp, {}",
-                in(reg) args.stack_end,
-            );
-
-            // Configure page tables for this CPU (TTBR1_EL1)
-            crate::device::cpu::registers::control_regs::ttbr1_el1_write(args.page_table);
-
-            // Flush TLB
-            core::arch::asm!(
-                "dsb sy",
-                "tlbi vmalle1",
-                "dsb sy",
-                "isb",
-            );
+            warn!("AP {}: start_ap entered (total entries={})", cpu_id.get(), AP_ENTRY_COUNT.load(Ordering::SeqCst));
 
             // Initialize paging (MAIR)
             paging::init();
 
+            warn!("AP {}: Paging initialized", cpu_id.get());
+
             // Initialize per-CPU block and set TPIDR_EL1
             crate::misc::init(cpu_id);
+
+            warn!("AP {}: Percpu block initialized", cpu_id.get());
 
             // Note: GIC CPU interface initialization happens automatically
             // on GICv2, the CPU interface is banked per-CPU and accessed at
@@ -321,6 +427,8 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
             // Signal readiness
             AP_READY.store(true, Ordering::SeqCst);
+
+            warn!("AP {}: Signaled readiness", cpu_id.get());
 
             cpu_id
         };
