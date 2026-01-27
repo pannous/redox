@@ -329,6 +329,103 @@ Possible causes:
    - Have assembly send IPI to BSP with "AP ready" signal
    - BSP handles all AP initialization via IPI responses
 
+## 2026-01-27 Update #3: Shared Entry Point Approach - `br` Instruction Fails
+
+### What We Tried
+Modified APs to use the same `start()` function as BSP instead of a separate `start_ap()` function:
+
+1. **MPIDR-based detection** - start() reads MPIDR_EL1 to distinguish BSP (MPIDR=0) from APs
+2. **Removed separate Rust entry** - APs jump to proven-working BSP code path
+3. **Multiple addressing modes tested:**
+   - Direct branch (`b {start}`) - same as BSP
+   - Indirect via register with literal pool (`ldr x3, .L...; br x3`)
+   - PC-relative with ADRP/ADD (`adrp x3, {start}; add x3, x3, :lo12:{start}; br x3`)
+
+### Serial Marker Evidence
+```
+BSP:  R B       (R=Rust entry, B=BSP detected)
+APs:  A B C D J K L  (assembly markers through address computation)
+      ↑               L = address successfully computed
+      No R - never reaches Rust after br x3
+      No X - code after br doesn't execute (branch doesn't fall through)
+```
+
+### Key Findings
+
+**What Works on APs:**
+- ✅ All assembly instructions execute correctly
+- ✅ Page table setup (TTBR, TLB flush)
+- ✅ VBAR exception handler setup
+- ✅ Stack configuration
+- ✅ Address computation via ADRP/ADD
+- ✅ All markers A, B, C, D, J, K, L print correctly
+
+**What Fails:**
+- ❌ `br x3` instruction to jump to start() - fails silently
+- ❌ Direct branch `b {start}` - also fails
+- ❌ No exception visible (no crash markers, no X marker after branch)
+
+### Analysis
+
+The `br x3` instruction executes but doesn't reach the target. Possible causes:
+
+1. **Exception without handler** - If BR causes an exception (e.g., alignment, permission), and VBAR isn't properly configured, AP might take exception to address 0 or loop
+2. **Cache/MMU issue** - Instruction at target address might not be visible despite IC maintenance
+3. **Stack issue** - Stack might be invalid, causing immediate fault on function entry
+4. **QEMU/HVF bug** - Emulator might not properly support secondary CPU execution after PSCI
+5. **Calling convention mismatch** - Some subtle ABI issue we're missing
+
+### What This Rules Out
+- ❌ Symbol resolution issues (address computes correctly)
+- ❌ Linker problems (BSP uses same function successfully)
+- ❌ Page table problems (we're in correct virtual address space)
+- ❌ Branch range issues (ADRP/ADD handles any distance)
+
+### Files Modified (commit c7778481ade / e1d72ff1)
+- `src/arch/aarch64/start.rs` - Shared entry with MPIDR detection, multiple addressing modes
+- `src/arch/aarch64/smp_sync.rs` - Shareable sync infrastructure ready (unused due to AP failure)
+
+### Recommended Next Steps
+
+**1. Enable QEMU CPU Tracing**
+```bash
+qemu-system-aarch64 -d cpu,exec,int -D qemu-trace.log ...
+```
+Check trace for:
+- What instruction APs execute after `br x3`
+- Any exception taken
+- Whether PC actually changes
+
+**2. Try Real Hardware**
+Test on actual aarch64 hardware (Raspberry Pi 4, etc.) to rule out QEMU/HVF emulation bug
+
+**3. Check Exception Handlers**
+Add early exception handlers that write to serial to catch any faults:
+```asm
+exception_vector_base:
+    mov w9, #0x45  // 'E' = exception
+    mov x10, #0x09000000
+    str w9, [x10]
+    b .
+```
+
+**4. Verify Stack**
+Print stack pointer value in assembly before branch:
+```asm
+mov x4, sp
+// Print x4 to serial as hex
+```
+
+**5. Compare with x86 SMP**
+Check `recipes/core/kernel/source/src/arch/x86_shared/start.rs` for how x86 handles AP entry - might reveal missing initialization
+
+**6. Last Resort: Assembly-Only APs**
+If BR fundamentally doesn't work:
+- Keep APs in WFI loop in assembly
+- Implement AP initialization entirely in assembly
+- Use IPIs for BSP-AP communication
+- Have BSP do scheduler setup for APs
+
 
 ## 2026-01-27 Update: Page Table Shareability + ISB Fix
 
