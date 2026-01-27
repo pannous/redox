@@ -40,8 +40,8 @@ encode_video() {
         ffmpeg -y -framerate 30 -pattern_type glob -i "$TEMP_DIR/frame_*.jpg" \
             -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p \
             "$OUTPUT_FILE" 2>&1 | tail -5
-        rm -rf "$TEMP_DIR"
         echo "Saved: $OUTPUT_FILE" >&2
+        echo "Frames preserved in: $TEMP_DIR" >&2
     else
         echo "Not enough frames ($frame_count), skipping encoding" >&2
         rm -rf "$TEMP_DIR"
@@ -52,11 +52,33 @@ trap encode_video EXIT INT TERM
 
 # Capture loop - runs in foreground
 FRAME=0
+PREV_HASH=""
+FRAMES_CAPTURED=0
+FRAMES_SKIPPED=0
+
 while true; do
-    vncsnapshot -quality 90 "$VNC_DISPLAY" "$TEMP_DIR/frame_$(printf %06d $FRAME).jpg" 2>/dev/null || {
+    CURRENT_FILE="$TEMP_DIR/frame_$(printf %06d $FRAME).jpg"
+
+    vncsnapshot -quality 90 "$VNC_DISPLAY" "$CURRENT_FILE" 2>/dev/null || {
         echo "VNC capture failed, stopping..." >&2
         break
     }
+
+    # Compare with previous frame
+    CURRENT_HASH=$(md5 -q "$CURRENT_FILE" 2>/dev/null || md5sum "$CURRENT_FILE" 2>/dev/null | cut -d' ' -f1)
+
+    if [[ "$CURRENT_HASH" == "$PREV_HASH" ]]; then
+        # Frame is identical to previous, delete it
+        rm "$CURRENT_FILE"
+        FRAMES_SKIPPED=$((FRAMES_SKIPPED + 1))
+    else
+        # Frame is different, keep it
+        PREV_HASH="$CURRENT_HASH"
+        FRAMES_CAPTURED=$((FRAMES_CAPTURED + 1))
+    fi
+
     FRAME=$((FRAME + 1))
     sleep 0.033
 done
+
+echo "Captured: $FRAMES_CAPTURED unique frames, skipped: $FRAMES_SKIPPED duplicates" >&2
