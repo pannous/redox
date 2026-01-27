@@ -92,7 +92,9 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         -device ramfb \
-        -serial mon:stdio
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0
         # -device virtio-gpu-pci,edid=on \  ramfb gives better debug info until
         # neither virtio-gpu-pci nor 9p Responsible or even tangential for extreme 100% CPU slowdown. 
 elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
@@ -117,7 +119,9 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
         ${NETDEV_ARGS[*]} \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
         -device virtio-gpu-pci,edid=on \
-        -serial mon:stdio"
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0"
 
 
     # Auto-select default resolution in GUI
@@ -150,6 +154,41 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     if [[ "$2" != "-d" ]]; then
         tmux attach -t "$SESSION"
     fi
+elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
+    # VNC mode: graphical display via VNC with automatic recording
+    VNC_DISPLAY=":1"
+    VNC_PORT="5901"
+    echo "VNC mode: Display on localhost:$VNC_PORT" >&2
+    echo "Connect with: vncviewer localhost:$VNC_PORT" >&2
+    echo "Recording automatically to ./recordings/" >&2
+    echo "Using ramfb graphics device" >&2
+
+    # Start QEMU in background
+    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
+        -rtc base=utc,clock=host \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
+        -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path="$SHARE",security_model=none \
+        "${NETDEV_ARGS[@]}" \
+        -device qemu-xhci -device usb-kbd -device usb-tablet \
+        -device ramfb \
+        -display vnc=$VNC_DISPLAY \
+        -serial stdio &
+    QEMU_PID=$!
+
+    # Start recording in background
+    sleep 2  # Give VNC time to start
+    "$ROOT/record-vnc.sh" "$VNC_DISPLAY" &
+    RECORD_PID=$!
+
+    echo "QEMU PID: $QEMU_PID, Recording PID: $RECORD_PID" >&2
+
+    # Cleanup on exit
+    trap "kill $RECORD_PID 2>/dev/null || true" EXIT
+    wait $QEMU_PID
 else
     # Interactive mode (default)
     # cache=writeback
