@@ -207,7 +207,7 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
     # VNC mode: graphical display via VNC with automatic recording
     VNC_DISPLAY=":1"
     VNC_PORT="5901"
-    SESSION="redox-vnc"
+    SESSION="redox-dev"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
 
     echo "Starting QEMU in tmux session: $SESSION" >&2
@@ -240,19 +240,6 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
     sleep 2  # Give VNC time to start
     "$ROOT/record-vnc.sh" "$VNC_DISPLAY" &
 else
-    # Interactive mode (default)
-    # cache=writeback
     echo "Using: $RAW_IMG" >&2
-    echo "Modes: -s (socket) | -g (gui) | -t (tmux) | -ts (tmux-serial) | -tg (tmux+gui) | -sl (serial-only+log) | -vnc" >&2
-    "$QEMU" -M virt $CPU -m 2G $NOMENU \
-        -rtc base=utc,clock=host \
-        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
-        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
-        -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
-        -device virtio-blk-pci,drive=disk0 \
-        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
-        -fsdev local,id=host0,path="$SHARE",security_model=none \
-        "${NETDEV_ARGS[@]}" \
-        -device qemu-xhci -device usb-kbd \
-        -nographic
+    echo "Modes: -s (serial-only+log) | -ts (tmux-serial) | -tg (tmux+gui)  | -vnc | -so (socket) | -g (gui) | -t (tmux)" >&2
 fi

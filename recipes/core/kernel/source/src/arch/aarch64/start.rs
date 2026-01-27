@@ -337,6 +337,11 @@ global_asm!("
     kstart_ap:
         // x0 = args_phys (physical address of KernelArgsAp struct)
 
+        // Serial debug marker 'A' - AP entry
+        mov x9, #0x09000000
+        mov w11, #0x41  // 'A'
+        str w11, [x9]
+
         // Save x0 for later - we'll need it after page table setup
         mov x10, x0
 
@@ -351,58 +356,79 @@ global_asm!("
         dsb sy
         isb
 
+        // Serial debug marker 'B' - Page tables loaded
+        mov w11, #0x42  // 'B'
+        str w11, [x9]
+
+        // CRITICAL: Setup exception handlers BEFORE Rust code
+        // Mirrors BSP setup - prevents silent crashes on exceptions
+        ldr x4, =exception_vector_base
+        msr vbar_el1, x4
+        isb
+
+        // Serial debug marker 'C' - VBAR set
+        mov w11, #0x43  // 'C'
+        str w11, [x9]
+
         // Load stack_end (offset 24 in KernelArgsAp)
         ldr x2, [x0, #24]
         mov sp, x2
 
-        // Calculate virtual address to jump to:
-        // We want to jump to .Lvirt_entry in PHYS_OFFSET space
-        // PHYS_OFFSET = physical + 0x0000800000000000
+        // Restore args_phys to x0 (required by start_ap function)
+        mov x0, x10
 
-        // Get physical address of .Lvirt_entry
-        adr x3, .Lvirt_entry
-        // Add PHYS_OFFSET to get virtual address
-        movz x4, #0x0000, lsl #48
-        movk x4, #0x8000, lsl #32  // x4 = 0x0000800000000000 (PHYS_OFFSET)
-        add x3, x3, x4
+        // Serial debug marker 'D' - About to jump to Rust
+        mov w11, #0x44  // 'D'
+        str w11, [x9]
 
-        // Jump to virtual address in PHYS_OFFSET space
+        // SIMPLIFIED: Jump directly to virtual address
+        // MMU is active, page tables loaded, identity mapping exists
+        // Safe to use virtual addresses directly
+        ldr x3, =start_ap
         br x3
 
-    // This code executes at PHYS_OFFSET virtual address
-    .Lvirt_entry:
-        // DEBUG: Test if we reach here
-    .Lloop2:
-        b .Lloop2
-
-        // Now we can access global symbols!
-        // Increment AP_ENTRY_COUNT
-        adrp x3, {ap_count}
-        add x3, x3, :lo12:{ap_count}
-    .Lretry:
-        ldaxr w4, [x3]
-        add w4, w4, #1
-        stlxr w5, w4, [x3]
-        cbnz w5, .Lretry
-
-        // Restore args and call start_ap
-        mov x0, x10
-        b {start_ap}
+.p2align 3
+.Lstart_ap_addr:
+    .quad {start_ap}
+.Lkstart_ap_addr:
+    .quad kstart_ap
     ",
     start_ap = sym start_ap,
-    ap_count = sym AP_ENTRY_COUNT,
 );
 
 /// Rust entry point for Application Processors (called from assembly kstart_ap)
 #[unsafe(no_mangle)]
 unsafe extern "C" fn start_ap(args_phys: u64) -> ! {
-    // Increment entry counter FIRST - before ANY other operations
+    // Increment entry counter FIRST - proves we reached Rust
     AP_ENTRY_COUNT.fetch_add(1, Ordering::SeqCst);
+
+    // Verify exception level and VBAR before accessing memory
+    let mut current_el: u64;
+    let mut vbar: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, CurrentEL", out(reg) current_el);
+        core::arch::asm!("mrs {}, vbar_el1", out(reg) vbar);
+    }
+
+    let el = (current_el >> 2) & 3;
+    if el != 1 {
+        // Wrong exception level - infinite loop for debugging
+        loop {
+            core::arch::asm!("wfi");
+        }
+    }
+    if vbar == 0 {
+        // VBAR not set - exception handlers not configured
+        // Infinite loop for debugging
+        loop {
+            core::arch::asm!("wfi");
+        }
+    }
 
     unsafe {
         let cpu_id = {
             // Assembly already set up MMU, stack, and VBAR
-            // Convert physical address to virtual address
+            // NOW safe to access virtual memory
             let args_ptr = (args_phys as usize + crate::PHYS_OFFSET) as *const KernelArgsAp;
             let args = &*args_ptr;
 

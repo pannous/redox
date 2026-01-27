@@ -81,7 +81,26 @@ let entry_point_phys = if entry_point_virt >= crate::PHYS_OFFSET as u64 {
 3. Assembly trampoline created for AP entry (kstart_ap)
 4. Virtual address transition via PHYS_OFFSET calculation
 
-**Remaining:** Minor issue with AP_ENTRY_COUNT increment or final branch to Rust code.
+**Remaining Issue:** APs cannot successfully call Rust code from assembly
+- Assembly-to-Rust transition fails despite correct address calculation
+- Likely linker/relocation or ABI calling convention issue
+- Multiple approaches tested (PC-relative, absolute, offset-based) - all fail
+- Next: Try inline assembly solution or investigate ELF relocation
+
+**Progress Summary:**
+✅ PSCI CPU_ON works
+✅ Physical entry point correct
+✅ Identity mapping functional
+✅ Page table setup succeeds
+✅ Stack setup works
+✅ Address calculations correct (offset method tested)
+❌ Cannot call Rust start_ap function
+
+**Test Evidence:**
+- High CPU (300%+) confirms APs executing assembly
+- Infinite loop tests at various points all succeed
+- Loop before `br x3` confirms address calculation works
+- But AP_ENTRY_COUNT never increments and no Rust logs appear
 
 ## Test Results
 

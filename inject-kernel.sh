@@ -13,6 +13,8 @@ kernel="./recipes/core/kernel/source/target/aarch64-unknown-none/release/kernel"
 REDOXFS="/opt/other/redox/build/fstools/bin/redoxfs"
 MOUNT="mount"
 
+echo kernel: $kernel
+
 if [[ ! -f "$IMG" ]]; then
     echo "Error: IMG not found at $IMG"
     exit 1
@@ -23,17 +25,19 @@ if [[ ! -f "$kernel" ]]; then
     exit 1
 fi
 
-echo "=== Mounting IMG ==="
-./mount.sh
-# mkdir -p "$MOUNT"
-# "$REDOXFS" "$IMG" "$MOUNT"
-sleep 2
+if [[ ! -f "$MOUNT/boot/kernel" ]]; then
+    echo "=== Mounting IMG ==="
+    # ./mount.sh
+    # mkdir -p "$MOUNT"
+    # "$REDOXFS" "$IMG" "$MOUNT"
+    # sleep 2
+fi
 
 echo "=== Current boot directory ==="
 ls -la "$MOUNT/boot/"
 
 echo "=== Replacing kernel ==="
-cp "$MOUNT/boot/kernel" "$MOUNT/boot/kernel.bak"
+# cp "$MOUNT/boot/kernel" "kernel.bak"
 cp "$kernel" "$MOUNT/boot/kernel"
 sync
 

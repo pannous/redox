@@ -1,1 +1,0 @@
-tmux send-keys -t redox-dev C-c

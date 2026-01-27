@@ -64,7 +64,8 @@ This copies from ./share/my-tool to /usr/bin/my-tool during image build.
 # Test
 IMPORTANT: 
 after your injections ALWAYS test with 
-/opt/other/redox/run-dev.sh or
+/opt/other/redox/run-dev.sh --serial for verbose serial output in terminal or
+/opt/other/redox/run-dev.sh --tmux-gui for tmux session with gui window 
 
 # ⚠️ DO NOT TOUCH: Bootloader
 The UEFI bootloader (recipes/core/bootloader/) CANNOT be built on macOS.
@@ -77,6 +78,9 @@ cd /opt/other/redox
 And from there go to the sub-components if necessary.
 All components should be able to be built via /opt/other/redox/build.sh kernel etc
 If our main build script does not work use build-cranelift.sh or similar and update the main build script to work. 
+
+cd /opt/other/redox/; ./build.sh kernel automatically injects it into the mount, which will load on next reboot 
+same for initfs
 
 ⚠️  Instead of changing debug statements from debug! or info! to warn! Keep the semantic meaning and just change the debugging granularity log level. After you have found out how to change the log level reliably Per Component modify this line. 
 
