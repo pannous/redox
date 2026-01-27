@@ -97,8 +97,6 @@ let entry_point_phys = if entry_point_virt >= crate::PHYS_OFFSET as u64 {
 ❌ Cannot call Rust start_ap function
 
 **Test Evidence:**
-- High CPU (300%+) confirms APs executing assembly
-- Infinite loop tests at various points all succeed
 - Loop before `br x3` confirms address calculation works
 - But AP_ENTRY_COUNT never increments and no Rust logs appear
 
