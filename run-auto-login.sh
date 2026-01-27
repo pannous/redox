@@ -9,8 +9,9 @@ if {![info exists boot_wait] || $boot_wait == ""} {
 }
 
 # spawn ./run-dev.sh
-# spawn ./run-dev.sh -g # gui 
-spawn ./run-dev.sh -vnc
+spawn ./run-dev.sh --serial
+# spawn ./run-dev.sh --gui 
+# spawn ./run-dev.sh --vnc
 
 # Auto-select default resolution in QEMU GUI window after 2s
 exec bash -c {sleep 1 && osascript -e 'tell application "System Events" to keystroke return'} &

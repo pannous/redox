@@ -7,7 +7,7 @@ echo "/opt/other/redox/build.sh kernel"
 set -e
 
 IMG="${1:-/opt/other/redox/build/aarch64/pure-rust.img}"
-kernel="./recipes/core/kernel/source/target/aarch64-unknown-none/release/kernel"
+kernel="/opt/other/redox/recipes/core/kernel/source/target/aarch64-unknown-none/release/kernel"
 # kernel="./recipes/core/kernel/source/target/aarch64-unknown-kernel/release/kernel" nope
 # kernel="./recipes/core/kernel/source/target/aarch64-unknown-redox/release/kernel"
 REDOXFS="/opt/other/redox/build/fstools/bin/redoxfs"

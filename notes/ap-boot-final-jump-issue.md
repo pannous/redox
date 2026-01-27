@@ -331,3 +331,88 @@ When fixed, we should see:
 - `notes/smp-cpu-debugging.md` - Full SMP debugging history
 - `notes/testing-real-hardware.md` - Guide for testing on real aarch64 hardware
 - Project CLAUDE.md - Build and testing workflows
+
+---
+
+## BREAKTHROUGH: Silent Instruction Fetch Failure (2026-01-27)
+
+### Comprehensive Diagnostics Completed
+
+After adding extensive diagnostics (address printing, I-cache flush, minimal Rust entry point), we have identified the exact failure point:
+
+**Sequence of Events**:
+1. ✅ APs complete all assembly setup (ABCDEFGSTJK)
+2. ✅ Load target address: `0xFFFF_FF00_0000_1014` (printed as hex)
+3. ✅ I-cache flush executes (marker 'M')
+4. ✅ Jump instruction executes (marker '>' before `br x8`)
+5. ❌ Target code NEVER executes (no '!RUST' from `ap_entry_minimal`)
+6. ✅ NO exceptions triggered (no '!Y', '!I', '!F', '!E')
+
+### Root Cause Identified
+
+**The `br x8` instruction successfully branches from physical space (~0x8e0f_xxxx) to high virtual space (~0xFFFF_FF00_0000_xxxx), but the CPU cannot fetch instructions from the target address.**
+
+This is a **silent instruction fetch failure** - no exception is generated, but execution does not continue at the target location.
+
+### Evidence
+
+- Created minimal Rust function `ap_entry_minimal` that immediately writes `!RUST` to serial
+- Function uses physical serial address (0x09000000) to avoid any PHYS_OFFSET complications
+- Assembly confirms jump executes (marker '>' appears, no 'X' fall-through)
+- Exception handlers instrumented with unique markers - none triggered
+
+### Possible Root Causes
+
+1. **Page Table Issue**: High virtual addresses not properly mapped for instruction fetch
+   - Data access works (BSP uses these addresses)
+   - Instruction fetch may require different permissions/attributes
+
+2. **HVF (macOS Hypervisor) Bug**: QEMU with HVF may have issues with:
+   - Virtual address instruction fetch from non-primary CPU
+   - Cross-address-space branches
+   - Should test on real aarch64 hardware
+
+3. **MMU State Mismatch**: APs may have subtly different MMU configuration than BSP
+   - Check SCTLR_EL1, TCR_EL1, MAIR_EL1 registers
+   - Verify both TTBR0 and TTBR1 are identical to BSP
+
+4. **Alignment or Cache Coherency**: Though I-cache flush was added
+   - May need D-cache clean before I-cache invalidate
+   - Branch prediction issues?
+
+### Files Modified
+
+- `recipes/core/kernel/source/src/arch/aarch64/start.rs:488-545`
+  - Added full 64-bit address printing (16 hex digits with underscores)
+  - Added I-cache flush (ic iallu + barriers) before branch
+  - Created `ap_entry_minimal()` - minimal Rust entry that writes `!RUST`
+  - Changed `start_addr` to point to `ap_entry_minimal` instead of `start`
+
+- `recipes/core/kernel/source/src/arch/aarch64/vectors.rs:37-75`
+  - Enhanced exception markers: '!' prefix + unique letter (Y/I/F/E)
+  - Makes exceptions clearly distinguishable from boot markers
+
+### Recommended Next Actions
+
+1. **Test on Real Hardware** (HIGH PRIORITY)
+   - Raspberry Pi 4/5 or cloud aarch64 instance
+   - Rules out HVF-specific issues
+
+2. **Page Table Analysis**
+   - Dump page table entries for the high virtual address range
+   - Compare BSP vs AP page table attributes
+   - Check execute permissions (PXN/UXN bits)
+
+3. **Alternative Approach: Identity-Mapped AP Path**
+   - Keep APs executing in physical/identity space
+   - Call start() indirectly through a wrapper
+   - Avoid high-virtual jumps entirely
+
+4. **MMU Register Comparison**
+   - Print SCTLR_EL1, TCR_EL1, MAIR_EL1 from both BSP and APs
+   - Verify MMU configuration is identical
+
+5. **Cache Maintenance Investigation**
+   - Try D-cache clean before I-cache invalidate
+   - Test with caches disabled (SCTLR_EL1.I = 0)
+
