@@ -426,6 +426,76 @@ If BR fundamentally doesn't work:
 - Use IPIs for BSP-AP communication
 - Have BSP do scheduler setup for APs
 
+## 2026-01-27 Update #4: Option 1 Attempted - Virtual Transition Works But Execution Fails
+
+### What We Tried (Commit 79e487ac529 / 63b49aa0)
+
+Implemented explicit virtual space transition:
+```asm
+1. Get PC (physical) with ADR2. Subtract kernel_phys_base (0x8e0f0000) to get offset
+3. Build KERNEL_OFFSET (0xffffff00_00000000) with MOVZ/MOVK
+4. Add offset to get virtual address
+5. BR to virtual space
+```
+
+### Results
+
+**Good News:**
+- ✅ Address computation works (V marker appears)
+- ✅ BR executes (no X marker = doesn't fall through)
+- ✅ APs jump to virtual space successfully
+
+**Bad News:**
+- ❌ Execution fails after arriving in virtual space
+- ❌ No W marker (first instruction after jump)
+- ❌ Direct branch `b {start}` also fails
+- ❌ Same issue with TCG and HVF (not emulator-specific)
+
+**Serial Evidence:**
+```
+BSP: R B (reaches Rust, identified as BSP)
+APs: A B V (MMU on, virt addr computed, jump attempted)
+     No W or further markers
+```
+
+### Analysis
+
+The virtual address transition succeeds, but **something is wrong with the virtual address space itself**:
+
+1. **Stack might be invalid** - Stack address is physical, may need virtual conversion
+2. **Page tables incomplete** - High mapping might not cover all needed addresses
+3. **Exception in virtual space** - Taking exception but no handler visible
+4. **Identity mapping removed** - Some resources still accessed via identity?
+
+### Key Insight
+
+The problem shifted from "can't compute address" to "can't execute in virtual space". This suggests the virtual environment isn't fully set up for AP execution.
+
+### Files Modified
+- `src/arch/aarch64/start.rs` - Virtual space transition with MOV-based address computation
+- `src/arch/aarch64/vectors.rs` - Exception markers (S, F, E) - none triggered
+
+### What Doesn't Work
+- Serial access in virtual space (PHYS_OFFSET + 0x09000000)
+- Any instruction execution after BR to virtual address
+- Even simplified code (no serial markers) fails
+
+### Recommended Next Steps
+
+**Immediate:**
+1. **Check stack address** - May need: stack_virt = PHYS_OFFSET + stack_phys
+2. **Verify page table coverage** - Does high mapping cover .Lcontinue_virt address?
+3. **Add exception handler logging** - Put serial writes in actual exception handlers
+4. **Print computed address** - Show virt address before BR (via physical serial)
+
+**Alternative Approaches:**
+- **Option 2**: Have BSP set up APs entirely (no assembly on APs)
+- **Option 3**: Keep identity mapping active longer, transition later
+- **Option 4**: Use IPI-based initialization (assembly-only APs)
+
+**Reality Check:**
+After extensive debugging (address printing, exception handlers, TCG testing, multiple addressing modes), we may be hitting a fundamental limitation of how Redox's kernel is structured for SMP on aarch64. Consider consulting Redox maintainers or looking at how other Rust OSes (Tock, etc.) handle aarch64 SMP boot.
+
 
 ## 2026-01-27 Update: Page Table Shareability + ISB Fix
 
