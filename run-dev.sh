@@ -162,8 +162,9 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
     echo "Connect with: vncviewer localhost:$VNC_PORT" >&2
     echo "Recording automatically to ./recordings/" >&2
     echo "Using ramfb graphics device" >&2
+    echo "Serial output -> vnc-serial.log" >&2
 
-    # Start QEMU in background with monitor socket for auto-resolution
+    # Start QEMU in background, log serial to file
     rm -f "$MONSOCK"
     HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
@@ -177,12 +178,9 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
         -device qemu-xhci -device usb-kbd -device usb-tablet \
         -device ramfb \
         -display vnc=$VNC_DISPLAY \
-        -monitor unix:"$MONSOCK",server,nowait \
-        -serial stdio &
+        -serial file:vnc-serial.log \
+        -nographic &
     QEMU_PID=$!
-
-    # Auto-select default resolution after 2s
-    (sleep 2 && echo "sendkey ret" | socat - UNIX-CONNECT:"$MONSOCK" 2>/dev/null) &
 
     # Start recording in background
     sleep 2  # Give VNC time to start
@@ -190,6 +188,7 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
     RECORD_PID=$!
 
     echo "QEMU PID: $QEMU_PID, Recording PID: $RECORD_PID" >&2
+    echo "Boot will auto-continue after UEFI timeout" >&2
 
     # Cleanup on exit
     trap "kill $RECORD_PID 2>/dev/null || true" EXIT
