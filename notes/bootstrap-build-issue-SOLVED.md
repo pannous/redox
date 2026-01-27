@@ -1,3 +1,20 @@
+
+# ⚠️ DO NOT TOUCH: Bootloader
+The UEFI bootloader (recipes/core/bootloader/) CANNOT be built on macOS.
+- Requires Linux + LLVM (Cranelift doesn't support PE/COFF format for aarch64-unknown-uefi)
+
+Bootloader ≠ Bootstrap
+DIFFERENT!!!  from - recipes/core/base/source/bootstrap = init/bootstrap INSIDE Redox OS 
+
+BUT!!
+       kernel::syscall::process:DEBUG -- Bootstrap entry point: 3000                                                         
+       kernel::context::memory:DEBUG -- Instuction fetch, but grant was not PROT_EXEC.  
+       resolve via
+./mount/boot/bootloader.efi
+./mount/boot/bootloader-live.efi  same as
+./denovo/bootloader/EFI/BOOT/BOOTAA64.EFI
+
+
 # Bootstrap Build Issue - SOLVED ✅
 
 ## Problem
@@ -67,5 +84,16 @@ To properly fix the bootstrap build:
 2026-01-26 11:50 - SOLVED
 
 ## Commits
-- 3c25f83f8: fix(bootstrap): Use working bootstrap backup until build issue resolved
+- 2896412cb: fix(bootstrap): Use working bootstrap backup to prevent build crashes (2026-01-27 recovery)
+- 3c25f83f8: fix(bootstrap): Use working bootstrap backup until build issue resolved (initial fix)
 - Previous investigation documented in initfs-build-issue.md
+
+## Recovery Notes (2026-01-27 15:25)
+**Issue recurred**: Build script was attempting to rebuild bootstrap again
+**Recovery steps**:
+1. Found working bootstrap in `/tmp/bootstrap-from-working.bin` (md5: b14e31cb6e291488f30019c308aab3ec)
+2. Copied to `bootstrap/bootstrap-working-backup.bin`
+3. Modified `build-initfs-cranelift.sh` to use backup with error checking
+4. Committed fix (2896412cb)
+
+**Prevention**: Build script now includes safety check - exits with error if backup is missing
