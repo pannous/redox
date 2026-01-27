@@ -44,7 +44,7 @@ encode_video() {
         echo "Frames preserved in: $TEMP_DIR" >&2
     else
         echo "Not enough frames ($frame_count), skipping encoding" >&2
-        rm -rf "$TEMP_DIR"
+        echo "Frames preserved in: $TEMP_DIR" >&2
     fi
 }
 
