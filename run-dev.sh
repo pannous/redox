@@ -58,7 +58,7 @@ if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
     echo "Socket mode: $SOCK" >&2
     echo "Monitor: $MONSOCK" >&2
     echo "Connect: socat - unix-connect:$SOCK" >&2
-    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G \
+    "$QEMU" -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -81,7 +81,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
     echo "Graphical mode: QEMU window with framebuffer terminal" >&2
     echo "Serial console also available in this terminal" >&2
     echo "Using virtio-gpu-pci with blob support"
-    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G  $NOMENU \
+    "$QEMU" -M virt $CPU -m 2G  $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -108,7 +108,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     echo "Using virtio-gpu-pci with blob support"
 
     tmux new-session -d -s "$SESSION" \
-        "HVF_WFI_SLEEP=$HVF_WFI_SLEEP \"$QEMU\" -M virt $CPU -m 2G $NOMENU \
+        "\"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -139,7 +139,7 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     echo "Detach: Ctrl-b d" >&2
 
     tmux new-session -d -s "$SESSION" \
-        "HVF_WFI_SLEEP=$HVF_WFI_SLEEP \"$QEMU\" -M virt $CPU -m 2G $NOMENU \
+        "\"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -158,47 +158,44 @@ elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
     # VNC mode: graphical display via VNC with automatic recording
     VNC_DISPLAY=":1"
     VNC_PORT="5901"
+    SESSION="redox-vnc"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+    echo "Starting QEMU in tmux session: $SESSION" >&2
+    echo "Attach: tmux attach -t $SESSION" >&2
+    echo "Detach: Ctrl-b d" >&2
     echo "VNC mode: Display on localhost:$VNC_PORT" >&2
     echo "Connect with: vncviewer localhost:$VNC_PORT" >&2
     echo "Recording automatically to ./recordings/" >&2
     echo "Using ramfb graphics device" >&2
-    echo "Serial output -> vnc-serial.log" >&2
+    # echo "Serial output -> vnc-serial.log" >&2
 
     # Start QEMU in background, log serial to file
-    rm -f "$MONSOCK"
-    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
+    # "$QEMU" -M virt $CPU -m 2G $NOMENU \
+    tmux new-session -d -s "$SESSION" \
+        "\"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
         -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
         -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
-        -fsdev local,id=host0,path="$SHARE",security_model=none \
-        "${NETDEV_ARGS[@]}" \
+        -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
+        ${NETDEV_ARGS[*]} \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
         -device ramfb \
         -display vnc=$VNC_DISPLAY \
-        -serial file:vnc-serial.log \
-        -nographic &
-    QEMU_PID=$!
+        -serial mon:stdio"
 
     # Start recording in background
     sleep 2  # Give VNC time to start
     "$ROOT/record-vnc.sh" "$VNC_DISPLAY" &
-    RECORD_PID=$!
-
-    echo "QEMU PID: $QEMU_PID, Recording PID: $RECORD_PID" >&2
-    echo "Boot will auto-continue after UEFI timeout" >&2
-
-    # Cleanup on exit
-    trap "kill $RECORD_PID 2>/dev/null || true" EXIT
-    wait $QEMU_PID
 else
     # Interactive mode (default)
     # cache=writeback
     echo "Using: $RAW_IMG" >&2
     echo "Socket mode: $0 -s" >&2
-    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
+    "$QEMU" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
