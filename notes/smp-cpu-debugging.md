@@ -198,3 +198,100 @@ cpu0 26523 0 0 6823 0 ctx_sw:16163 ipi_s:0 ipi_r:0
 - Per-CPU stats: `recipes/core/kernel/source/src/cpu_stats.rs`
 - Stats export: `recipes/core/kernel/source/src/scheme/sys/stat.rs`
 - PSCI spec: ARM PSCI v1.0+
+
+## 2026-01-27: Major Progress - APs Reach Rust, Cache Coherency Issue Found
+
+### Breakthrough
+After adding VBAR setup and debug markers, confirmed that:
+- ✅ APs execute all assembly (markers A,B,C,D)
+- ✅ APs reach Rust code (markers E,F)
+- ✅ APs execute fetch_add on AP_ENTRY_COUNT
+- ✅ APs see incremented values (0-9) in their local view
+
+### The Problem: Cache Coherency
+Serial output shows `F9 F4 F0...` - APs reading back values they wrote.
+But BSP always reads `AP_ENTRY_COUNT=0`.
+
+**Root cause**: AP writes stay in local cache, not propagated to BSP.
+
+### Evidence
+```
+=== Serial markers ===
+F9  <- AP saw value 9 after its fetch_add
+F4  <- AP saw value 4
+F0  <- Multiple APs saw 0 (race)
+
+=== BSP log ===
+AP_ENTRY_COUNT=0  <- BSP never sees updates
+```
+
+### Cache Operations Attempted
+- `dsb sy` before/after atomic
+- `dc cvac` (clean data cache to point of coherency)
+- `isb` instruction barrier
+- Ordering::SeqCst (strongest memory ordering)
+
+**None worked** - suggests page table attribute issue, not just barrier issue.
+
+### Next Steps: Page Table Shareability
+ARM requires Normal memory regions used for inter-CPU communication to have:
+- Memory type: Normal (not Device)  
+- Shareability: Inner Shareable or Outer Shareable
+- Cacheability: Write-back (not Write-through or Non-cacheable)
+
+Check in paging::init() and page table setup:
+1. MAIR_EL1 configuration - kernel data should use shareable attribute
+2. Page table entries - need Shareable bit set
+3. Consider adding explicit DMB (data memory barrier) after atomic ops
+
+### Code Location
+- Assembly: recipes/core/kernel/source/src/arch/aarch64/start.rs:336-400
+- Rust entry: recipes/core/kernel/source/src/arch/aarch64/start.rs:407-430
+- Paging setup: recipes/core/kernel/source/src/paging/aarch64/mod.rs
+
+
+## 2026-01-27 Update: Page Table Shareability + ISB Fix
+
+### What Was Fixed
+1. **Added shareability to page table entries**  
+   - `rmm/src/arch/aarch64.rs`: ENTRY_FLAG_DEFAULT_PAGE now has bits [9:8] = 0b11 (Inner Shareable)
+   - This makes memory accesses visible across all CPUs in the Inner Shareable domain
+
+2. **Added instruction cache sync before jump**  
+   - `src/arch/aarch64/start.rs:389-393`: Added `dsb ish; isb` before `br x3`  
+   - ARM requires IC maintenance after MMU reconfig - prevents stale instruction fetches
+
+### Current Status
+✅ **APs execute Rust code reliably** (199 E markers, 142 F markers in serial)  
+✅ **Exception handlers working** (VBAR configured, can see exception output)  
+✅ **APs increment counters** (tested both atomic and volatile)  
+
+❌ **BSP reads stale values** - Both atomic (0) and volatile (0) counters read as 0 by BSP  
+   - APs see their own increments (F0-F9 pattern in earlier tests)  
+   - BSP never sees updates despite: DMB ISH, DC CVAC, DC IVAC, DSB SY, ISB  
+
+### The Mystery
+Even with:
+- Page table shareability bits set
+- Explicit cache clean (DC CVAC) by APs
+- Explicit cache invalidate (DC IVAC) by BSP  
+- Data Memory Barriers (DMB ISH)  
+- Both atomic (SeqCst) and raw volatile operations
+
+The BSP still reads 0. Possible causes:
+1. .bss/.data section mapped by bootloader before our shareability fix
+2. HVF/QEMU cache coherency emulation issue  
+3. Need to explicitly remap kernel data sections with correct attributes
+4. Some other ARM-specific requirement we're missing
+
+### Files Changed (commit cee59b72)
+- `rmm/src/arch/aarch64.rs`: Shareability in page table entry defaults  
+- `src/arch/aarch64/start.rs`: ISB before jump, dual counter test, verbose serial debug  
+- `src/acpi/madt/arch/aarch64.rs`: Read both counters with cache invalidation
+
+### Next Steps
+1. Try remapping .bss/.data explicitly with PageMapper::remap_with_full()
+2. Or allocate sync variables in freshly-mapped pages (guaranteed correct attributes)
+3. Or use message-passing via MMIO device memory (always coherent)
+4. Check if HVF has known cache coherency quirks
+

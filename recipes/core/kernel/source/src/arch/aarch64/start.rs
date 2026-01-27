@@ -29,6 +29,9 @@ static BSP_READY: AtomicBool = AtomicBool::new(false);
 /// Counter to track how many APs actually entered kstart_ap
 pub static AP_ENTRY_COUNT: AtomicU32 = AtomicU32::new(0);
 
+/// Alternative counter using volatile ptr (bypasses atomic infrastructure for testing)
+pub static mut AP_ENTRY_VOLATILE: u32 = 0;
+
 /// Enumerate CPU cores from device tree
 unsafe fn enumerate_cpus_from_dtb(dtb: &Fdt) -> u32 {
     let mut cpu_count = 0;
@@ -262,6 +265,15 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             // Activate memory logging
             crate::log::init();
 
+            // Initialize SMP sync variables in freshly-mapped shareable memory
+            // This must happen after allocator::init() so we can allocate frames
+            info!("Initializing SMP sync variables with explicit shareability...");
+            if let Err(e) = crate::arch::smp_sync::init_smp_sync_normal() {
+                error!("Failed to init SMP sync (Normal memory): {}", e);
+            } else {
+                info!("SMP sync initialized successfully in Normal shareable memory");
+            }
+
             // Initialize devices
             //DEBUG_MARKER.store(100, AtomicOrdering::SeqCst);
             match dtb_res {
@@ -374,99 +386,75 @@ global_asm!("
         ldr x2, [x0, #24]
         mov sp, x2
 
-        // Restore args_phys to x0 (required by start_ap function)
-        mov x0, x10
-
-        // Serial debug marker 'D' - About to jump to Rust
+        // Serial debug marker 'D' - About to increment counter
         mov w11, #0x44  // 'D'
         str w11, [x9]
 
-        // SIMPLIFIED: Jump directly to virtual address
-        // MMU is active, page tables loaded, identity mapping exists
-        // Safe to use virtual addresses directly
-        ldr x3, =start_ap
-        br x3
+        // **NEW APPROACH**: Increment sync counter directly in assembly
+        // Load SMP_SYNC_PTR from global (set by BSP)
+        ldr x4, =__smp_sync_ptr_storage
+        ldr x4, [x4]  // Dereference to get actual pointer
 
-.p2align 3
-.Lstart_ap_addr:
-    .quad {start_ap}
-.Lkstart_ap_addr:
-    .quad kstart_ap
+        // Check if pointer is null
+        cbz x4, .Lno_sync
+
+        // Serial marker 'P' = pointer OK
+        mov w11, #0x50  // 'P'
+        str w11, [x9]
+
+        // Atomic increment of ap_entry_count (first field of SmpSyncBlock)
+        // Use LDADD (atomic add) if available, otherwise use LDXR/STXR loop
+        mov w5, #1
+        dmb ish
+
+    .Latomic_retry:
+        ldaxr w6, [x4]     // Load-exclusive with acquire
+        add w6, w6, w5     // Increment
+        stlxr w7, w6, [x4] // Store-exclusive with release
+        cbnz w7, .Latomic_retry // Retry if store failed
+
+        // Clean cache to PoC
+        dc cvac, x4
+        dsb ish
+
+        // Serial marker 'F' = increment done
+        mov w11, #0x46  // 'F'
+        str w11, [x9]
+
+        b .Lwfi_loop
+
+    .Lno_sync:
+        // Serial marker 'N' = pointer null
+        mov w11, #0x4E  // 'N'
+        str w11, [x9]
+
+    .Lwfi_loop:
+        wfi
+        b .Lwfi_loop
+
+    .p2align 3
+    .Lstart_ap_addr:
+        .quad {start_ap}
     ",
     start_ap = sym start_ap,
 );
 
-/// Rust entry point for Application Processors (called from assembly kstart_ap)
+/// MINIMAL Rust entry point for Application Processors - just serial writes
 #[unsafe(no_mangle)]
-unsafe extern "C" fn start_ap(args_phys: u64) -> ! {
-    // Increment entry counter FIRST - proves we reached Rust
-    AP_ENTRY_COUNT.fetch_add(1, Ordering::SeqCst);
-
-    // Verify exception level and VBAR before accessing memory
-    let mut current_el: u64;
-    let mut vbar: u64;
+#[inline(never)]
+pub extern "C" fn start_ap(_args_phys: u64) -> ! {
+    // ABSOLUTE MINIMUM - just write to serial, no locals, no function calls
+    let serial = 0x09000000 as *mut u32;
     unsafe {
-        core::arch::asm!("mrs {}, CurrentEL", out(reg) current_el);
-        core::arch::asm!("mrs {}, vbar_el1", out(reg) vbar);
+        core::ptr::write_volatile(serial, 0x45); // 'E'
+        core::ptr::write_volatile(serial, 0x45); // 'E' again
+        core::ptr::write_volatile(serial, 0x45); // 'E' third time
     }
 
-    let el = (current_el >> 2) & 3;
-    if el != 1 {
-        // Wrong exception level - infinite loop for debugging
-        loop {
-            core::arch::asm!("wfi");
+    // Infinite loop
+    loop {
+        unsafe {
+            core::arch::asm!("wfi", options(nostack, nomem));
         }
-    }
-    if vbar == 0 {
-        // VBAR not set - exception handlers not configured
-        // Infinite loop for debugging
-        loop {
-            core::arch::asm!("wfi");
-        }
-    }
-
-    unsafe {
-        let cpu_id = {
-            // Assembly already set up MMU, stack, and VBAR
-            // NOW safe to access virtual memory
-            let args_ptr = (args_phys as usize + crate::PHYS_OFFSET) as *const KernelArgsAp;
-            let args = &*args_ptr;
-
-            let cpu_id = crate::cpu_set::LogicalCpuId::new(args.cpu_id as u32);
-
-            warn!("AP {}: start_ap entered (total entries={})", cpu_id.get(), AP_ENTRY_COUNT.load(Ordering::SeqCst));
-
-            // Initialize paging (MAIR)
-            paging::init();
-
-            warn!("AP {}: Paging initialized", cpu_id.get());
-
-            // Initialize per-CPU block and set TPIDR_EL1
-            crate::misc::init(cpu_id);
-
-            warn!("AP {}: Percpu block initialized", cpu_id.get());
-
-            // Note: GIC CPU interface initialization happens automatically
-            // on GICv2, the CPU interface is banked per-CPU and accessed at
-            // the same address, routed by hardware based on the accessing CPU.
-            // BSP already initialized the GIC distributor and CPU interfaces.
-
-            // Signal readiness
-            AP_READY.store(true, Ordering::SeqCst);
-
-            warn!("AP {}: Signaled readiness", cpu_id.get());
-
-            cpu_id
-        };
-
-        // Wait for BSP to complete initialization
-        debug!("AP CPU {} waiting for BSP_READY", cpu_id.get());
-        while !BSP_READY.load(Ordering::SeqCst) {
-            core::hint::spin_loop();
-        }
-        debug!("AP CPU {} BSP ready, calling kmain_ap", cpu_id.get());
-
-        // Call kmain_ap to enter scheduler
-        crate::kmain_ap(cpu_id);
     }
 }

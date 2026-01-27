@@ -285,7 +285,10 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
     }
 
     info!("Started {} secondary CPU(s)", ap_count);
-    info!("AP_ENTRY_COUNT={}", crate::arch::start::AP_ENTRY_COUNT.load(core::sync::atomic::Ordering::SeqCst));
+
+    // Read AP entry count using new shareable sync block
+    let ap_entry_count = crate::arch::smp_sync::read_ap_entry();
+    info!("AP_ENTRY_COUNT={} (from shareable sync block)", ap_entry_count);
 }
 
 /// Start secondary CPUs from device tree (without ACPI MADT)
