@@ -351,8 +351,7 @@ build_kernel() {
         fi
     fi
     echo "auto-inject"
-    ./inject-kernel.sh
-        
+    /opt/other/redox/inject-kernel.sh
 
     cd "$BASE_DIR"
 }
