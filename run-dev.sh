@@ -53,7 +53,7 @@ fi
 NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
 
 # Socket mode: for scripted/heredoc usage
-if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
+if [[ "$1" == "-so" || "$1" == "--socket" ]]; then
     rm -f "$SOCK" "$MONSOCK"
     echo "Socket mode: $SOCK" >&2
     echo "Monitor: $MONSOCK" >&2
@@ -130,6 +130,36 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     if [[ "$2" != "-d" ]]; then
         tmux attach -t "$SESSION"
     fi
+elif [[ "$1" == "-ts" || "$1" == "--tmux-serial" ]]; then
+    # Tmux mode with serial logging - no GUI, full debug.log capture
+    SESSION="redox-dev"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+    echo "Starting QEMU in tmux session with serial logging: $SESSION" >&2
+    echo "Attach: tmux attach -t $SESSION" >&2
+    echo "Detach: Ctrl-b d" >&2
+    echo "Serial output logged to debug.log" >&2
+    rm -f debug.log
+
+    tmux new-session -d -s "$SESSION" \
+        "HVF_WFI_SLEEP=$HVF_WFI_SLEEP \"$QEMU\" -M virt $CPU -m 2G $NOMENU \
+        -rtc base=utc,clock=host \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
+        -drive file=\"$RAW_IMG\",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
+        ${NETDEV_ARGS[*]} \
+        -device qemu-xhci -device usb-kbd \
+        -nographic \
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0"
+
+    if [[ "$2" != "-d" ]]; then
+        tmux attach -t "$SESSION"
+    fi
 elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     SESSION="redox-dev"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
@@ -154,6 +184,25 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     if [[ "$2" != "-d" ]]; then
         tmux attach -t "$SESSION"
     fi
+elif [[ "$1" == "-sl" || "$1" == "-s" || "$1" == "--serial" || "$1" == "--serial-only" ]]; then
+    # Serial-only mode: no framebuffer, all output to serial and debug.log
+    echo "Serial-only mode: All kernel output captured to debug.log" >&2
+    echo "No GUI - framebuffer disabled for complete text logging" >&2
+    rm -f debug.log
+    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
+        -rtc base=utc,clock=host \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
+        -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
+        "${NETDEV_ARGS[@]}" \
+        -device qemu-xhci -device usb-kbd \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path="$SHARE",security_model=none \
+        -nographic \
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0
 elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
     # VNC mode: graphical display via VNC with automatic recording
     VNC_DISPLAY=":1"
@@ -194,7 +243,7 @@ else
     # Interactive mode (default)
     # cache=writeback
     echo "Using: $RAW_IMG" >&2
-    echo "Socket mode: $0 -s" >&2
+    echo "Modes: -s (socket) | -g (gui) | -t (tmux) | -ts (tmux-serial) | -tg (tmux+gui) | -sl (serial-only+log) | -vnc" >&2
     "$QEMU" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
