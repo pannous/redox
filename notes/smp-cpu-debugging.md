@@ -542,3 +542,44 @@ The BSP still reads 0. Possible causes:
 3. Or use message-passing via MMIO device memory (always coherent)
 4. Check if HVF has known cache coherency quirks
 
+
+## KEY BREAKTHROUGH: Indirect Branch Fix (2026-01-27 19:48)
+
+### Problem Identified
+APs reached all setup markers (ABCDEFGSTJ) but failed on `b {start}` instruction.
+
+**Root Cause:** Direct branch `b {start}` uses PC-relative addressing with ±128MB range.
+- APs execute from identity-mapped space (~0x8e0f0000)
+- `start()` function is linked at high virtual address (KERNEL_OFFSET ≈ 0xffffff00_00000000)
+- Distance exceeds PC-relative branch range!
+
+### Solution Implemented
+Changed from direct branch to indirect branch via register in `start.rs:488-505`:
+
+```asm
+// OLD (failed):
+b {start}
+
+// NEW (should work):
+ldr x8, =start_addr    // Load address of start_addr label
+ldr x8, [x8]           // Load actual start() address from memory
+br x8                  // Indirect branch - can reach any 64-bit address
+
+start_addr:
+    .quad {start}      // Store start() address here
+```
+
+**Why this works:**
+- `br` instruction can jump to any 64-bit address in a register
+- Not limited by PC-relative range like `b` instruction
+
+### Testing Status
+- Kernel compiles successfully with indirect branch
+- Clean image boots normally (confirmed with pure-rust.MULTI-CPU.works.img)
+- Need to properly inject modified kernel and test AP markers
+
+**Next Steps:**
+1. Properly inject kernel into clean image (avoid mount corruption)
+2. Test and verify APs reach marker 'K' (address loaded) 
+3. Confirm APs successfully enter start() and call start_ap_shared()
+4. Verify AP sync counter increments correctly
