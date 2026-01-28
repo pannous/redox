@@ -75,8 +75,10 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
 }
 
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
+    warn!("usermode_bootstrap: ENTERED with page_count={}", bootstrap.page_count);
     assert_ne!(bootstrap.page_count, 0);
 
+    warn!("usermode_bootstrap: About to create address space mappings");
     {
         let addr_space = Arc::clone(
             context::current()
@@ -84,6 +86,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
+        warn!("usermode_bootstrap: Got address space");
 
         let base = Page::containing_address(VirtualAddress::new(PAGE_SIZE));
         let flags = MapFlags::MAP_FIXED_NOREPLACE
@@ -93,6 +96,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
 
         let page_count =
             NonZeroUsize::new(bootstrap.page_count).expect("bootstrap contained no pages!");
+        warn!("usermode_bootstrap: About to mmap {} pages at base {:?}", page_count, base);
 
         let _base_page = addr_space
             .acquire_write()
@@ -114,20 +118,42 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             )
             .expect("Failed to allocate bootstrap pages");
+        warn!("usermode_bootstrap: mmap completed successfully");
     }
 
+    warn!("usermode_bootstrap: About to copy bootstrap memory");
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
+    warn!("usermode_bootstrap: Got bootstrap_slice, size={} bytes", bootstrap_slice.len());
+
+    // Check DAIF before copy
+    let daif_before: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif_before);
+    }
+    warn!("usermode_bootstrap: DAIF before copy={:#x}, IRQs {}",
+          daif_before, if (daif_before & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
+
     UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
         .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
 
+    // Check DAIF after copy
+    let daif_after: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif_after);
+    }
+    warn!("usermode_bootstrap: DAIF after copy={:#x}, IRQs {}",
+          daif_after, if (daif_after & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
+    warn!("usermode_bootstrap: Bootstrap memory copied to userspace");
+
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
-    debug!("Bootstrap entry point: {:X}", bootstrap_entry);
+    warn!("usermode_bootstrap: Bootstrap entry point: {:#X}", bootstrap_entry);
     assert_ne!(bootstrap_entry, 0);
 
     // Start in a minimal environment without any stack.
 
+    warn!("usermode_bootstrap: About to set up registers");
     let ctx = context::current();
     let mut lock = ctx.write(token.token());
     let regs = &mut lock
@@ -137,6 +163,8 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         regs.init();
         regs.set_instr_pointer(bootstrap_entry.try_into().unwrap());
     }
+    warn!("usermode_bootstrap: Registers initialized, entry point set to {:#X}", bootstrap_entry);
+    warn!("usermode_bootstrap: COMPLETE - returning to userspace_init");
 }
 
 pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {

@@ -208,7 +208,19 @@ extern "C" fn userspace_init() {
     warn!("userspace_init: created token");
     let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
     warn!("userspace_init: got bootstrap, calling usermode_bootstrap");
-    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) }
+    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) };
+    warn!("userspace_init: usermode_bootstrap RETURNED - this should never happen!");
+    warn!("userspace_init: About to loop forever...");
+    loop {
+        warn!("userspace_init: Still in loop, DAIF={:#x}", unsafe {
+            let daif: u64;
+            core::arch::asm!("mrs {}, daif", out(reg) daif);
+            daif
+        });
+        unsafe {
+            core::arch::asm!("wfi"); // Wait for interrupt
+        }
+    }
 }
 
 struct Bootstrap {

@@ -121,6 +121,16 @@ impl GenericTimer {
         ctrl.insert(TimerCtrlFlags::ENABLE);
         ctrl.remove(TimerCtrlFlags::IMASK);
         self.write_tmr_ctrl(ctrl);
+
+        // Verify reload succeeded
+        let ctrl_after = self.read_tmr_ctrl();
+        let tval_after = if self.use_virtual_timer {
+            unsafe { control_regs::vtmr_tval() }
+        } else {
+            unsafe { control_regs::ptmr_tval() }
+        };
+        warn!("Timer reloaded: CTL={:#x} TVAL={} (target={})",
+              ctrl_after.bits(), tval_after as i32, self.reload_count);
     }
 }
 
@@ -130,32 +140,22 @@ impl InterruptHandler for GenericTimer {
         static TIMER_INT_COUNT: AtomicU64 = AtomicU64::new(0);
 
         let count = TIMER_INT_COUNT.fetch_add(1, Ordering::Relaxed);
-        // Log first 20 interrupts to debug continuous operation
-        if count < 20 {
-            warn!("Timer interrupt #{} on CPU {}", count, crate::cpu_id().get());
-        } else if count % 100 == 0 {
-            info!("Timer interrupt #{}", count);
-        }
+        // Log ALL interrupts for debugging
+        warn!("Timer interrupt #{} on CPU {}", count, crate::cpu_id().get());
 
-        warn!("Timer IRQ handler: clearing IRQ");
         self.clear_irq();
-        warn!("Timer IRQ handler: updating time");
         {
             *time::OFFSET.lock() += self.clk_freq as u128;
         }
 
-        warn!("Timer IRQ handler: calling timeout::trigger");
         timeout::trigger(token);
-        warn!("Timer IRQ handler: calling context::switch::tick");
         context::switch::tick(token);
 
-        warn!("Timer IRQ handler: calling trigger({})", irq);
         unsafe {
             trigger(irq, token);
         }
-        warn!("Timer IRQ handler: reloading timer");
         self.reload_count();
-        warn!("Timer IRQ handler: complete");
+        warn!("Timer interrupt #{} complete", count);
     }
 }
 
