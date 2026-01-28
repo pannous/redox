@@ -172,6 +172,38 @@ extern "C" fn userspace_init() {
     warn!("userspace_init: ENTERED! DAIF=0x{:x}, IRQs {}", daif,
           if (daif & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
 
+    // OPTION 2: Clear any pending timer interrupt state before enabling IRQs
+    unsafe {
+        use crate::device::cpu::registers::control_regs;
+
+        // Read current timer control register
+        let ctl = control_regs::vtmr_ctrl();
+        warn!("userspace_init: timer CTL before={:#x}", ctl);
+
+        // Check timer value - if it's about to fire, reload it
+        let tval = control_regs::vtmr_tval();
+        warn!("userspace_init: timer TVAL={} (signed)", tval as i32);
+
+        // Mask the timer interrupt temporarily
+        control_regs::vtmr_ctrl_write(ctl | 0x2);  // Set IMASK=1
+        warn!("userspace_init: timer interrupt masked");
+
+        // Reload timer with fresh count to ensure it won't fire immediately
+        // Use same 240,000 count (10ms at 24MHz)
+        control_regs::vtmr_tval_write(240_000);
+        warn!("userspace_init: timer reloaded to 240,000");
+
+        // Now clear IMASK to unmask the timer interrupt
+        control_regs::vtmr_ctrl_write((ctl | 0x1) & !0x2);  // ENABLE=1, IMASK=0
+        warn!("userspace_init: timer interrupt unmasked, CTL={:#x}", control_regs::vtmr_ctrl());
+    }
+
+    warn!("userspace_init: About to enable IRQs with 'msr daifclr, #2'...");
+    unsafe {
+        core::arch::asm!("msr daifclr, #2");
+    }
+    warn!("userspace_init: IRQs enabled successfully!");
+
     let mut token = unsafe { CleanLockToken::new() };
     warn!("userspace_init: created token");
     let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");

@@ -127,13 +127,10 @@ pub unsafe extern "C" fn switch_finish_hook() {
         warn!("switch_finish_hook: calling switch_arch_hook");
         crate::percpu::switch_arch_hook();
 
-        // CRITICAL: Enable interrupts after context switch
-        // The new context inherits the DAIF register from the previous context,
-        // which had interrupts disabled in the scheduler loop. We must re-enable
-        // interrupts here so the new context can receive timer interrupts.
-        warn!("switch_finish_hook: enabling interrupts");
-        crate::interrupt::enable_and_nop();
-        warn!("switch_finish_hook: interrupts enabled, returning");
+        // OPTION 2: Don't enable interrupts here - let the new context handle it
+        // The new context (userspace_init) will clear timer state before enabling IRQs
+        // This prevents an immediate pending interrupt from causing issues
+        warn!("switch_finish_hook: NOT enabling interrupts (let context handle it)");
     }
 }
 

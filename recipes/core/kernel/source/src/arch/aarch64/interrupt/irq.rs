@@ -37,6 +37,23 @@ exception_stack!(irq_at_el0, |_stack| {
 });
 
 exception_stack!(irq_at_el1, |_stack| {
+    // OPTION 1: Debug what's happening on interrupt entry
+    unsafe {
+        let elr: u64;
+        let sp: u64;
+        let daif: u64;
+        core::arch::asm!(
+            "mrs {}, elr_el1",
+            "mrs {}, sp_el0",
+            "mrs {}, daif",
+            out(reg) elr,
+            out(reg) sp,
+            out(reg) daif,
+        );
+        warn!("IRQ_ENTRY: ELR={:#x} SP={:#x} DAIF={:#x} nested={}",
+              elr, sp, daif, (daif & 0x80) != 0);
+    }
+
     unsafe {
         let mut token = CleanLockToken::new();
         let (irq, virq) = irq_ack();
