@@ -27,17 +27,13 @@ fi
 
 if [[ ! -f "$MOUNT/boot/kernel" ]]; then
     echo "=== Mounting IMG ==="
-    # ./mount.sh
-    # mkdir -p "$MOUNT"
-    # "$REDOXFS" "$IMG" "$MOUNT"
-    # sleep 2
+    ./mount.sh
 fi
 
-echo "=== Current boot directory ==="
-ls -la "$MOUNT/boot/"
+echo "=== Current kernel ==="
+ls -la "$MOUNT/boot/kernel"
 
 echo "=== Replacing kernel ==="
-# cp "$MOUNT/boot/kernel" "kernel.bak"
 cp "$kernel" "$MOUNT/boot/kernel"
 sync
 

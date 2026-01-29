@@ -133,10 +133,15 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     warn!("usermode_bootstrap: DAIF before copy={:#x}, IRQs {}",
           daif_before, if (daif_before & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
 
+    warn!("usermode_bootstrap: About to copy {} bytes", bootstrap_slice.len());
+
+    // Simple copy without chunking - let's see if it completes or hangs
     UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
         .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
+
+    warn!("usermode_bootstrap: Copy completed successfully!");
 
     // Check DAIF after copy
     let daif_after: u64;
