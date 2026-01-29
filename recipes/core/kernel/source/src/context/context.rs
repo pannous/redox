@@ -168,7 +168,17 @@ pub struct SignalState {
 
 impl Context {
     pub fn new(owner_proc_id: Option<NonZeroUsize>) -> Result<Context> {
+        warn!("Context::new: START for CPU {}", crate::cpu_id().get());
         static DEBUG_ID: AtomicU32 = AtomicU32::new(1);
+        warn!("Context::new: About to allocate syscall_head for CPU {}", crate::cpu_id().get());
+        let syscall_head = SyscallFrame::Free(RaiiFrame::allocate()?);
+        warn!("Context::new: syscall_head allocated for CPU {}", crate::cpu_id().get());
+        let syscall_tail = SyscallFrame::Free(RaiiFrame::allocate()?);
+        warn!("Context::new: syscall_tail allocated for CPU {}", crate::cpu_id().get());
+        let arch_ctx = arch::Context::new();
+        warn!("Context::new: arch::Context created for CPU {}", crate::cpu_id().get());
+        let kfx = AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?;
+        warn!("Context::new: kfx allocated for CPU {}", crate::cpu_id().get());
         let this = Self {
             debug_id: DEBUG_ID.fetch_add(1, Ordering::Relaxed),
             sig: None,
@@ -182,11 +192,11 @@ impl Context {
             cpu_time: 0,
             sched_affinity: LogicalCpuSet::all(),
             inside_syscall: false,
-            syscall_head: SyscallFrame::Free(RaiiFrame::allocate()?),
-            syscall_tail: SyscallFrame::Free(RaiiFrame::allocate()?),
+            syscall_head,
+            syscall_tail,
             wake: None,
-            arch: arch::Context::new(),
-            kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
+            arch: arch_ctx,
+            kfx,
             kstack: None,
             addr_space: None,
             name: ArrayString::new(),
@@ -206,7 +216,9 @@ impl Context {
 
             preempt_locks: 0,
         };
+        warn!("Context::new: About to call cpu_stats::add_context for CPU {}", crate::cpu_id().get());
         cpu_stats::add_context();
+        warn!("Context::new: DONE for CPU {}", crate::cpu_id().get());
         Ok(this)
     }
 

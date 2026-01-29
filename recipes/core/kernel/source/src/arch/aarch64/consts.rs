@@ -20,7 +20,8 @@ pub const KERNEL_PML4: usize = (KERNEL_OFFSET & PML4_MASK) / PML4_SIZE;
 pub const KERNEL_HEAP_OFFSET: usize = KERNEL_OFFSET - PML4_SIZE;
 pub const KERNEL_HEAP_PML4: usize = (KERNEL_HEAP_OFFSET & PML4_MASK) / PML4_SIZE;
 /// Size of kernel heap
-pub const KERNEL_HEAP_SIZE: usize = 1 * 1024 * 1024; // 1 MB
+/// Increased to 8 MB to avoid heap growth during AP initialization (prevents KernelMapper lock contention)
+pub const KERNEL_HEAP_SIZE: usize = 8 * 1024 * 1024; // 8 MB
 
 /// Offset of temporary mapping for misc kernel bring-up actions
 pub const KERNEL_TMP_MISC_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;

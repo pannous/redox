@@ -82,15 +82,20 @@ pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeS
 }
 
 pub fn init(token: &mut CleanLockToken) {
+    warn!("context::init: START for CPU {}", crate::cpu_id().get());
     let owner = None; // kmain not owned by any fd
+    warn!("context::init: About to create Context for CPU {}", crate::cpu_id().get());
     let mut context = Context::new(owner).expect("failed to create kmain context");
+    warn!("context::init: Context created for CPU {}", crate::cpu_id().get());
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
 
     context.name.clear();
     context.name.push_str("[kmain]");
 
+    warn!("context::init: About to call EMPTY_CR3.call_once for CPU {}", crate::cpu_id().get());
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
+    warn!("context::init: EMPTY_CR3.call_once DONE for CPU {}", crate::cpu_id().get());
 
     context.status = Status::Runnable;
     context.running = true;
@@ -98,7 +103,9 @@ pub fn init(token: &mut CleanLockToken) {
 
     let context_lock = Arc::new(ContextLock::new(context));
 
+    warn!("context::init: About to acquire contexts_mut lock for CPU {}", crate::cpu_id().get());
     contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
+    warn!("context::init: contexts_mut insert DONE for CPU {}", crate::cpu_id().get());
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -107,6 +114,7 @@ pub fn init(token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
+    warn!("context::init: COMPLETE for CPU {}", crate::cpu_id().get());
 }
 
 pub fn current() -> Arc<ContextLock> {

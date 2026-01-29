@@ -213,28 +213,63 @@ fn kmain(bootstrap: Bootstrap) -> ! {
         }
     }
 
+    // Pre-grow the heap before starting the scheduler to avoid APs competing
+    // for the KernelMapper lock during heap growth
+    debug!("BSP: Pre-growing heap for AP allocations");
+    {
+        use alloc::vec::Vec;
+        // Allocate and drop several large buffers to force heap to grow
+        // This ensures APs won't trigger heap growth during their initialization
+        for _ in 0..4 {
+            let _ = Vec::<u8>::with_capacity(512 * 1024); // 512 KB each
+        }
+    }
+    debug!("BSP: Heap pre-growth complete");
+
     debug!("BSP: Entering scheduler (run_userspace)");
 
     run_userspace(&mut token)
 }
 
+/// Serialization lock to prevent multiple APs from initializing contexts simultaneously
+/// This avoids heap allocator contention and potential deadlocks during AP boot
+static AP_INIT_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+
 /// This is the main kernel entry point for secondary CPUs
 fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
+    warn!("kmain_ap: ENTRY for CPU {}", cpu_id);
     let mut token = unsafe { CleanLockToken::new() };
+    warn!("kmain_ap: CleanLockToken created for CPU {}", cpu_id);
+
+    // Serialize AP initialization to avoid heap allocator contention
+    // When multiple APs try to allocate memory (for kfx, syscall frames, etc.)
+    // simultaneously, they can deadlock on the HEAP lock + KernelMapper lock
+    warn!("kmain_ap: Waiting for AP_INIT_LOCK for CPU {}", cpu_id);
+    let _guard = AP_INIT_LOCK.lock();
+    warn!("kmain_ap: Acquired AP_INIT_LOCK for CPU {}", cpu_id);
 
     // Initialize the idle context for this CPU (CRITICAL!)
     // Each CPU needs its own idle context before entering the scheduler
+    warn!("kmain_ap: About to call context::init for CPU {}", cpu_id);
     context::init(&mut token);
+    warn!("kmain_ap: context::init DONE for CPU {}", cpu_id);
+
+    // Release the lock before entering scheduler
+    drop(_guard);
+    warn!("kmain_ap: Released AP_INIT_LOCK for CPU {}", cpu_id);
 
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
+    warn!("kmain_ap: About to call ready_for_profiling for CPU {}", cpu_id);
     debug!("AP {} initialized, entering scheduler", cpu_id);
 
     // Ready for profiling on this CPU
     profiling::ready_for_profiling();
+    warn!("kmain_ap: ready_for_profiling DONE for CPU {}", cpu_id);
 
     // Enter the scheduler loop - contexts will be scheduled on this CPU
+    warn!("kmain_ap: About to call run_userspace for CPU {}", cpu_id);
     run_userspace(&mut token);
 }
 fn run_userspace(token: &mut CleanLockToken) -> ! {
