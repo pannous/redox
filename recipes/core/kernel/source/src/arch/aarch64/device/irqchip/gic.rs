@@ -168,12 +168,6 @@ impl InterruptController for GenericInterruptController {
             self.gic_dist_if.write(GICD_SGIR, sgir_value);
         }
     }
-
-    unsafe fn init_cpu_if(&mut self) {
-        // For GICv2, the CPU interface may need per-CPU initialization
-        // For now, just a no-op as it's typically initialized once
-        // GICv3 overrides this properly
-    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -235,16 +229,9 @@ impl GicDistIf {
         unsafe {
             let offset = GICD_ISENABLER + (4 * (irq / 32));
             let shift = 1 << (irq % 32);
-            let val_before = self.read(offset);
-            let mut val = val_before;
+            let mut val = self.read(offset);
             val |= shift;
             self.write(offset, val);
-            let val_after = self.read(offset);
-
-            if irq == 27 {
-                warn!("GIC: Enabling IRQ {} at offset 0x{:x}, before=0x{:x}, after=0x{:x}, bit={}",
-                      irq, offset, val_before, val_after, irq % 32);
-            }
         }
     }
 

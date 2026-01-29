@@ -1,0 +1,4 @@
+Jan 29 => reset to 
+805306368 Jan 26 15:13 pure-rust.works.img
+
+But we shouldn't have changed anything other than the kernel and the initfs?

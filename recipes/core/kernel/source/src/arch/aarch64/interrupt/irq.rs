@@ -28,8 +28,6 @@ exception_stack!(irq_at_el0, |_stack| {
             && virq < 1024
         {
             IRQ_CHIP.trigger_virq(virq as u32, &mut token);
-            // Send EOI to GIC with the HARDWARE IRQ number, not virtual
-            IRQ_CHIP.irq_eoi(irq);
         } else {
             println!("unexpected irq num {}", irq);
         }
@@ -37,44 +35,19 @@ exception_stack!(irq_at_el0, |_stack| {
 });
 
 exception_stack!(irq_at_el1, |_stack| {
-    // OPTION 1: Debug what's happening on interrupt entry
-    unsafe {
-        let elr: u64;
-        let sp: u64;
-        let daif: u64;
-        core::arch::asm!(
-            "mrs {}, elr_el1",
-            "mrs {}, sp_el0",
-            "mrs {}, daif",
-            out(reg) elr,
-            out(reg) sp,
-            out(reg) daif,
-        );
-        warn!("IRQ_ENTRY: ELR={:#x} SP={:#x} DAIF={:#x} nested={}",
-              elr, sp, daif, (daif & 0x80) != 0);
-    }
-
     unsafe {
         let mut token = CleanLockToken::new();
         let (irq, virq) = irq_ack();
 
-        warn!("IRQ exception: hwirq={}, virq={:?}", irq, virq);
-
         // Check if this is an SGI (Software Generated Interrupt) used for IPIs
         // SGIs use interrupt IDs 0-15 in the GIC
         if irq < 16 {
-            warn!("IRQ exception: handling as IPI");
             // Call IPI handler for SGIs
             crate::ipi::handle_ipi(irq);
         } else if let Some(virq) = virq
             && virq < 1024
         {
-            warn!("IRQ exception: calling trigger_virq({})", virq);
             IRQ_CHIP.trigger_virq(virq as u32, &mut token);
-            warn!("IRQ exception: sending EOI for hwirq={}", irq);
-            // Send EOI to GIC with the HARDWARE IRQ number, not virtual
-            IRQ_CHIP.irq_eoi(irq);
-            warn!("IRQ exception: EOI sent, returning");
         } else {
             println!("unexpected irq num {}", irq);
         }
@@ -88,8 +61,7 @@ pub unsafe fn trigger(irq: u32, token: &mut CleanLockToken) {
         // PercpuBlock::current().stats.add_irq(irq);
 
         irq_trigger(irq.try_into().unwrap(), token);
-        // Note: EOI is now sent by the exception handler with the hardware IRQ number
-        // Don't send it here since this receives the virtual IRQ number
+        IRQ_CHIP.irq_eoi(irq);
     }
 }
 
