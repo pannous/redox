@@ -125,31 +125,11 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
     warn!("usermode_bootstrap: Got bootstrap_slice, size={} bytes", bootstrap_slice.len());
 
-    // Check DAIF before copy
-    let daif_before: u64;
-    unsafe {
-        core::arch::asm!("mrs {}, daif", out(reg) daif_before);
-    }
-    warn!("usermode_bootstrap: DAIF before copy={:#x}, IRQs {}",
-          daif_before, if (daif_before & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
-
-    warn!("usermode_bootstrap: About to copy {} bytes", bootstrap_slice.len());
-
-    // Simple copy without chunking - let's see if it completes or hangs
+    warn!("usermode_bootstrap: Starting copy");
     UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
         .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
-
-    warn!("usermode_bootstrap: Copy completed successfully!");
-
-    // Check DAIF after copy
-    let daif_after: u64;
-    unsafe {
-        core::arch::asm!("mrs {}, daif", out(reg) daif_after);
-    }
-    warn!("usermode_bootstrap: DAIF after copy={:#x}, IRQs {}",
-          daif_after, if (daif_after & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
     warn!("usermode_bootstrap: Bootstrap memory copied to userspace");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
