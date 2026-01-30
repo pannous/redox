@@ -184,9 +184,11 @@ impl GicV3CpuIf {
         unsafe {
             let mut irq: usize;
             asm!("mrs {}, icc_iar1_el1", out(reg) irq);
-            irq &= 0x1ff;
-            if irq == 1023 {
-                panic!("irq_ack: got ID 1023!!!");
+            irq &= 0x3ff;  // 10-bit mask for GIC interrupt IDs
+            if irq >= 1020 {
+                // Spurious interrupt or no pending interrupt
+                warn!("GICv3 irq_ack: got reserved/spurious ID {}", irq);
+                return 1023;  // Treat as "no interrupt"
             }
             irq as u32
         }

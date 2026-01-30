@@ -20,6 +20,7 @@ static GICC_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
 
 static GICD_CTLR: u32 = 0x000;
 static GICD_TYPER: u32 = 0x004;
+static GICD_IGROUPR: u32 = 0x080;  // Interrupt Group Register (determines Group 0 vs Group 1)
 static GICD_ISENABLER: u32 = 0x100;
 static GICD_ICENABLER: u32 = 0x180;
 static GICD_IPRIORITY: u32 = 0x400;
@@ -208,6 +209,14 @@ impl GicDistIf {
                 self.write(GICD_ICENABLER + ((irq / 32) * 4), 0xffff_ffff);
             }
 
+            // CRITICAL: Set ALL interrupts to Group 1 (non-secure)
+            // This must be done BEFORE enabling any interrupts
+            // By default all interrupts are in Group 0, which causes spurious interrupts
+            // when running in non-secure mode
+            for irq in (0..self.nirqs).step_by(32) {
+                self.write(GICD_IGROUPR + ((irq / 32) * 4), 0xffff_ffff);
+            }
+
             // Affine all SPIs to CPU0 and set priorities for all IRQs
             for irq in 0..self.nirqs {
                 if irq > 31 {
@@ -232,6 +241,16 @@ impl GicDistIf {
 
     pub unsafe fn irq_enable(&mut self, irq: u32) {
         unsafe {
+            // CRITICAL: Assign interrupt to Group 1 (non-secure group)
+            // GICD_IGROUPR: bit=1 means Group 1, bit=0 means Group 0
+            // This MUST match GICD_CTLR and GICC_CTLR which enable Group 1
+            let group_offset = GICD_IGROUPR + (4 * (irq / 32));
+            let group_shift = 1 << (irq % 32);
+            let mut group_val = self.read(group_offset);
+            group_val |= group_shift;  // Set to Group 1
+            self.write(group_offset, group_val);
+
+            // Enable the interrupt
             let offset = GICD_ISENABLER + (4 * (irq / 32));
             let shift = 1 << (irq % 32);
             let mut val = self.read(offset);
@@ -311,9 +330,15 @@ impl GicCpuIf {
 
     unsafe fn irq_ack(&mut self) -> u32 {
         unsafe {
-            let irq = self.read(GICC_IAR) & 0x1ff;
-            if irq == 1023 {
-                panic!("irq_ack: got ID 1023!!!");
+            // GIC interrupt IDs are 10 bits (0-1023), not 9 bits
+            // 1023 = no pending interrupt
+            // 1020-1022 = reserved/spurious
+            let irq = self.read(GICC_IAR) & 0x3ff;  // 10-bit mask, not 9-bit
+            if irq >= 1020 {
+                // Spurious interrupt or no pending interrupt
+                // Don't panic, just return a special value
+                warn!("irq_ack: got reserved/spurious ID {}", irq);
+                return 1023;  // Treat as "no interrupt"
             }
             irq
         }

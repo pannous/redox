@@ -28,15 +28,25 @@ pub unsafe fn init(fdt: &Fdt) {
         let mut timer = GenericTimer::new();
         timer.init();
         if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
-            let irq = get_interrupt(fdt, &node, 1).unwrap();
-            debug!("irq = {:?}", irq);
+            // ARM Generic Timer interrupts in device tree order:
+            // Index 0: PHYS_SECURE_PPI
+            // Index 1: PHYS_NONSECURE_PPI
+            // Index 2: VIRT_PPI (virtual timer)
+            // Index 3: HYP_PPI
+            // CRITICAL: Must match timer type being used!
+            let irq_index = if timer.use_virtual_timer { 2 } else { 1 };
+            let irq = get_interrupt(fdt, &node, irq_index).unwrap();
+            debug!("Using {} timer, irq_index={}, irq={:?}",
+                   if timer.use_virtual_timer { "virtual" } else { "physical" },
+                   irq_index, irq);
             if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
-                //PHYS_NONSECURE_PPI only
                 let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
                     .ic
                     .irq_xlate(irq)
                     .unwrap();
-                info!("generic_timer virq = {}", virq);
+                info!("generic_timer: {} timer, virq={}",
+                      if timer.use_virtual_timer { "virtual" } else { "physical" },
+                      virq);
                 register_irq(virq as u32, Box::new(timer));
                 IRQ_CHIP.irq_enable(virq as u32);
             } else {
