@@ -119,7 +119,12 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
-    pub fn init(&mut self) {}
+    pub fn init(&mut self) {
+        // Initialize SPSR_EL1 for userspace with interrupts enabled
+        // Bits [3:0] = 0b0000 = EL0t (userspace with SP_EL0)
+        // Bits [9:6] = DAIF = 0b0000 = All interrupts enabled (I bit clear)
+        self.iret.spsr_el1 = 0;
+    }
     pub fn frame_pointer(&self) -> usize {
         self.preserved.x29
     }

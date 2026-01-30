@@ -119,13 +119,19 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
+    debug!("usermode_bootstrap: Got bootstrap_slice at {:p}, len={}",
+           bootstrap_slice.as_ptr(), bootstrap_slice.len());
 
     let user_slice = UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice");
+    debug!("usermode_bootstrap: Created user_slice, about to copy {} bytes",
+           bootstrap.page_count * PAGE_SIZE);
 
     user_slice
         .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
+
+    debug!("usermode_bootstrap: Copy completed successfully");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
     debug!("Bootstrap entry point: {:X}", bootstrap_entry);
@@ -141,6 +147,48 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     {
         regs.init();
         regs.set_instr_pointer(bootstrap_entry.try_into().unwrap());
+    }
+
+    // Enable interrupts now that bootstrap is loaded and ready
+    // SPSR_EL1 is already set to enable interrupts when we ERET to EL0
+    // But we also need interrupts enabled in kernel mode for timer-driven context switching
+    #[cfg(target_arch = "aarch64")]
+    {
+        use crate::device::cpu::registers::control_regs;
+        use crate::arch::aarch64::interrupt;
+
+        unsafe {
+            let daif_before = interrupt::read_daif();
+            let vtmr_ctl = control_regs::vtmr_ctrl();
+            let vtmr_tval = control_regs::vtmr_tval();
+
+            debug!("usermode_bootstrap: About to enable interrupts");
+            debug!("  DAIF before: {:#010x}", daif_before);
+            debug!("  Timer CTL: {:#010x} (ENABLE={}, IMASK={}, ISTATUS={})",
+                   vtmr_ctl, vtmr_ctl & 1, (vtmr_ctl >> 1) & 1, (vtmr_ctl >> 2) & 1);
+            debug!("  Timer TVAL: {} (signed {})", vtmr_tval, vtmr_tval as i32);
+
+            // Reset timer to give LOTS of breathing room
+            debug!("  Resetting timer to 480000 (20ms)...");
+            control_regs::vtmr_tval_write(480000);
+            core::arch::asm!("isb");
+
+            debug!("  Timer reset complete, about to enable interrupts...");
+
+            // Try enabling with inline assembly and immediate check
+            core::arch::asm!("msr daifclr, #2");
+
+            debug!("  msr daifclr executed");
+
+            core::arch::asm!("nop");
+
+            debug!("  nop executed");
+
+            let daif_after = interrupt::read_daif();
+            debug!("  DAIF after: {:#010x}", daif_after);
+        }
+
+        debug!("usermode_bootstrap: Interrupts enabled successfully");
     }
 }
 

@@ -51,3 +51,15 @@ pub unsafe fn halt() {
         asm!("dsb sy", "wfi");
     }
 }
+
+/// Read DAIF (interrupt mask flags)
+/// Bits [9:6] of PSTATE
+/// D = Debug, A = SError, I = IRQ, F = FIQ
+#[inline(always)]
+pub unsafe fn read_daif() -> u64 {
+    unsafe {
+        let daif: u64;
+        asm!("mrs {}, daif", out(reg) daif);
+        daif
+    }
+}

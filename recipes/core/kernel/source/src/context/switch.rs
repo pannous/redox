@@ -119,6 +119,9 @@ pub unsafe extern "C" fn switch_finish_hook() {
         }
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
         crate::percpu::switch_arch_hook();
+
+        // TODO: Enable interrupts after bootstrap loads successfully
+        // For now, keep them disabled to avoid nested interrupt issues during page loading
     }
 }
 

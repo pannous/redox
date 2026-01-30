@@ -143,7 +143,11 @@ exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
     unsafe {
         let exc_code = exception_code(stack.iret.esr_el1);
         let elr = stack.iret.elr_el1;
-        println!("SYNC_EL1_SPX: EXC_CODE={:#08b}, ELR={:#x}", exc_code, elr);
+        let esr = stack.iret.esr_el1;
+        println!("=== SYNC EXCEPTION AT EL1 ===");
+        println!("ESR_EL1: {:#010x}", esr);
+        println!("EXC_CODE: {:#08b} ({})", exc_code, exc_code);
+        println!("ELR_EL1: {:#018x}", elr);
 
         if !pf_inner(
             stack,
@@ -153,11 +157,12 @@ exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
             println!("Synchronous exception at EL1 with SPx - UNHANDLED");
             if exc_code == 0b100101 {
                 let far_el1 = far_el1();
-                println!("FAR_EL1 = 0x{:08x}", far_el1);
+                println!("DATA ABORT: FAR_EL1 = {:#018x}", far_el1);
             } else if exc_code == 0b100100 {
                 let far_el1 = far_el1();
-                println!("USER FAR_EL1 = 0x{:08x}", far_el1);
+                println!("USER DATA ABORT: FAR_EL1 = {:#018x}", far_el1);
             }
+            println!("=== FULL CONTEXT ===");
             stack.trace();
             loop {}
         }
