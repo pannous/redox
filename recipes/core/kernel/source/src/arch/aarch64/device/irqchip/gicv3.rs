@@ -203,6 +203,12 @@ impl InterruptController for GicV3 {
             self.gic_cpu_if.init();
         }
     }
+
+    unsafe fn debug_irq_status(&self, irq: u32) {
+        unsafe {
+            self.gic_dist_if.debug_irq_status(irq);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -221,7 +227,13 @@ impl GicV3CpuIf {
                 let value = 0_usize;
                 asm!("msr icc_ctlr_el1, {}", in(reg) value);
             }
-            // Enable non-secure group 1
+            // Enable Group 0 (secure) interrupts
+            // Running in secure EL1, need Group 0 not Group 1
+            {
+                let value = 1_usize;
+                asm!("msr icc_igrpen0_el1, {}", in(reg) value);
+            }
+            // Also enable Group 1 for compatibility
             {
                 let value = 1_usize;
                 asm!("msr icc_igrpen1_el1, {}", in(reg) value);
@@ -231,16 +243,26 @@ impl GicV3CpuIf {
                 let value = 0xFF_usize;
                 asm!("msr icc_pmr_el1, {}", in(reg) value);
             }
+
+            info!("gicv3: CPU interface enabled for Group 0 and Group 1 (PMR=0xff)");
         }
     }
 
     unsafe fn irq_ack(&mut self) -> u32 {
         unsafe {
             let mut irq: usize;
-            asm!("mrs {}, icc_iar1_el1", out(reg) irq);
-            irq &= 0x1ff;
-            if irq == 1023 {
-                panic!("irq_ack: got ID 1023!!!");
+            // Try Group 0 first (secure interrupts)
+            asm!("mrs {}, icc_iar0_el1", out(reg) irq);
+            // If that gives spurious, try Group 1
+            if (irq & 0x3ff) >= 1020 {
+                asm!("mrs {}, icc_iar1_el1", out(reg) irq);
+            }
+
+            irq &= 0x3ff;  // 10-bit mask, not 9-bit
+            if irq >= 1020 {
+                // Spurious interrupt - don't panic, warn and return special value
+                warn!("irq_ack: got reserved/spurious ID {}", irq);
+                return 1023;
             }
             irq as u32
         }
@@ -248,6 +270,8 @@ impl GicV3CpuIf {
 
     unsafe fn irq_eoi(&mut self, irq: u32) {
         unsafe {
+            // Send EOI to both Group 0 and Group 1 to handle both cases
+            asm!("msr icc_eoir0_el1, {}", in(reg) irq as usize);
             asm!("msr icc_eoir1_el1, {}", in(reg) irq as usize);
         }
     }
