@@ -88,21 +88,26 @@ impl GicV3 {
             .and_then(NodeProperty::as_usize)
             .unwrap_or(1);
 
+        info!("GICv3: Found {} redistributor regions", gicrs);
+
         // Read registers
         let mut chunks = node.reg().unwrap();
         if let Some(gicd) = chunks.next()
             && let Some(addr) = get_mmio_address(fdt, &node, &gicd)
         {
+            info!("GICv3: Distributor at 0x{:x}", addr);
             unsafe {
                 self.gic_dist_if.init(crate::PHYS_OFFSET + addr);
             }
         }
-        for _ in 0..gicrs {
+        for i in 0..gicrs {
             if let Some(gicr) = chunks.next() {
-                self.gicrs.push((
-                    get_mmio_address(fdt, &node, &gicr).unwrap(),
-                    gicr.size.unwrap(),
-                ));
+                let addr = get_mmio_address(fdt, &node, &gicr).unwrap();
+                let size = gicr.size.unwrap();
+                info!("GICv3: Redistributor {} at 0x{:x}, size 0x{:x}", i, addr, size);
+                self.gicrs.push((addr, size));
+            } else {
+                warn!("GICv3: Failed to get redistributor {} register", i);
             }
         }
 
