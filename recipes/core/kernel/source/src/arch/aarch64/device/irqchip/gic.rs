@@ -7,11 +7,16 @@ use crate::{
     sync::CleanLockToken,
 };
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use fdt::{node::FdtNode, Fdt};
 use syscall::{
     error::{Error, EINVAL},
     Result,
 };
+
+/// Global GICC (GIC CPU Interface) base address for per-CPU initialization
+/// This is set during GIC initialization and used by secondary CPUs
+static GICC_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
 
 static GICD_CTLR: u32 = 0x000;
 static GICD_TYPER: u32 = 0x004;
@@ -269,10 +274,38 @@ impl GicCpuIf {
         unsafe {
             self.address = addr;
 
-            // Enable CPU0's GIC interface
-            self.write(GICC_CTLR, 1);
-            // Set CPU0's Interrupt Priority Mask
+            // Store global GICC address for per-CPU initialization on APs
+            GICC_BASE_ADDR.store(addr, Ordering::Release);
+
+            // Enable CPU's GIC interface for BOTH Group 0 and Group 1 interrupts
+            // Bit 0: Enable Group 0, Bit 1: Enable Group 1
+            // Must match GICD_CTLR configuration (0x3) to receive all interrupts
+            self.write(GICC_CTLR, 0x3);
+            // Set CPU's Interrupt Priority Mask (0xff = lowest priority filter, accept all)
             self.write(GICC_PMR, 0xff);
+
+            // Verify configuration
+            let ctlr_val = self.read(GICC_CTLR);
+            let pmr_val = self.read(GICC_PMR);
+            info!("GIC CPU Interface initialized: GICC_CTLR={:#x}, GICC_PMR={:#x}",
+                  ctlr_val, pmr_val);
+        }
+    }
+
+    /// Initialize this CPU's GIC interface (must be called per-CPU)
+    /// GICC registers are banked per-CPU, so each CPU must enable its own interface
+    pub unsafe fn init_percpu(&mut self) {
+        unsafe {
+            // Enable both Group 0 and Group 1 interrupts for this CPU
+            self.write(GICC_CTLR, 0x3);
+            // Set priority mask to accept all interrupts
+            self.write(GICC_PMR, 0xff);
+
+            let cpu_id = crate::cpu_id().get();
+            let ctlr_val = self.read(GICC_CTLR);
+            let pmr_val = self.read(GICC_PMR);
+            info!("CPU {} GIC Interface: GICC_CTLR={:#x}, GICC_PMR={:#x}",
+                  cpu_id, ctlr_val, pmr_val);
         }
     }
 
@@ -303,5 +336,23 @@ impl GicCpuIf {
         unsafe {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }
+    }
+}
+
+
+/// Initialize GIC CPU interface for the current CPU
+/// Must be called by each secondary CPU during boot
+/// GICC registers are banked per-CPU, so each must configure its own interface
+pub unsafe fn init_gicc_percpu() {
+    unsafe {
+        let addr = GICC_BASE_ADDR.load(Ordering::Acquire);
+        if addr == 0 {
+            error!("init_gicc_percpu: GICC address not set!");
+            return;
+        }
+
+        // Create temporary GicCpuIf to use its methods
+        let mut temp_if = GicCpuIf { address: addr };
+        temp_if.init_percpu();
     }
 }

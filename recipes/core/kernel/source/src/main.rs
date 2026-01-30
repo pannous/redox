@@ -251,6 +251,12 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     let _guard = AP_INIT_LOCK.lock();
     warn!("kmain_ap: Acquired AP_INIT_LOCK for CPU {}", cpu_id);
 
+    // Initialize GIC CPU interface for this CPU
+    // GICC registers are banked per-CPU, so each CPU must enable its own interface
+    warn!("kmain_ap: Initializing GIC CPU interface for CPU {}", cpu_id);
+    unsafe { crate::dtb::irqchip::init_percpu_gic(); }
+    warn!("kmain_ap: GIC CPU interface initialized for CPU {}", cpu_id);
+
     // Initialize the idle context for this CPU (CRITICAL!)
     // Each CPU needs its own idle context before entering the scheduler
     warn!("kmain_ap: About to call context::init for CPU {}", cpu_id);
@@ -280,10 +286,20 @@ fn run_userspace(token: &mut CleanLockToken) -> ! {
     static IDLE_SPINS: AtomicU64 = AtomicU64::new(0);
     static SWITCH_SPINS: AtomicU64 = AtomicU64::new(0);
 
+    // Debug: Log first few iterations to see what scheduler is doing
+    let mut debug_count = 0;
+
     loop {
         unsafe {
             interrupt::disable();
-            match context::switch(token) {
+            let result = context::switch(token);
+
+            if debug_count < 5 {
+                println!("run_userspace: iteration {}, result={:?}", debug_count, result);
+                debug_count += 1;
+            }
+
+            match result {
                 SwitchResult::Switched => {
                     let c = SWITCH_SPINS.fetch_add(1, Ordering::Relaxed);
                     if c % 1_000_000 == 0 {

@@ -425,3 +425,17 @@ pub fn available_irqs_iter(_cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 
     error!("available_irqs_iter has been called");
     0..0
 }
+
+/// Initialize GIC CPU interface for the current CPU (must be called on each CPU)
+/// This is required because GICC registers are banked per-CPU
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn init_percpu_gic() {
+    unsafe {
+        crate::arch::aarch64::device::irqchip::gic::init_gicc_percpu();
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+pub unsafe fn init_percpu_gic() {
+    // No-op on other architectures
+}
