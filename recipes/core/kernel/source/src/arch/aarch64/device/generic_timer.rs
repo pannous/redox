@@ -28,25 +28,15 @@ pub unsafe fn init(fdt: &Fdt) {
         let mut timer = GenericTimer::new();
         timer.init();
         if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
-            // ARM Generic Timer interrupts in device tree order:
-            // Index 0: PHYS_SECURE_PPI
-            // Index 1: PHYS_NONSECURE_PPI
-            // Index 2: VIRT_PPI (virtual timer)
-            // Index 3: HYP_PPI
-            // CRITICAL: Must match timer type being used!
-            let irq_index = if timer.use_virtual_timer { 2 } else { 1 };
-            let irq = get_interrupt(fdt, &node, irq_index).unwrap();
-            debug!("Using {} timer, irq_index={}, irq={:?}",
-                   if timer.use_virtual_timer { "virtual" } else { "physical" },
-                   irq_index, irq);
+            let irq = get_interrupt(fdt, &node, 1).unwrap();
+            debug!("irq = {:?}", irq);
             if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
+                //PHYS_NONSECURE_PPI only
                 let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
                     .ic
                     .irq_xlate(irq)
                     .unwrap();
-                info!("generic_timer: {} timer, virq={}",
-                      if timer.use_virtual_timer { "virtual" } else { "physical" },
-                      virq);
+                info!("generic_timer virq = {}", virq);
                 register_irq(virq as u32, Box::new(timer));
                 IRQ_CHIP.irq_enable(virq as u32);
             } else {
@@ -131,11 +121,28 @@ impl GenericTimer {
         ctrl.insert(TimerCtrlFlags::ENABLE);
         ctrl.remove(TimerCtrlFlags::IMASK);
         self.write_tmr_ctrl(ctrl);
+
+        // Verify reload succeeded
+        let ctrl_after = self.read_tmr_ctrl();
+        let tval_after = if self.use_virtual_timer {
+            unsafe { control_regs::vtmr_tval() }
+        } else {
+            unsafe { control_regs::ptmr_tval() }
+        };
+        warn!("Timer reloaded: CTL={:#x} TVAL={} (target={})",
+              ctrl_after.bits(), tval_after as i32, self.reload_count);
     }
 }
 
 impl InterruptHandler for GenericTimer {
     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
+        use core::sync::atomic::{AtomicU64, Ordering};
+        static TIMER_INT_COUNT: AtomicU64 = AtomicU64::new(0);
+
+        let count = TIMER_INT_COUNT.fetch_add(1, Ordering::Relaxed);
+        // Log ALL interrupts for debugging
+        warn!("Timer interrupt #{} on CPU {}", count, crate::cpu_id().get());
+
         self.clear_irq();
         {
             *time::OFFSET.lock() += self.clk_freq as u128;
@@ -148,5 +155,78 @@ impl InterruptHandler for GenericTimer {
             trigger(irq, token);
         }
         self.reload_count();
+        warn!("Timer interrupt #{} complete", count);
     }
+}
+
+/// Initialize the local timer for this CPU
+/// This should be called on each AP after the BSP has set up the IRQ handler
+/// Each CPU has its own timer control registers that need to be enabled
+pub unsafe fn init_local_timer() {
+    use crate::device::cpu::registers::control_regs;
+
+    // Detect if we should use virtual or physical timer
+    let use_virtual_timer = unsafe { !control_regs::vhe_present() };
+
+    // Get the clock frequency (should be same on all CPUs)
+    let clk_freq = unsafe { control_regs::cntfrq_el0() };
+    let reload_count = clk_freq / 100;  // 100Hz = 10ms ticks
+
+    debug!("CPU: Initializing local timer (freq={}, reload={})", clk_freq, reload_count);
+
+    // Enable the timer interrupt in the GIC for this CPU
+    // The timer uses a PPI (Private Peripheral Interrupt), so each CPU needs
+    // to enable it in their own GIC
+    // Timer IRQ is typically 27 for the virtual timer
+    unsafe {
+        // Use the same virq that was set up during BSP init
+        // For now, hardcode to 27 which is the virtual timer PPI
+        // TODO: Store virq globally during BSP init and reuse here
+        warn!("Enabling timer IRQ 27 in GIC for this CPU");
+        crate::dtb::irqchip::IRQ_CHIP.irq_enable(27);
+        warn!("Timer IRQ 27 enabled");
+    }
+
+    // Set the timer value and enable it with interrupt unmasked
+    if use_virtual_timer {
+        unsafe { control_regs::vtmr_tval_write(reload_count) };
+        // Enable timer and unmask interrupt (ENABLE=1, IMASK=0)
+        let ctrl = TimerCtrlFlags::ENABLE;  // IMASK not set = interrupt enabled
+        unsafe { control_regs::vtmr_ctrl_write(ctrl.bits()) };
+
+        // Read back to verify
+        let ctrl_read = unsafe { control_regs::vtmr_ctrl() };
+        warn!("Virtual timer: wrote ctrl=0x{:x}, read back=0x{:x}", ctrl.bits(), ctrl_read);
+    } else {
+        unsafe { control_regs::ptmr_tval_write(reload_count) };
+        // Enable timer and unmask interrupt (ENABLE=1, IMASK=0)
+        let ctrl = TimerCtrlFlags::ENABLE;  // IMASK not set = interrupt enabled
+        unsafe { control_regs::ptmr_ctrl_write(ctrl.bits()) };
+
+        // Read back to verify
+        let ctrl_read = unsafe { control_regs::ptmr_ctrl() };
+        warn!("Physical timer: wrote ctrl=0x{:x}, read back=0x{:x}", ctrl.bits(), ctrl_read);
+    }
+
+    // Check CPU interrupt mask state (DAIF register)
+    let daif: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif);
+    }
+    warn!("CPU DAIF register: 0x{:x} (I={}, F={}, A={}, D={})",
+          daif, (daif >> 7) & 1, (daif >> 6) & 1, (daif >> 8) & 1, (daif >> 9) & 1);
+
+    // Wait a bit and check if timer is counting down
+    for _ in 0..1000 {
+        core::hint::spin_loop();
+    }
+
+    let tval_after = if use_virtual_timer {
+        unsafe { control_regs::vtmr_tval() }
+    } else {
+        unsafe { control_regs::ptmr_tval() }
+    };
+    warn!("Timer value after delay: {} (should be less than {})", tval_after, reload_count);
+
+    info!("Local timer initialized and enabled with interrupt unmasked");
 }

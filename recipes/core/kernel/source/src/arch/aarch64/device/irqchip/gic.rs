@@ -7,22 +7,19 @@ use crate::{
     sync::CleanLockToken,
 };
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicUsize, Ordering};
 use fdt::{node::FdtNode, Fdt};
 use syscall::{
     error::{Error, EINVAL},
     Result,
 };
 
-/// Global GICC (GIC CPU Interface) base address for per-CPU initialization
-/// This is set during GIC initialization and used by secondary CPUs
-static GICC_BASE_ADDR: AtomicUsize = AtomicUsize::new(0);
-
 static GICD_CTLR: u32 = 0x000;
 static GICD_TYPER: u32 = 0x004;
-static GICD_IGROUPR: u32 = 0x080;  // Interrupt Group Register (determines Group 0 vs Group 1)
+static GICD_IGROUPR: u32 = 0x080;
 static GICD_ISENABLER: u32 = 0x100;
 static GICD_ICENABLER: u32 = 0x180;
+static GICD_ISPENDR: u32 = 0x200;
+static GICD_ISACTIVER: u32 = 0x300;
 static GICD_IPRIORITY: u32 = 0x400;
 static GICD_ITARGETSR: u32 = 0x800;
 static GICD_ICFGR: u32 = 0xc00;
@@ -174,6 +171,18 @@ impl InterruptController for GenericInterruptController {
             self.gic_dist_if.write(GICD_SGIR, sgir_value);
         }
     }
+
+    unsafe fn init_cpu_if(&mut self) {
+        // For GICv2, the CPU interface may need per-CPU initialization
+        // For now, just a no-op as it's typically initialized once
+        // GICv3 overrides this properly
+    }
+
+    unsafe fn debug_irq_status(&self, irq: u32) {
+        unsafe {
+            self.gic_dist_if.debug_irq_status(irq);
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -199,6 +208,13 @@ impl GicDistIf {
                 self.ncpus, self.nirqs
             );
 
+            // Set all interrupts to Group 0 (secure)
+            // We may be running in secure EL1, which can only receive Group 0 interrupts
+            for irq in (0..self.nirqs).step_by(32) {
+                self.write(GICD_IGROUPR + ((irq / 32) * 4), 0x0000_0000);
+            }
+            info!("gic: Set all interrupts to Group 0 (secure)");
+
             // Set all SPIs to level triggered
             for irq in (32..self.nirqs).step_by(16) {
                 self.write(GICD_ICFGR + ((irq / 16) * 4), 0);
@@ -207,14 +223,6 @@ impl GicDistIf {
             // Disable all SPIs
             for irq in (32..self.nirqs).step_by(32) {
                 self.write(GICD_ICENABLER + ((irq / 32) * 4), 0xffff_ffff);
-            }
-
-            // CRITICAL: Set ALL interrupts to Group 1 (non-secure)
-            // This must be done BEFORE enabling any interrupts
-            // By default all interrupts are in Group 0, which causes spurious interrupts
-            // when running in non-secure mode
-            for irq in (0..self.nirqs).step_by(32) {
-                self.write(GICD_IGROUPR + ((irq / 32) * 4), 0xffff_ffff);
             }
 
             // Affine all SPIs to CPU0 and set priorities for all IRQs
@@ -234,28 +242,42 @@ impl GicDistIf {
                 self.write(ext_offset, val);
             }
 
-            // Enable IRQ group 0 and group 1 non-secure distribution
+            // Enable IRQ group 0 and group 1 distribution
+            // Even though we set interrupts to Group 1, we may be running in secure mode
+            // and need to enable both groups
             self.write(GICD_CTLR, 0x3);
+            info!("gic: Enabled both Group 0 and Group 1 distribution (GICD_CTLR=0x3)");
         }
     }
 
     pub unsafe fn irq_enable(&mut self, irq: u32) {
         unsafe {
-            // CRITICAL: Assign interrupt to Group 1 (non-secure group)
-            // GICD_IGROUPR: bit=1 means Group 1, bit=0 means Group 0
-            // This MUST match GICD_CTLR and GICC_CTLR which enable Group 1
+            // Ensure interrupt is in Group 0 (secure)
             let group_offset = GICD_IGROUPR + (4 * (irq / 32));
             let group_shift = 1 << (irq % 32);
             let mut group_val = self.read(group_offset);
-            group_val |= group_shift;  // Set to Group 1
+            group_val &= !group_shift;  // Clear to Group 0
             self.write(group_offset, group_val);
 
             // Enable the interrupt
             let offset = GICD_ISENABLER + (4 * (irq / 32));
             let shift = 1 << (irq % 32);
-            let mut val = self.read(offset);
+            let val_before = self.read(offset);
+            let mut val = val_before;
             val |= shift;
             self.write(offset, val);
+            let val_after = self.read(offset);
+
+            if irq == 27 {
+                // Check pending and active status for timer interrupt
+                let pend_offset = GICD_ISPENDR + (4 * (irq / 32));
+                let pend_val = self.read(pend_offset);
+                let active_offset = GICD_ISACTIVER + (4 * (irq / 32));
+                let active_val = self.read(active_offset);
+
+                warn!("GIC: Enabling IRQ {} - enable: before=0x{:x} after=0x{:x}, group=0x{:x}, pending=0x{:x}, active=0x{:x}",
+                      irq, val_before, val_after, group_val, pend_val, active_val);
+            }
         }
     }
 
@@ -281,6 +303,28 @@ impl GicDistIf {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }
     }
+
+    /// Debug function to check if a specific IRQ is pending/active/enabled
+    pub unsafe fn debug_irq_status(&self, irq: u32) {
+        unsafe {
+            let reg_idx = irq / 32;
+            let bit_idx = irq % 32;
+            let bit_mask = 1 << bit_idx;
+
+            let enabled = self.read(GICD_ISENABLER + (reg_idx * 4));
+            let pending = self.read(GICD_ISPENDR + (reg_idx * 4));
+            let active = self.read(GICD_ISACTIVER + (reg_idx * 4));
+            let group = self.read(GICD_IGROUPR + (reg_idx * 4));
+
+            let is_enabled = (enabled & bit_mask) != 0;
+            let is_pending = (pending & bit_mask) != 0;
+            let is_active = (active & bit_mask) != 0;
+            let is_group0 = (group & bit_mask) == 0;  // Group 0 if bit is 0
+
+            warn!("GIC IRQ {} status: enabled={}, pending={}, active={}, group0={} (raw: en=0x{:x}, pend=0x{:x}, act=0x{:x}, grp=0x{:x})",
+                  irq, is_enabled, is_pending, is_active, is_group0, enabled, pending, active, group);
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -293,52 +337,25 @@ impl GicCpuIf {
         unsafe {
             self.address = addr;
 
-            // Store global GICC address for per-CPU initialization on APs
-            GICC_BASE_ADDR.store(addr, Ordering::Release);
-
-            // Enable CPU's GIC interface for BOTH Group 0 and Group 1 interrupts
+            // Enable CPU0's GIC interface - Both Group 0 and Group 1
             // Bit 0: Enable Group 0, Bit 1: Enable Group 1
-            // Must match GICD_CTLR configuration (0x3) to receive all interrupts
-            self.write(GICC_CTLR, 0x3);
-            // Set CPU's Interrupt Priority Mask (0xff = lowest priority filter, accept all)
+            // Even though we set interrupts to Group 1, we may be running in secure mode
+            // and need to enable both groups in the CPU interface
+            self.write(GICC_CTLR, 0x3);  // Enable both Group 0 and Group 1
+            // Set CPU0's Interrupt Priority Mask (0xff = lowest priority, accept all)
             self.write(GICC_PMR, 0xff);
 
-            // Verify configuration
-            let ctlr_val = self.read(GICC_CTLR);
-            let pmr_val = self.read(GICC_PMR);
-            info!("GIC CPU Interface initialized: GICC_CTLR={:#x}, GICC_PMR={:#x}",
-                  ctlr_val, pmr_val);
-        }
-    }
-
-    /// Initialize this CPU's GIC interface (must be called per-CPU)
-    /// GICC registers are banked per-CPU, so each CPU must enable its own interface
-    pub unsafe fn init_percpu(&mut self) {
-        unsafe {
-            // Enable both Group 0 and Group 1 interrupts for this CPU
-            self.write(GICC_CTLR, 0x3);
-            // Set priority mask to accept all interrupts
-            self.write(GICC_PMR, 0xff);
-
-            let cpu_id = crate::cpu_id().get();
-            let ctlr_val = self.read(GICC_CTLR);
-            let pmr_val = self.read(GICC_PMR);
-            info!("CPU {} GIC Interface: GICC_CTLR={:#x}, GICC_PMR={:#x}",
-                  cpu_id, ctlr_val, pmr_val);
+            info!("gic: CPU interface enabled for both groups (GICC_CTLR=0x3, PMR=0xff)");
         }
     }
 
     unsafe fn irq_ack(&mut self) -> u32 {
         unsafe {
-            // GIC interrupt IDs are 10 bits (0-1023), not 9 bits
-            // 1023 = no pending interrupt
-            // 1020-1022 = reserved/spurious
             let irq = self.read(GICC_IAR) & 0x3ff;  // 10-bit mask, not 9-bit
             if irq >= 1020 {
-                // Spurious interrupt or no pending interrupt
-                // Don't panic, just return a special value
+                // Spurious interrupt - don't panic, warn and return special value
                 warn!("irq_ack: got reserved/spurious ID {}", irq);
-                return 1023;  // Treat as "no interrupt"
+                return 1023;
             }
             irq
         }
@@ -361,23 +378,5 @@ impl GicCpuIf {
         unsafe {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }
-    }
-}
-
-
-/// Initialize GIC CPU interface for the current CPU
-/// Must be called by each secondary CPU during boot
-/// GICC registers are banked per-CPU, so each must configure its own interface
-pub unsafe fn init_gicc_percpu() {
-    unsafe {
-        let addr = GICC_BASE_ADDR.load(Ordering::Acquire);
-        if addr == 0 {
-            error!("init_gicc_percpu: GICC address not set!");
-            return;
-        }
-
-        // Create temporary GicCpuIf to use its methods
-        let mut temp_if = GicCpuIf { address: addr };
-        temp_if.init_percpu();
     }
 }

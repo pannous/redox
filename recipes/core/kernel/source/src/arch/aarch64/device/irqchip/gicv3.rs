@@ -34,6 +34,44 @@ impl GicV3 {
         }
     }
 
+    /// Enable a PPI (Private Peripheral Interrupt) in this CPU's redistributor
+    /// PPIs are interrupts 16-31 that are private to each CPU
+    unsafe fn enable_ppi(&mut self, irq_num: u32) {
+        use core::ptr::{read_volatile, write_volatile};
+
+        // Get current CPU ID from MPIDR
+        let mut mpidr: u64;
+        unsafe {
+            core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr);
+        }
+        let cpu_id = (mpidr & 0xFF) as usize;  // Aff0 contains CPU ID
+
+        // Get this CPU's redistributor address
+        // In QEMU virt, redistributors are typically contiguous, one per CPU
+        if cpu_id >= self.gicrs.len() {
+            warn!("CPU {} redistributor not found (have {} redistributors)", cpu_id, self.gicrs.len());
+            return;
+        }
+
+        let (gicr_base, _size) = self.gicrs[cpu_id];
+        let gicr_virt = crate::PHYS_OFFSET + gicr_base;
+
+        // GICR_ISENABLER0 is at offset 0x10100 from redistributor base
+        // (SGI_base at 0x10000 + ISENABLER0 at 0x100)
+        const GICR_ISENABLER0: usize = 0x10100;
+        let reg_addr = (gicr_virt + GICR_ISENABLER0) as *mut u32;
+
+        // Set the bit for this interrupt
+        let bit = 1u32 << (irq_num % 32);
+        unsafe {
+            let mut val = read_volatile(reg_addr);
+            val |= bit;
+            write_volatile(reg_addr, val);
+        }
+
+        debug!("Enabled PPI {} in CPU {} redistributor at 0x{:x}", irq_num, cpu_id, gicr_virt);
+    }
+
     pub fn parse(&mut self, fdt: &Fdt) -> Result<()> {
         let Some(node) = fdt.find_compatible(&["arm,gic-v3"]) else {
             return Err(Error::new(EINVAL));
@@ -125,7 +163,17 @@ impl InterruptController for GicV3 {
         unsafe { self.gic_cpu_if.irq_eoi(irq_num) }
     }
     fn irq_enable(&mut self, irq_num: u32) {
-        unsafe { self.gic_dist_if.irq_enable(irq_num) }
+        unsafe {
+            // PPIs (Private Peripheral Interrupts, 16-31) must be enabled in the
+            // redistributor, not the distributor. Each CPU has its own redistributor.
+            if irq_num >= 16 && irq_num < 32 {
+                // This is a PPI - enable it in the current CPU's redistributor
+                self.enable_ppi(irq_num);
+            } else {
+                // SPI (Shared Peripheral Interrupt) - enable in distributor
+                self.gic_dist_if.irq_enable(irq_num);
+            }
+        }
     }
     fn irq_disable(&mut self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
@@ -148,6 +196,12 @@ impl InterruptController for GicV3 {
 
     fn send_sgi(&mut self, kind: crate::ipi::IpiKind, target: crate::ipi::IpiTarget) {
         self.gic_cpu_if.send_sgi(kind, target);
+    }
+
+    unsafe fn init_cpu_if(&mut self) {
+        unsafe {
+            self.gic_cpu_if.init();
+        }
     }
 }
 
@@ -184,11 +238,9 @@ impl GicV3CpuIf {
         unsafe {
             let mut irq: usize;
             asm!("mrs {}, icc_iar1_el1", out(reg) irq);
-            irq &= 0x3ff;  // 10-bit mask for GIC interrupt IDs
-            if irq >= 1020 {
-                // Spurious interrupt or no pending interrupt
-                warn!("GICv3 irq_ack: got reserved/spurious ID {}", irq);
-                return 1023;  // Treat as "no interrupt"
+            irq &= 0x1ff;
+            if irq == 1023 {
+                panic!("irq_ack: got ID 1023!!!");
             }
             irq as u32
         }

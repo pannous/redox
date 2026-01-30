@@ -41,19 +41,26 @@ unsafe fn instr_data_abort_inner(
     unsafe {
         let iss = iss(stack.iret.esr_el1);
         let fsc = iss & 0x3F;
-        let faulting_addr = VirtualAddress::new(far_el1());
+        //dbg!(fsc);
 
         let was_translation_fault = fsc >= 0b000100 && fsc <= 0b000111;
+        //let was_permission_fault = fsc >= 0b001101 && fsc <= 0b001111;
         let write_not_read_if_data = iss & (1 << 6) != 0;
 
         let mut flags = GenericPfFlags::empty();
         flags.set(GenericPfFlags::PRESENT, !was_translation_fault);
+
+        // TODO: RMW instructions may "involve" writing to (possibly invalid) memory, but AArch64
+        // doesn't appear to require that flag to be set if the read alone would trigger a fault.
         flags.set(
             GenericPfFlags::INVOLVED_WRITE,
             write_not_read_if_data && !instr_not_data,
         );
         flags.set(GenericPfFlags::INSTR_NOT_DATA, instr_not_data);
         flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, from_user);
+
+        let faulting_addr = VirtualAddress::new(far_el1());
+        //dbg!(faulting_addr, flags, from);
 
         crate::memory::page_fault_handler(stack, flags, faulting_addr).is_ok()
     }
@@ -141,32 +148,22 @@ unsafe fn instr_trapped_msr_mrs_inner(
 
 exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
     unsafe {
-        let exc_code = exception_code(stack.iret.esr_el1);
-        let elr = stack.iret.elr_el1;
-        let esr = stack.iret.esr_el1;
-        println!("=== SYNC EXCEPTION AT EL1 ===");
-        println!("ESR_EL1: {:#010x}", esr);
-        println!("EXC_CODE: {:#08b} ({})", exc_code, exc_code);
-        println!("ELR_EL1: {:#018x}", elr);
-
         if !pf_inner(
             stack,
-            exc_code,
+            exception_code(stack.iret.esr_el1),
             "sync_exc_el1_spx",
         ) {
-            println!("Synchronous exception at EL1 with SPx - UNHANDLED");
-            if exc_code == 0b100101 {
+            println!("Synchronous exception at EL1 with SPx");
+            if exception_code(stack.iret.esr_el1) == 0b100101 {
                 let far_el1 = far_el1();
-                println!("DATA ABORT: FAR_EL1 = {:#018x}", far_el1);
-            } else if exc_code == 0b100100 {
+                println!("FAR_EL1 = 0x{:08x}", far_el1);
+            } else if exception_code(stack.iret.esr_el1) == 0b100100 {
                 let far_el1 = far_el1();
-                println!("USER DATA ABORT: FAR_EL1 = {:#018x}", far_el1);
+                println!("USER FAR_EL1 = 0x{:08x}", far_el1);
             }
-            println!("=== FULL CONTEXT ===");
             stack.trace();
             loop {}
         }
-        println!("SYNC_EL1_SPX: Successfully handled");
     }
 });
 unsafe fn pf_inner(stack: &mut InterruptStack, ty: u8, from: &str) -> bool {

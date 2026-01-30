@@ -164,12 +164,63 @@ fn init_env() -> &'static [u8] {
 }
 
 extern "C" fn userspace_init() {
-    let mut token = unsafe { CleanLockToken::new() };
-    let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
-    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) }
+    // Check interrupt state (should be enabled by switch_finish_hook)
+    let daif: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif);
+    }
+    warn!("userspace_init: ENTERED! DAIF=0x{:x}, IRQs {}", daif,
+          if (daif & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
 
-    // Bootstrap loaded successfully - interrupts will be enabled when entering EL0 via SPSR_EL1
-    // For now, keep interrupts disabled in kernel mode to avoid nested interrupt issues
+    // OPTION 2: Clear any pending timer interrupt state before enabling IRQs
+    unsafe {
+        use crate::device::cpu::registers::control_regs;
+
+        // Read current timer control register
+        let ctl = control_regs::vtmr_ctrl();
+        warn!("userspace_init: timer CTL before={:#x}", ctl);
+
+        // Check timer value - if it's about to fire, reload it
+        let tval = control_regs::vtmr_tval();
+        warn!("userspace_init: timer TVAL={} (signed)", tval as i32);
+
+        // Mask the timer interrupt temporarily
+        control_regs::vtmr_ctrl_write(ctl | 0x2);  // Set IMASK=1
+        warn!("userspace_init: timer interrupt masked");
+
+        // Reload timer with fresh count to ensure it won't fire immediately
+        // Use same 240,000 count (10ms at 24MHz)
+        control_regs::vtmr_tval_write(240_000);
+        warn!("userspace_init: timer reloaded to 240,000");
+
+        // Now clear IMASK to unmask the timer interrupt
+        control_regs::vtmr_ctrl_write((ctl | 0x1) & !0x2);  // ENABLE=1, IMASK=0
+        warn!("userspace_init: timer interrupt unmasked, CTL={:#x}", control_regs::vtmr_ctrl());
+    }
+
+    warn!("userspace_init: About to enable IRQs with 'msr daifclr, #2'...");
+    unsafe {
+        core::arch::asm!("msr daifclr, #2");
+    }
+    warn!("userspace_init: IRQs enabled successfully!");
+
+    let mut token = unsafe { CleanLockToken::new() };
+    warn!("userspace_init: created token");
+    let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
+    warn!("userspace_init: got bootstrap, calling usermode_bootstrap");
+    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) };
+    warn!("userspace_init: usermode_bootstrap RETURNED - this should never happen!");
+    warn!("userspace_init: About to loop forever...");
+    loop {
+        warn!("userspace_init: Still in loop, DAIF={:#x}", unsafe {
+            let daif: u64;
+            core::arch::asm!("mrs {}, daif", out(reg) daif);
+            daif
+        });
+        unsafe {
+            core::arch::asm!("wfi"); // Wait for interrupt
+        }
+    }
 }
 
 struct Bootstrap {
@@ -216,90 +267,103 @@ fn kmain(bootstrap: Bootstrap) -> ! {
         }
     }
 
-    // Pre-grow the heap before starting the scheduler to avoid APs competing
-    // for the KernelMapper lock during heap growth
-    debug!("BSP: Pre-growing heap for AP allocations");
-    {
-        use alloc::vec::Vec;
-        // Allocate and drop several large buffers to force heap to grow
-        // This ensures APs won't trigger heap growth during their initialization
-        for _ in 0..4 {
-            let _ = Vec::<u8>::with_capacity(512 * 1024); // 512 KB each
-        }
-    }
-    debug!("BSP: Heap pre-growth complete");
-
     debug!("BSP: Entering scheduler (run_userspace)");
+
+    // Debug: Check CPU interrupt state before entering scheduler
+    let daif: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif);
+    }
+    warn!("BSP entering scheduler: DAIF=0x{:x}, IRQs {}", daif,
+          if (daif & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
+
+    // CRITICAL: Enable interrupts before entering scheduler!
+    // The scheduler loop expects to start with interrupts enabled
+    unsafe {
+        interrupt::enable_and_nop();
+    }
+
+    let daif_after: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif_after);
+    }
+    warn!("BSP after enabling interrupts: DAIF=0x{:x}", daif_after);
 
     run_userspace(&mut token)
 }
 
-/// Serialization lock to prevent multiple APs from initializing contexts simultaneously
-/// This avoids heap allocator contention and potential deadlocks during AP boot
-static AP_INIT_LOCK: spin::Mutex<()> = spin::Mutex::new(());
-
 /// This is the main kernel entry point for secondary CPUs
 fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
-    warn!("kmain_ap: ENTRY for CPU {}", cpu_id);
     let mut token = unsafe { CleanLockToken::new() };
-    warn!("kmain_ap: CleanLockToken created for CPU {}", cpu_id);
-
-    // Serialize AP initialization to avoid heap allocator contention
-    // When multiple APs try to allocate memory (for kfx, syscall frames, etc.)
-    // simultaneously, they can deadlock on the HEAP lock + KernelMapper lock
-    warn!("kmain_ap: Waiting for AP_INIT_LOCK for CPU {}", cpu_id);
-    let _guard = AP_INIT_LOCK.lock();
-    warn!("kmain_ap: Acquired AP_INIT_LOCK for CPU {}", cpu_id);
-
-    // Initialize GIC CPU interface for this CPU
-    // GICC registers are banked per-CPU, so each CPU must enable its own interface
-    warn!("kmain_ap: Initializing GIC CPU interface for CPU {}", cpu_id);
-    unsafe { crate::dtb::irqchip::init_percpu_gic(); }
-    warn!("kmain_ap: GIC CPU interface initialized for CPU {}", cpu_id);
 
     // Initialize the idle context for this CPU (CRITICAL!)
     // Each CPU needs its own idle context before entering the scheduler
-    warn!("kmain_ap: About to call context::init for CPU {}", cpu_id);
     context::init(&mut token);
-    warn!("kmain_ap: context::init DONE for CPU {}", cpu_id);
-
-    // Release the lock before entering scheduler
-    drop(_guard);
-    warn!("kmain_ap: Released AP_INIT_LOCK for CPU {}", cpu_id);
 
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    warn!("kmain_ap: About to call ready_for_profiling for CPU {}", cpu_id);
     debug!("AP {} initialized, entering scheduler", cpu_id);
 
     // Ready for profiling on this CPU
     profiling::ready_for_profiling();
-    warn!("kmain_ap: ready_for_profiling DONE for CPU {}", cpu_id);
+
+    // Debug: Check CPU interrupt state before entering scheduler
+    let daif: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif);
+    }
+    warn!("AP {} entering scheduler: DAIF=0x{:x}, IRQs {}", cpu_id.get(), daif,
+          if (daif & (1 << 7)) != 0 { "MASKED" } else { "enabled" });
+
+    // CRITICAL: Enable interrupts before entering scheduler!
+    // The scheduler loop expects to start with interrupts enabled
+    unsafe {
+        interrupt::enable_and_nop();
+    }
+
+    let daif_after: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, daif", out(reg) daif_after);
+    }
+    warn!("AP {} after enabling interrupts: DAIF=0x{:x}", cpu_id.get(), daif_after);
 
     // Enter the scheduler loop - contexts will be scheduled on this CPU
-    warn!("kmain_ap: About to call run_userspace for CPU {}", cpu_id);
     run_userspace(&mut token);
 }
 fn run_userspace(token: &mut CleanLockToken) -> ! {
     use core::sync::atomic::{AtomicU64, Ordering};
     static IDLE_SPINS: AtomicU64 = AtomicU64::new(0);
     static SWITCH_SPINS: AtomicU64 = AtomicU64::new(0);
-
-    // Debug: Log first few iterations to see what scheduler is doing
-    let mut debug_count = 0;
+    static DEBUG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     loop {
         unsafe {
-            interrupt::disable();
-            let result = context::switch(token);
-
-            if debug_count < 5 {
-                println!("run_userspace: iteration {}, result={:?}", debug_count, result);
-                debug_count += 1;
+            // Debug first few iterations
+            let debug_count = DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);
+            if debug_count < 3 {
+                let mut daif: u64;
+                core::arch::asm!("mrs {}, daif", out(reg) daif);
+                warn!("Scheduler loop iter {}: DAIF=0x{:x} before disable", debug_count, daif);
             }
 
-            match result {
+            interrupt::disable();
+
+            if debug_count < 3 {
+                let mut daif: u64;
+                core::arch::asm!("mrs {}, daif", out(reg) daif);
+                warn!("Scheduler loop iter {}: DAIF=0x{:x} after disable", debug_count, daif);
+                warn!("Scheduler loop iter {}: about to call context::switch", debug_count);
+            }
+
+            let switch_result = context::switch(token);
+
+            if debug_count < 3 {
+                warn!("Scheduler loop iter {}: context::switch returned {:?}", debug_count,
+                      if matches!(switch_result, SwitchResult::Switched) { "Switched" } else { "AllContextsIdle" });
+            }
+
+            match switch_result {
                 SwitchResult::Switched => {
                     let c = SWITCH_SPINS.fetch_add(1, Ordering::Relaxed);
                     if c % 1_000_000 == 0 {
@@ -313,8 +377,21 @@ fn run_userspace(token: &mut CleanLockToken) -> ! {
                         info!("run_userspace: CPU {} idle spin {} (all contexts idle)",
                               crate::cpu_id().get(), c);
                     }
+
+                    if debug_count < 3 {
+                        let mut daif: u64;
+                        core::arch::asm!("mrs {}, daif", out(reg) daif);
+                        warn!("About to enable_and_halt: DAIF=0x{:x}", daif);
+                    }
+
                     // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
                     interrupt::enable_and_halt();
+
+                    if debug_count < 3 {
+                        let mut daif: u64;
+                        core::arch::asm!("mrs {}, daif", out(reg) daif);
+                        warn!("After enable_and_halt (woke up!): DAIF=0x{:x}", daif);
+                    }
                 }
             }
         }

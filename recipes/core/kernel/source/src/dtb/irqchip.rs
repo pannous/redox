@@ -39,6 +39,17 @@ pub trait InterruptController: InterruptHandler {
     fn send_sgi(&mut self, _kind: crate::ipi::IpiKind, _target: crate::ipi::IpiTarget) {
         // Default no-op for interrupt controllers that don't support SGI
     }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn init_cpu_if(&mut self) {
+        // Default no-op - only GIC implementations need to override this
+        // GICv3 needs to initialize ICC_* system registers on each CPU
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn debug_irq_status(&self, _irq: u32) {
+        // Default no-op - only GIC implementations need to override this
+    }
 }
 
 pub struct IrqConnection {
@@ -341,6 +352,17 @@ impl IrqChipCore {
             .init_inner3(fdt_opt, &mut self.irq_desc, roots);
     }
 
+    #[cfg(target_arch = "aarch64")]
+    pub unsafe fn debug_irq_status(&self, virq: u32) {
+        let irq_desc = &self.irq_desc[virq as usize];
+        let ic_idx = irq_desc.basic.ic_idx;
+        let hwirq = irq_desc.basic.ic_irq;
+
+        unsafe {
+            self.irq_chip_list.chips[ic_idx].ic.debug_irq_status(hwirq);
+        }
+    }
+
     pub fn phandle_to_ic_idx(&self, phandle: u32) -> Option<usize> {
         self.irq_chip_list
             .chips
@@ -424,18 +446,4 @@ pub fn set_reserved(_cpu_id: LogicalCpuId, index: u8, reserved: bool) {
 pub fn available_irqs_iter(_cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
     error!("available_irqs_iter has been called");
     0..0
-}
-
-/// Initialize GIC CPU interface for the current CPU (must be called on each CPU)
-/// This is required because GICC registers are banked per-CPU
-#[cfg(target_arch = "aarch64")]
-pub unsafe fn init_percpu_gic() {
-    unsafe {
-        crate::arch::aarch64::device::irqchip::gic::init_gicc_percpu();
-    }
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-pub unsafe fn init_percpu_gic() {
-    // No-op on other architectures
 }

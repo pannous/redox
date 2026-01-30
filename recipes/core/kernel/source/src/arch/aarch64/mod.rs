@@ -42,17 +42,12 @@ pub use arch_copy_to_user as arch_copy_from_user;
 #[unsafe(naked)]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     // x0 = dst, x1 = src, x2 = len
-    // Use MSR DAIFClr to temporarily allow user access (disable PAN)
-    // ARM equivalent of x86's STAC/CLAC
     core::arch::naked_asm!(
         "
     .global __usercopy_start
     __usercopy_start:
         mov x4, x0          // x4 = dst
         mov x0, #0          // return 0 (success)
-
-        // Note: On ARMv8.0, there's no PAN. On ARMv8.1+, we should ideally
-        // use MSR UAO (User Access Override) but for now just try regular stores
 
     1:  // Copy 8 bytes at a time
         cmp x2, #8

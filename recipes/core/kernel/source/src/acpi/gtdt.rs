@@ -56,26 +56,10 @@ impl Gtdt {
         } else {
             gtdt.non_secure_el1_timer_gsiv
         };
-        info!("generic_timer: gsiv={} (virtual={})", gsiv, timer.use_virtual_timer);
+        info!("generic_timer gsiv = {} (virtual={})", gsiv, timer.use_virtual_timer);
 
-        // GSIV is the Global System Interrupt Vector from ACPI
-        // For GIC, this should map directly to a hardware IRQ
-        // But we need to translate it to a virq for the IRQ subsystem
-        let virq = unsafe {
-            // Try to find which interrupt controller handles this GSIV
-            IRQ_CHIP.irq_chip_list.chips[0].ic.irq_to_virq(gsiv)
-        };
-
-        match virq {
-            Some(virq) => {
-                info!("generic_timer: gsiv={} -> virq={}", gsiv, virq);
-                register_irq(virq as u32, Box::new(timer));
-                unsafe { IRQ_CHIP.irq_enable(virq as u32) };
-            }
-            None => {
-                error!("generic_timer: Failed to translate gsiv={} to virq", gsiv);
-            }
-        }
+        register_irq(gsiv, Box::new(timer));
+        unsafe { IRQ_CHIP.irq_enable(gsiv as u32) };
     }
 
     pub fn new(sdt: &'static Sdt) -> Option<&'static Gtdt> {

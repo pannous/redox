@@ -75,9 +75,10 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
 }
 
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
-    debug!("usermode_bootstrap: Loading {} pages", bootstrap.page_count);
+    warn!("usermode_bootstrap: ENTERED with page_count={}", bootstrap.page_count);
     assert_ne!(bootstrap.page_count, 0);
 
+    warn!("usermode_bootstrap: About to create address space mappings");
     {
         let addr_space = Arc::clone(
             context::current()
@@ -85,6 +86,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
+        warn!("usermode_bootstrap: Got address space");
 
         let base = Page::containing_address(VirtualAddress::new(PAGE_SIZE));
         let flags = MapFlags::MAP_FIXED_NOREPLACE
@@ -94,6 +96,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
 
         let page_count =
             NonZeroUsize::new(bootstrap.page_count).expect("bootstrap contained no pages!");
+        warn!("usermode_bootstrap: About to mmap {} pages at base {:?}", page_count, base);
 
         let _base_page = addr_space
             .acquire_write()
@@ -104,41 +107,38 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 flags,
                 &mut Vec::new(),
                 |page, flags, mapper, flusher| {
-                    // Allocate pages individually with real writable mappings
-                    // Can't use zeroed_phys_contiguous (needs 128MB contiguous)
-                    // Can't use zeroed (maps COW read-only, page faults don't work from kernel)
-                    Ok(Grant::zeroed_eager(
+                    let shared = false;
+                    Ok(Grant::zeroed(
                         PageSpan::new(page, bootstrap.page_count),
                         flags,
                         mapper,
                         flusher,
+                        shared,
                     )?)
                 },
             )
             .expect("Failed to allocate bootstrap pages");
+        warn!("usermode_bootstrap: mmap completed successfully");
     }
 
+    warn!("usermode_bootstrap: About to copy bootstrap memory");
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
-    debug!("usermode_bootstrap: Got bootstrap_slice at {:p}, len={}",
-           bootstrap_slice.as_ptr(), bootstrap_slice.len());
+    warn!("usermode_bootstrap: Got bootstrap_slice, size={} bytes", bootstrap_slice.len());
 
-    let user_slice = UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
-        .expect("failed to create bootstrap user slice");
-    debug!("usermode_bootstrap: Created user_slice, about to copy {} bytes",
-           bootstrap.page_count * PAGE_SIZE);
-
-    user_slice
+    warn!("usermode_bootstrap: Starting copy");
+    UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
+        .expect("failed to create bootstrap user slice")
         .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
-
-    debug!("usermode_bootstrap: Copy completed successfully");
+    warn!("usermode_bootstrap: Bootstrap memory copied to userspace");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
-    debug!("Bootstrap entry point: {:X}", bootstrap_entry);
+    warn!("usermode_bootstrap: Bootstrap entry point: {:#X}", bootstrap_entry);
     assert_ne!(bootstrap_entry, 0);
 
     // Start in a minimal environment without any stack.
 
+    warn!("usermode_bootstrap: About to set up registers");
     let ctx = context::current();
     let mut lock = ctx.write(token.token());
     let regs = &mut lock
@@ -148,48 +148,8 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         regs.init();
         regs.set_instr_pointer(bootstrap_entry.try_into().unwrap());
     }
-
-    // Enable interrupts now that bootstrap is loaded and ready
-    // SPSR_EL1 is already set to enable interrupts when we ERET to EL0
-    // But we also need interrupts enabled in kernel mode for timer-driven context switching
-    #[cfg(target_arch = "aarch64")]
-    {
-        use crate::device::cpu::registers::control_regs;
-        use crate::arch::aarch64::interrupt;
-
-        unsafe {
-            let daif_before = interrupt::read_daif();
-            let vtmr_ctl = control_regs::vtmr_ctrl();
-            let vtmr_tval = control_regs::vtmr_tval();
-
-            debug!("usermode_bootstrap: About to enable interrupts");
-            debug!("  DAIF before: {:#010x}", daif_before);
-            debug!("  Timer CTL: {:#010x} (ENABLE={}, IMASK={}, ISTATUS={})",
-                   vtmr_ctl, vtmr_ctl & 1, (vtmr_ctl >> 1) & 1, (vtmr_ctl >> 2) & 1);
-            debug!("  Timer TVAL: {} (signed {})", vtmr_tval, vtmr_tval as i32);
-
-            // Reset timer to give LOTS of breathing room
-            debug!("  Resetting timer to 480000 (20ms)...");
-            control_regs::vtmr_tval_write(480000);
-            core::arch::asm!("isb");
-
-            debug!("  Timer reset complete, about to enable interrupts...");
-
-            // Try enabling with inline assembly and immediate check
-            core::arch::asm!("msr daifclr, #2");
-
-            debug!("  msr daifclr executed");
-
-            core::arch::asm!("nop");
-
-            debug!("  nop executed");
-
-            let daif_after = interrupt::read_daif();
-            debug!("  DAIF after: {:#010x}", daif_after);
-        }
-
-        debug!("usermode_bootstrap: Interrupts enabled successfully");
-    }
+    warn!("usermode_bootstrap: Registers initialized, entry point set to {:#X}", bootstrap_entry);
+    warn!("usermode_bootstrap: COMPLETE - returning to userspace_init");
 }
 
 pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {

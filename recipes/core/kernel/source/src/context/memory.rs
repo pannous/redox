@@ -1264,47 +1264,6 @@ impl Grant {
             },
         })
     }
-    /// Allocate and map all pages immediately with real frames (non-contiguous).
-    /// Unlike zeroed(), this allocates real writable pages instead of COW pages.
-    /// Unlike zeroed_phys_contiguous(), this doesn't require physical contiguity.
-    pub fn zeroed_eager(
-        span: PageSpan,
-        flags: PageFlags<RmmA>,
-        mapper: &mut PageMapper,
-        flusher: &mut Flusher,
-    ) -> Result<Grant, Enomem> {
-        // Allocate and map each page individually
-        for page in span.pages() {
-            let frame = crate::memory::allocate_frame().ok_or(Enomem)?;
-
-            get_page_info(frame)
-                .expect("PageInfo must exist for allocated frame")
-                .refcount
-                .store(RefCount::One.to_raw(), Ordering::Relaxed);
-
-            unsafe {
-                let result = mapper
-                    .map_phys(page.start_address(), frame.base(), flags)
-                    .ok_or(Enomem)?;
-                result.ignore();
-
-                flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
-            }
-        }
-
-        Ok(Grant {
-            base: span.base,
-            info: GrantInfo {
-                page_count: span.count,
-                flags,
-                mapped: true,
-                provider: Provider::Allocated {
-                    cow_file_ref: None,
-                    phys_contiguous: false,
-                },
-            },
-        })
-    }
     pub fn zeroed(
         span: PageSpan,
         flags: PageFlags<RmmA>,
