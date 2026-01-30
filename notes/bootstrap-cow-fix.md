@@ -58,3 +58,21 @@ Grant::zeroed_eager(span, flags, mapper, flusher)?
 - `recipes/core/kernel/source/src/context/memory.rs` - Added `Grant::zeroed_eager()`
 - `recipes/core/kernel/source/src/syscall/process.rs` - Use eager allocation for bootstrap
 - Cleaned up debug logging from investigation
+
+## Performance Impact
+The eager allocation uses ~21,205 individual page allocations instead of COW optimization:
+- Memory overhead: 86MB allocated immediately vs lazy allocation
+- No page faults during bootstrap copy (faster)
+- Trade-off acceptable for one-time bootstrap load
+
+## Future Work
+Consider fixing the root cause:
+- ARM page fault handler should properly handle kernel writes to user COW pages
+- Would allow COW optimization to work correctly
+- Lower memory usage for other similar cases
+
+## Related Issues
+This also explains why previous attempts at debugging showed:
+- Reads from 0x1000 succeeded (mapped to shared zero page)
+- Writes hung without exceptions (no page fault triggered)
+- TLB flushes didn't help (pages were mapped, just read-only)
