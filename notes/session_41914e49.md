@@ -1,0 +1,74 @@
+# Claude Conversation (41914e49)
+
+## 👤 Human
+
+00~Does Control-Alt-2 do the same as 00~inputd -A 201~ ?
+
+---
+
+## 🤖 Assistant
+
+No, they're different:
+
+**Control-Alt-2 (QEMU)**: Switches between QEMU's emulator-level consoles (monitor, serial, parallel, graphics). Your screenshot shows "parallel0 console" - that's a QEMU debug console, not Redox.
+
+**inputd -A 2 (Redox)**: Switches between Redox OS virtual terminals (VT1, VT2, etc.) within the guest OS itself.
+
+To get back to Redox's display from QEMU's parallel console, press **Control-Alt-1**.
+
+---
+
+## 👤 Human
+
+00~Can I switch the hotkey to switch virtual terminals?01~
+
+---
+
+## 🤖 Assistant
+
+Yes, the VT switching hotkey is configured in inputd. Let me check the source.
+
+---
+
+## 🤖 Assistant
+
+→ `Grep`: `Alt.*switch|vt.*switch|KEY_F\d|activate`
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/recipes/core/base/source/drivers/inputd/src/main.rs`
+
+---
+
+## 🤖 Assistant
+
+The VT switching hotkey is **Super (Windows key) + F1-F12**, hardcoded in inputd. Looking at lines 347-368:
+
+```rust
+match key_event.scancode {
+    f @ 0x3B..=0x44 if self.super_key => {
+        // F1 through F10
+        new_active_opt = Some((f - 0x3A) as usize);
+    }
+    0x57 if self.super_key => { /* F11 */ }
+    0x58 if self.super_key => { /* F12 */ }
+    0x5B => { self.super_key = key_event.pressed; }  // Super key
+    ...
+}
+```
+
+**To change the hotkey**, edit `/opt/other/redox/recipes/core/base/source/drivers/inputd/src/main.rs`:
+
+- Replace `0x5B` (Super) with another modifier scancode:
+  - `0x38` = Left Alt
+  - `0x1D` = Left Ctrl
+  - `0x2A` = Left Shift
+
+- Or change the logic to use a different key combination entirely
+
+Then rebuild inputd and update initfs. There's no config file - it's compiled in.
+
+---
+

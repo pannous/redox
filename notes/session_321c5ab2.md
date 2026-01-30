@@ -1,0 +1,38 @@
+# Claude Conversation (321c5ab2)
+
+## 👤 Human
+
+Is it normal that there are three processes with the same name and ID? Or might that be the cause why we have network problems?  42    0     0     0     UB    #0               00:00:00.06 25 MB   /usr/lib/drivers/virtio-netd
+42    0     0     0     UB    #0               00:00:00.00 25 MB   /usr/lib/drivers/virtio-netd
+42    0     0     0     UB    #0               00:00:00.00 25 MB   /usr/lib/drivers/virtio-netd
+
+---
+
+## 🤖 Assistant
+
+This is **normal** - those are likely **threads**, not separate processes. They share the same PID (42) which indicates they're threads within a single process. Many drivers spawn worker threads for I/O handling.
+
+The key concern is the **UB** state (Uninterruptible/Blocked) - all three threads appear blocked, waiting for something.
+
+Let me check if this is related to networking issues:
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `tmux has-session -t redox-dev 2>/dev/null && echo "Session exists" || echo "No session"`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `./test-in-redox.sh "ps aux | grep -E '(virtio|net)'"`
+
+---
+
+## 👤 Human
+
+[Request interrupted by user for tool use]
+
+---
+

@@ -1,0 +1,112 @@
+# Claude Conversation (9759194c)
+
+## 👤 Human
+
+Create a bash script in which the current tmux sessions are listed by number. You can type the number to activate the session or you can type in a new name and start a new session.
+
+---
+
+## 🤖 Assistant
+
+→ `Write`: `/opt/other/redox/tmux-picker.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `chmod +x /opt/other/redox/tmux-picker.sh`
+
+---
+
+## 🤖 Assistant
+
+Done. Created `tmux-picker.sh`:
+
+```
+./tmux-picker.sh
+```
+
+- Lists numbered sessions
+- Enter a number → attaches to that session
+- Enter text → creates new session with that name
+
+---
+
+## 👤 Human
+
+Is it possible to move an existing running program into a new tmux session?
+
+---
+
+## 🤖 Assistant
+
+Yes, using **reptyr**:
+
+```bash
+# 1. Suspend the running program
+Ctrl+Z
+
+# 2. Background and disown it
+bg
+disown
+
+# 3. Get its PID
+jobs -l  # or: pgrep <name>
+
+# 4. Start/attach tmux
+tmux new -s mysession
+
+# 5. Grab the process
+reptyr <PID>
+```
+
+Install if needed:
+```bash
+brew install reptyr   # mac
+apt install reptyr    # linux
+```
+
+**Note:** On Linux you may need:
+```bash
+echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+```
+
+Alternative if reptyr fails: **screen -x** trick doesn't work retroactively, so reptyr is the main option for already-running processes.
+
+---
+
+## 👤 Human
+
+/opt/other/redox/ brew install reptyr
+Warning: No available formula with the name "reptyr". Did you mean resty?
+==> Searching for similarly named formulae and casks...
+
+---
+
+## 🤖 Assistant
+
+Ah, reptyr isn't available on macOS - it relies on Linux-specific ptrace features.
+
+**On macOS: No direct way to move a running process into tmux.**
+
+Workarounds:
+
+1. **If it's a long-running command** - let it finish, or Ctrl+C and restart inside tmux
+
+2. **If you need the output** - redirect to a file and `tail -f` from tmux:
+   ```bash
+   # Can't save already-running output, but for future:
+   ./long-command 2>&1 | tee output.log
+   # Then in tmux:
+   tail -f output.log
+   ```
+
+3. **Prevention** - start everything in tmux from the beginning, or use:
+   ```bash
+   tmux new -d -s bg './long-command'  # starts detached
+   ```
+
+The real answer on Mac: you can't. Plan ahead and run long tasks in tmux from the start.
+
+---
+

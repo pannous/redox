@@ -1,0 +1,55 @@
+# Claude Conversation (bd8de641)
+
+## 👤 Human
+
+is 
+./run-dev.sh       # Unix socket Foreground or -s for /tmp/redox-dev-raw.sock
+enough or do we need
+./old/run-debug.sh  # GDB TCP (telnet) daemonized
+
+---
+
+## 🤖 Assistant
+
+Let me check what each script provides.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/run-dev.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/old/run-debug.sh`
+
+---
+
+## 🤖 Assistant
+
+**`run-dev.sh` is enough for most tasks.** Here's the difference:
+
+| Feature | `run-dev.sh` | `old/run-debug.sh` |
+|---------|--------------|-------------------|
+| Image | raw `.img` (direct) | qcow2 overlay (COW) |
+| GDB | ❌ No | ✅ Yes (port 1235) |
+| Startup | Interactive foreground | Daemonized + paused (`-S`) |
+| Serial | Unix socket or stdio | TCP telnet |
+| Use case | Normal dev/testing | Kernel debugging with breakpoints |
+
+**Use `run-dev.sh`** when:
+- Testing userspace changes
+- Quick iterations
+- Interactive shell access
+
+**Use `old/run-debug.sh`** when:
+- Need GDB attached to kernel
+- Stepping through boot/driver code
+- Need to pause at startup (`-S` flag)
+
+For your current workflow (9p share testing, coreutils fixes), `run-dev.sh` is sufficient.
+
+---
+

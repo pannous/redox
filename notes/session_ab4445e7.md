@@ -1,0 +1,97 @@
+# Claude Conversation (ab4445e7)
+
+## 👤 Human
+
+Create a release script which repackages the working image into an ISO and uploads it as a release to GitHub somehow.
+
+---
+
+## 🤖 Assistant
+
+I'll explore the existing build scripts to understand how ISOs are created, then create a release script.
+
+---
+
+## 🤖 Assistant
+
+→ `Glob`: `**/*iso*.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Glob`: `**/release*.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `ls -la *.sh 2>/dev/null | head -20`
+
+---
+
+## 👤 Human
+
+[Request interrupted by user]
+
+---
+
+## 👤 Human
+
+We already successfully built build/aarch64/pure-rust.img You just need to do the repackaging.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/build-pure-rust-iso.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `ls -la /opt/other/redox/build/aarch64/*.iso /opt/other/redox/build/aarch64/*.img 2>/dev/null | head ...`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `git remote -v && echo "---" && git tag | tail -5`
+
+---
+
+## 🤖 Assistant
+
+→ `Write`: `/opt/other/redox/release.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `chmod +x /opt/other/redox/release.sh && bash -n /opt/other/redox/release.sh && echo "Syntax OK"`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `which gh && gh auth status 2>&1 | head -3`
+
+---
+
+## 🤖 Assistant
+
+Done. Created `release.sh`:
+
+```bash
+./release.sh           # Creates release with today's date (e.g., pure-rust-2026.01.09)
+./release.sh 1.0.0     # Custom version tag
+```
+
+The script:
+1. Copies `pure-rust.img` → `pure-rust.iso`
+2. Compresses to `.iso.gz` (~200MB vs 512MB)
+3. Generates release notes with recent commits and checksums
+4. Uploads to GitHub via `gh release create`
+
+---
+

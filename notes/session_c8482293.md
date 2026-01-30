@@ -1,0 +1,129 @@
+# Claude Conversation (c8482293)
+
+## 👤 Human
+
+Find out why our custom qemu starts Alpine but does not start Redox at all. 
+/opt/other/qemu/ ./scripts/run-alpine.sh 
+Starting Alpine Linux aarch64 VM (mode: run)...
+  SSH: ssh -p 2222 root@localhost
+  Serial console: Ctrl-A X to quit
+
+Extracting kernel from installed disk...
+Note: Using ISO kernel (guestfish not available for extraction)
+qemu-system-aarch64: info: Venus: Host Vulkan swapchain initialized (1280x800)
+Jan 21 20:39:18  virgl_render_server[99716] <Debug>: render_receive_request: reading framing header, max_size=40
+[virgl_render_server] render_receive_request: reading framing header, max_size=40
+Jan 21 20:39:18  virgl_render_server[99716] <Debug>: render_receive_request: got header size=8 fd_count=0
+[virgl_render_server] render_receive_request: got header size=8 fd_count=0
+
+   OpenRC 0.63 is starting up Linux 6.12.1-3-virt (aarch64)
+
+ * /proc is already mounted
+ * Mounting /run ... [ ok ]
+
+vs
+/opt/other/redox/run-venus.sh 
+Jan 21 20:52:12  virgl_render_server[35989] <Debug>: render_receive_request: reading framing header, max_size=40
+[virgl_render_server] render_receive_request: reading framing header, max_size=40
+Jan 21 20:52:12  virgl_render_server[35989] <Debug>: render_receive_request: got header size=8 fd_count=0
+[virgl_render_server] render_receive_request: got header size=8 fd_count=0
+**HANGS**
+QEMU: Terminated
+Jan 21 20:52:25  virgl_render_server[35989] <Debug>: render_receive_request: reading framing header, max_size=40
+[virgl_render_server] render_receive_request: reading framing header, max_size=40
+
+---
+
+## 🤖 Assistant
+
+I'll investigate the difference between the Alpine and Redox QEMU launch configurations.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/run-venus.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/qemu/scripts/run-alpine.sh`
+
+---
+
+## 👤 Human
+
+[Request interrupted by user for tool use]
+
+---
+
+## 👤 Human
+
+ok
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/qemu/scripts/run-alpine.sh`
+
+---
+
+## 🤖 Assistant
+
+Key differences I can see:
+
+| Aspect | Alpine (works) | Redox (hangs) |
+|--------|----------------|---------------|
+| Accelerator | TCG (`-accel tcg -cpu max`) | HVF (`-accel hvf -cpu host`) |
+| Boot method | Direct kernel (`-kernel`, `-initrd`) | EFI firmware (pflash) |
+| GPU devices | Single: `virtio-gpu-gl-pci,venus=on` | **Dual**: `ramfb` + `virtio-gpu-gl-pci,venus=on` |
+| Machine flags | `-M virt` | `-M virt,highmem=off` |
+
+Let me test if the issue is HVF or the dual GPU setup by checking notes and trying a quick test.
+
+---
+
+## 🤖 Assistant
+
+→ `Glob`: `/opt/other/redox/notes/*venus*.md`
+
+---
+
+## 🤖 Assistant
+
+→ `Glob`: `/opt/other/redox/notes/*qemu*.md`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `ls -la /opt/other/redox/notes/ 2>/dev/null | head -20`
+
+---
+
+## 🤖 Assistant
+
+Let me check the test-in-redox.sh to see what configuration works for Redox normally.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/test-in-redox.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/run-dev.sh`
+
+---
+
+## 👤 Human
+
+[Request interrupted by user]
+
+---
+

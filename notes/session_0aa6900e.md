@@ -1,0 +1,182 @@
+# Claude Conversation (0aa6900e)
+
+## 👤 Human
+
+can we use @snapshot.sh dev.qcow2 versions in run-dev ?
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/run-dev.sh`
+
+---
+
+## 🤖 Assistant
+
+Yes, run-dev.sh currently uses raw ISO which doesn't support snapshots. I'll modify it to use qcow2 with snapshot support.
+
+---
+
+## 🤖 Assistant
+
+→ `Edit`: `/opt/other/redox/run-dev.sh`
+
+---
+
+## 🤖 Assistant
+
+Done. Now run-dev.sh:
+- Uses `dev.qcow2` by default (snapshot-capable)
+- Auto-creates it from `pure-rust.iso` if missing
+- Prints snapshot reminder on startup
+
+Workflow:
+```bash
+./run-dev.sh              # Boot (creates dev.qcow2 if needed)
+# In another terminal:
+./snapshot.sh save test1  # Save state
+./snapshot.sh load test1  # Rollback
+./snapshot.sh list        # Show snapshots
+```
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `git add run-dev.sh && git commit -m "feature(minor): integrate snapshot.sh support into run-dev.sh
+
+...`
+
+---
+
+## 🤖 Assistant
+
+Committed `7ba03db9f`. Both scripts now share `dev.qcow2` by default.
+
+---
+
+## 👤 Human
+
+"The system boots to login prompt. Let me run it interactively with commands sent via heredoc." make run-dev.sh Compatible with you, I have my own script.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/run-debug.sh`
+
+---
+
+## 🤖 Assistant
+
+I'll add socket mode for scripted/heredoc input while keeping interactive mode as default.
+
+---
+
+## 🤖 Assistant
+
+→ `Edit`: `/opt/other/redox/run-dev.sh`
+
+---
+
+## 🤖 Assistant
+
+Done. Now supports two modes:
+
+**Interactive (default):**
+```bash
+./run-dev.sh
+```
+
+**Socket mode (for scripts/heredoc):**
+```bash
+SOCK=$(./run-dev.sh -s)
+sleep 30  # wait for boot
+socat - unix-connect:$SOCK <<EOF
+root
+password
+ls
+EOF
+```
+
+Environment variables: `QCOW2`, `SHARE`, `SOCK`, `MONSOCK`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `git add run-dev.sh && git commit -m "feature(minor): add socket mode to run-dev.sh for scripted usag...`
+
+---
+
+## 🤖 Assistant
+
+Committed `361def43b`. Socket path goes to stdout, status to stderr - easy to capture in scripts.
+
+---
+
+## 👤 Human
+
+wait are run-dev.sh and run-debug.sh the same now??
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `diff /opt/other/redox/run-dev.sh /opt/other/redox/run-debug.sh`
+
+---
+
+## 🤖 Assistant
+
+No, they're different:
+
+| Feature | run-dev.sh | run-debug.sh |
+|---------|-----------|--------------|
+| Disk | qcow2 (snapshots) | raw ISO |
+| Sockets | Unix (local) | TCP (network/multi-instance) |
+| CPU | SMP 4 cores | Single core |
+| GDB | No | Yes + starts paused (-S) |
+| Mode | Interactive or `-s` socket | Always daemonized |
+| Purpose | Dev with snapshots | GDB debugging, parallel instances |
+
+**run-dev.sh** = daily development with snapshot rollback
+**run-debug.sh** = GDB attach, multiple parallel VMs via TCP ports
+
+They complement each other. Keep both.
+
+---
+
+## 👤 Human
+
+run-debug.sh should use qcow2 and SMP 4 cores too
+
+---
+
+## 🤖 Assistant
+
+→ `Edit`: `/opt/other/redox/run-debug.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `git add run-debug.sh && git commit -m "fix: run-debug.sh now uses qcow2 and SMP 4 cores
+
+- Shares de...`
+
+---
+
+## 🤖 Assistant
+
+Done. Now both share `dev.qcow2` and SMP 4. Differences remaining:
+
+| | run-dev.sh | run-debug.sh |
+|--|-----------|--------------|
+| Connect | Unix socket | TCP (telnet) |
+| GDB | No | Yes, starts paused |
+| Mode | Foreground or `-s` | Always daemonized |
+
+---
+

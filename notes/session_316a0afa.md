@@ -1,0 +1,71 @@
+# Claude Conversation (316a0afa)
+
+## 👤 Human
+
+ssh does NOT work in redox yet, disable in .sh
+
+---
+
+## 🤖 Assistant
+
+→ `Grep`: `ssh`
+
+---
+
+## 🤖 Assistant
+
+Let me read the relevant section of `run-venus.sh` to make the right edit.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/run-venus.sh`
+
+---
+
+## 🤖 Assistant
+
+Disabling SSH port forwarding in `run-venus.sh`.
+
+---
+
+## 🤖 Assistant
+
+→ `Edit`: `/opt/other/redox/run-venus.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Edit`: `/opt/other/redox/run-venus.sh`
+
+---
+
+## 🤖 Assistant
+
+Let me also update the help message that mentions SSH port.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/run-venus.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Edit`: `/opt/other/redox/run-venus.sh`
+
+---
+
+## 🤖 Assistant
+
+Done. Disabled SSH port forwarding in `run-venus.sh`:
+- Removed SSH port forwarding from netdev args
+- Removed SSH connection info from startup output
+- Removed SSH env var from help message
+
+---
+

@@ -41,25 +41,31 @@ pub use arch_copy_to_user as arch_copy_from_user;
 
 #[unsafe(naked)]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    // x0, x1, x2
+    // x0 = dst, x1 = src, x2 = len
     core::arch::naked_asm!(
         "
     .global __usercopy_start
     __usercopy_start:
-        mov x4, x0
-        mov x0, 0
-    2:
-        cmp x2, 0
-        b.eq 3f
+        mov x4, x0          // x4 = dst
+        mov x0, #0          // return 0 (success)
 
-        ldrb w3, [x1]
-        strb w3, [x4]
+    1:  // Copy 8 bytes at a time
+        cmp x2, #8
+        b.lt 2f
 
-        add x4, x4, 1
-        add x1, x1, 1
-        sub x2, x2, 1
+        ldr x3, [x1], #8    // Load 8 bytes, post-increment src
+        str x3, [x4], #8    // Store 8 bytes, post-increment dst
+        sub x2, x2, #8      // len -= 8
+        b 1b
 
+    2:  // Copy remaining bytes
+        cbz x2, 3f          // If len == 0, done
+
+        ldrb w3, [x1], #1   // Load 1 byte, post-increment src
+        strb w3, [x4], #1   // Store 1 byte, post-increment dst
+        sub x2, x2, #1      // len -= 1
         b 2b
+
     3:
         ret
     .global __usercopy_end

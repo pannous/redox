@@ -164,9 +164,12 @@ fn init_env() -> &'static [u8] {
 }
 
 extern "C" fn userspace_init() {
+    println!("userspace_init: Calling usermode_bootstrap with interrupts DISABLED");
     let mut token = unsafe { CleanLockToken::new() };
     let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
     unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) }
+    // Note: usermode_bootstrap will eventually call eret to enter userspace
+    // SPSR_EL1 will have IRQ enabled, so interrupts will be enabled when we enter EL0
 }
 
 struct Bootstrap {

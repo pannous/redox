@@ -417,3 +417,41 @@ Investigate why `msr daifclr, #2` causes immediate hang. Likely need to:
 4. Consider alternative approaches (Option 3 or 4 above)
 
 The timer interrupt infrastructure is fundamentally sound. The issue is specifically about interrupt state management across context switches, which is a solvable problem.
+
+---
+
+## Update: 2026-01-30 - arch_copy_to_user Investigation
+
+**Current Status:** System hangs INSIDE `arch_copy_to_user` assembly routine
+
+**Key Findings:**
+
+1. **Context Switch Works**:
+   - `switch_finish_hook` completes successfully
+   - Bootstrap context (`userspace_init`) starts executing
+   - Timer interrupt is pending (TVAL=-545987, ISTATUS=1)
+
+2. **Real Issue: arch_copy_to_user hangs**:
+   - `usermode_bootstrap` tries to copy 86MB bootstrap binary to userspace (address 0x1000)
+   - Call: `arch_copy_to_user(dst=0x1000, src=0xffff800083b20000, len=86855680)`
+   - Function is called but **NEVER RETURNS**
+   - Hang occurs INSIDE the assembly routine
+
+3. **8-byte Copy Optimization Applied**:
+   - Changed from byte-by-byte (`ldrb`/`strb`) to 8-byte chunks (`ldr`/`str`)
+   - Still hangs - suggests issue is not performance but correctness
+
+**Hypothesis:**
+The assembly routine is hitting an exception (likely data abort/page fault) when trying to write to userspace address 0x1000 from kernel mode (EL1). The exception might not be handled properly, causing a hang.
+
+**Possible Causes:**
+1. **Page Table Issue**: Userspace pages at 0x1000 might not be properly mapped or accessible from EL1
+2. **Exception Handler**: Data abort handler might not be working correctly
+3. **PAN (Privileged Access Never)**: ARM feature preventing kernel from accessing user memory
+4. **Memory Alignment**: 8-byte loads/stores might require alignment
+
+**Next Steps:**
+1. Check if PAN is enabled and disable it for __usercopy region
+2. Verify page table setup for userspace address 0x1000
+3. Add exception handler logging to catch data aborts
+4. Try reverting to byte-by-byte copy to rule out alignment issues

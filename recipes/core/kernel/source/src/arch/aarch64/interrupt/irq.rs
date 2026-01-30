@@ -36,8 +36,17 @@ exception_stack!(irq_at_el0, |_stack| {
 
 exception_stack!(irq_at_el1, |_stack| {
     unsafe {
+        // Check DAIF to detect if we're in a nested interrupt
+        let daif: usize;
+        core::arch::asm!("mrs {}, daif", out(reg) daif);
+
         let mut token = CleanLockToken::new();
         let (irq, virq) = irq_ack();
+
+        // Log timer interrupts (IRQ 27) to track nested interrupts
+        if irq == 27 {
+            println!("IRQ handler: Timer IRQ 27, DAIF={:#x}", daif);
+        }
 
         // Check if this is an SGI (Software Generated Interrupt) used for IPIs
         // SGIs use interrupt IDs 0-15 in the GIC
@@ -50,6 +59,10 @@ exception_stack!(irq_at_el1, |_stack| {
             IRQ_CHIP.trigger_virq(virq as u32, &mut token);
         } else {
             println!("unexpected irq num {}", irq);
+        }
+
+        if irq == 27 {
+            println!("IRQ handler: Timer IRQ 27 completed");
         }
     }
 });

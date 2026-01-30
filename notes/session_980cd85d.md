@@ -1,0 +1,117 @@
+# Claude Conversation (980cd85d)
+
+## 👤 Human
+
+@notes/ld-so-debugging-saga.md But wouldn't it be possible to optimize the build process somehow? Maybe by stripping?
+
+---
+
+## 🤖 Assistant
+
+Good question. Stripping alone won't solve it - `strip` removes symbol *names* and debug info, but the actual code (11,003 functions) remains. The binary stays bloated.
+
+However, there are real optimization paths:
+
+**1. `--gc-sections` (garbage collection)**
+```bash
+# Add to RUSTFLAGS:
+-C link-arg=-Wl,--gc-sections
+
+# Requires functions in separate sections:
+-C link-arg=-Wl,-z,norelro
+```
+This lets the linker discard unused sections. Combined with Rust's default function-sections, it could eliminate most of the bloat.
+
+**2. Don't use `--whole-archive`**
+The root cause was switching from:
+```bash
+$RUST_LLD ... "ld_so.o"           # Just the object file
+```
+to:
+```bash
+$RUST_LLD --whole-archive libld_so.a  # EVERYTHING
+```
+
+The fix is to either:
+- Extract just the needed `.o` files from the archive
+- Use `--no-whole-archive` and let the linker pull only referenced symbols
+
+**3. LTO (Link Time Optimization)**
+```bash
+RUSTFLAGS="-C lto=fat -C codegen-units=1"
+```
+Aggressive dead code elimination across the entire link.
+
+**4. Explicit symbol visibility**
+Mark internal symbols as hidden so the linker knows they can be removed if unused.
+
+The cleanest path would be fixing the build script to not use `--whole-archive`, or adding `--gc-sections`. Want me to look at the relibc ld_so build configuration to see what's feasible?
+
+---
+
+## 👤 Human
+
+yes
+
+---
+
+## 🤖 Assistant
+
+I'll explore the relibc ld_so build configuration to understand what optimizations are feasible.
+
+---
+
+## 🤖 Assistant
+
+→ `Task` (Explore)
+
+---
+
+## 🤖 Assistant
+
+Excellent findings! The key revelation is that **the stripped Cranelift binary is already ~393KB** - nearly identical to LLVM's 402KB. The 1.4MB was the unstripped version. Let me verify the current build script state and create a plan.
+
+---
+
+## 🤖 Assistant
+
+→ `Read`: `/opt/other/redox/build-ld-so.sh`
+
+---
+
+## 🤖 Assistant
+
+→ `Grep`: `profile\.(release|dev)`
+
+---
+
+## 🤖 Assistant
+
+The picture is now clear. The build script already strips, and the exploration revealed that **stripped Cranelift (~393KB) is already comparable to LLVM (~402KB)**. The 1.4MB was the unstripped version.
+
+The optimizations we can pursue are:
+1. Remove `--whole-archive` to avoid pulling in unused code
+2. Add LTO + size optimization to Cargo.toml
+
+Let me create the plan.
+
+---
+
+## 🤖 Assistant
+
+→ `Write`: `/Users/me/.claude/plans/swirling-noodling-hedgehog.md`
+
+---
+
+## 🤖 Assistant
+
+The plan is ready. Key insight: **stripping already works** - the Cranelift binary at 393KB is nearly identical to LLVM's 402KB. The remaining optimizations focus on reducing bloat at link time (removing `--whole-archive`) and compile time (LTO + size opts).
+
+---
+
+## 🤖 Assistant
+
+→ `ExitPlanMode`
+
+---
+

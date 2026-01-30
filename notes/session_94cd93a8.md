@@ -1,0 +1,119 @@
+# Claude Conversation (94cd93a8)
+
+## 👤 Human
+
+<command-message>issue</command-message>
+<command-name>/issue</command-name>
+<command-args>This might be an issue with our modified QEMO. I mean we can fix it there or maybe we can fix it in our Redox OS: *** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'NSWindow geometry should only be modified on the main thread!'
+*** First throw call stack:
+(
+    0   CoreFoundation                      0x000000018d1958ec __exceptionPreprocess + 176
+    1   libobjc.A.dylib                     0x000000018cc6e418 objc_exception_throw + 88
+    2   CoreFoundation                      0x000000018d1b0ec4 _CFBundleGetValueForInfoKey + 0
+    3   AppKit                              0x000000019201830c -[NSWindow(Regions) _postWindowNeedsToResetDragMargins] + 400
+    4   AppKit                              0x00000001921686f8 -[NSThemeFrame _tileTitlebarAndRedisplay:] + 88
+    5   AppKit                              0x0000000191579bd8 -[NSTitledFrame _titleDidChange] + 116
+    6   AppKit                              0x0000000192177854 -[NSTitledFrame setTitle:subtitle:] + 420
+    7   AppKit                              0x0000000192169aac -[NSThemeFrame setTitle:] + 52
+    8   AppKit                              libc++abi: terminating due to uncaught exception of type NSException
+./run-dev.sh: line 169: 34458 Abort trap: 6           HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU -rtc base=utc,clock=host -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE -device virtio-blk-pci,drive=disk0 "${NETDEV_ARGS[@]}" -device qemu-xhci -device usb-kbd -device usb-tablet -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare -fsdev local,id=host0,path="$SHARE",security_model=none -device ramfb -serial mon:stdio</command-args>
+
+---
+
+## 👤 Human
+
+# GitHub Issue Creator
+
+A skill to quickly create GitHub issues from the command line.
+
+## Instructions
+
+When this skill is invoked:
+
+1. Check if we're in a git repository with `git rev-parse --git-dir`
+2. If not in a repo, ask the user which repository they want to create the issue in (format: owner/repo)
+3. Gather the following information from the user's request or ask if not provided:
+   - Issue title (required)
+   - Issue body/description (optional)
+   - Labels (optional)
+   - Assignees (optional)
+
+4. Use the GitHub CLI to create the issue:
+   ```bash
+   gh issue create --repo REPO --title "TITLE" --body "BODY" [--label LABELS] [--assignee ASSIGNEES]
+   ```
+
+5. If the user provides the issue details in their invocation (e.g., `/issue Add dark mode support`), use that as the title and proceed immediately
+6. If only `/issue` is provided, ask for the title and optional details
+7. Return the URL of the created issue
+
+## Examples
+
+User: `/issue Fix login bug`
+- Create issue with title "Fix login bug" in current repo
+
+User: `/issue`
+- Ask for title and details, then create issue
+
+## Notes
+
+- Use heredoc format for multi-line bodies
+- Default to current repository context when available
+- Always return the issue URL after creation
+
+
+ARGUMENTS: This might be an issue with our modified QEMO. I mean we can fix it there or maybe we can fix it in our Redox OS: *** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'NSWindow geometry should only be modified on the main thread!'
+*** First throw call stack:
+(
+    0   CoreFoundation                      0x000000018d1958ec __exceptionPreprocess + 176
+    1   libobjc.A.dylib                     0x000000018cc6e418 objc_exception_throw + 88
+    2   CoreFoundation                      0x000000018d1b0ec4 _CFBundleGetValueForInfoKey + 0
+    3   AppKit                              0x000000019201830c -[NSWindow(Regions) _postWindowNeedsToResetDragMargins] + 400
+    4   AppKit                              0x00000001921686f8 -[NSThemeFrame _tileTitlebarAndRedisplay:] + 88
+    5   AppKit                              0x0000000191579bd8 -[NSTitledFrame _titleDidChange] + 116
+    6   AppKit                              0x0000000192177854 -[NSTitledFrame setTitle:subtitle:] + 420
+    7   AppKit                              0x0000000192169aac -[NSThemeFrame setTitle:] + 52
+    8   AppKit                              libc++abi: terminating due to uncaught exception of type NSException
+./run-dev.sh: line 169: 34458 Abort trap: 6           HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU -rtc base=utc,clock=host -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE -device virtio-blk-pci,drive=disk0 "${NETDEV_ARGS[@]}" -device qemu-xhci -device usb-kbd -device usb-tablet -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare -fsdev local,id=host0,path="$SHARE",security_model=none -device ramfb -serial mon:stdio
+
+---
+
+## 🤖 Assistant
+
+I'll create a GitHub issue for this QEMU crash related to NSWindow geometry on macOS.
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `git rev-parse --git-dir`
+
+---
+
+## 🤖 Assistant
+
+Now I'll create the GitHub issue with the crash details:
+
+---
+
+## 🤖 Assistant
+
+→ `Bash`: `gh issue create --title "QEMU crashes on macOS with NSWindow geometry thread exception" --body "$(ca...`
+
+---
+
+## 🤖 Assistant
+
+Issue created successfully! 
+
+**Issue URL:** https://github.com/pannous/redox/issues/3
+
+This is a macOS-specific threading issue where QEMU (or our modified version) is trying to update the window title from a background thread, which violates macOS AppKit requirements. The fix would typically involve:
+
+1. **In QEMU**: Wrapping NSWindow operations in `dispatch_async(dispatch_get_main_queue(), ...)` 
+2. **Workaround**: Testing with different QEMU display backends (`-display cocoa` vs `-display default`)
+
+Since this happens during the ramfb/window initialization, it's likely triggered when QEMU tries to set the window title dynamically.
+
+---
+
