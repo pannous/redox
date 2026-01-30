@@ -42,10 +42,6 @@ unsafe fn instr_data_abort_inner(
         let iss = iss(stack.iret.esr_el1);
         let fsc = iss & 0x3F;
         let faulting_addr = VirtualAddress::new(far_el1());
-        let elr = { stack.iret.elr_el1 };  // Copy from packed struct
-
-        println!("DATA_ABORT: FAR={:#x}, FSC={:#08b}, from_user={}, instr={}, ELR={:#x}",
-                 faulting_addr.data(), fsc, from_user, instr_not_data, elr);
 
         let was_translation_fault = fsc >= 0b000100 && fsc <= 0b000111;
         let write_not_read_if_data = iss & (1 << 6) != 0;
@@ -59,9 +55,7 @@ unsafe fn instr_data_abort_inner(
         flags.set(GenericPfFlags::INSTR_NOT_DATA, instr_not_data);
         flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, from_user);
 
-        let result = crate::memory::page_fault_handler(stack, flags, faulting_addr).is_ok();
-        println!("DATA_ABORT: page_fault_handler returned {}", result);
-        result
+        crate::memory::page_fault_handler(stack, flags, faulting_addr).is_ok()
     }
 }
 

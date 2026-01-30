@@ -75,18 +75,16 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
 }
 
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
-    println!("usermode_bootstrap: ENTERED, page_count={}", bootstrap.page_count);
+    debug!("usermode_bootstrap: Loading {} pages", bootstrap.page_count);
     assert_ne!(bootstrap.page_count, 0);
 
     {
-        println!("usermode_bootstrap: Getting address space");
         let addr_space = Arc::clone(
             context::current()
                 .read(token.token())
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
-        println!("usermode_bootstrap: Got address space");
 
         let base = Page::containing_address(VirtualAddress::new(PAGE_SIZE));
         let flags = MapFlags::MAP_FIXED_NOREPLACE
@@ -97,7 +95,6 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         let page_count =
             NonZeroUsize::new(bootstrap.page_count).expect("bootstrap contained no pages!");
 
-        println!("usermode_bootstrap: About to mmap bootstrap pages");
         let _base_page = addr_space
             .acquire_write()
             .mmap(
@@ -107,32 +104,28 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 flags,
                 &mut Vec::new(),
                 |page, flags, mapper, flusher| {
-                    let shared = false;
-                    Ok(Grant::zeroed(
+                    // Allocate pages individually with real writable mappings
+                    // Can't use zeroed_phys_contiguous (needs 128MB contiguous)
+                    // Can't use zeroed (maps COW read-only, page faults don't work from kernel)
+                    Ok(Grant::zeroed_eager(
                         PageSpan::new(page, bootstrap.page_count),
                         flags,
                         mapper,
                         flusher,
-                        shared,
                     )?)
                 },
             )
             .expect("Failed to allocate bootstrap pages");
-        println!("usermode_bootstrap: mmap completed");
     }
 
-    println!("usermode_bootstrap: Getting bootstrap slice");
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
-    println!("usermode_bootstrap: About to copy {} bytes to userspace", bootstrap_slice.len());
 
     let user_slice = UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice");
 
-    println!("usermode_bootstrap: UserSlice created, starting copy...");
-    user_slice.copy_from_slice(bootstrap_slice)
+    user_slice
+        .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
-
-    println!("usermode_bootstrap: Copy completed!");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
     debug!("Bootstrap entry point: {:X}", bootstrap_entry);

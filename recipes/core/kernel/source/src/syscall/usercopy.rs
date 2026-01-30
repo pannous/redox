@@ -166,23 +166,7 @@ impl<const READ: bool> UserSlice<READ, true> {
             return Err(Error::new(EINVAL));
         }
 
-        println!("copy_from_slice: About to call arch_copy_to_user(dst={:#x}, src={:#x}, len={})",
-                 self.base, slice.as_ptr() as usize, self.len);
-
-        // Test: Try copying just 1 byte first to see if it works
-        if self.len > 0 {
-            println!("copy_from_slice: Testing with 1-byte copy first...");
-            let test_result = unsafe { arch_copy_to_user(self.base, slice.as_ptr() as usize, 1) };
-            println!("copy_from_slice: 1-byte test returned {}", test_result);
-            if test_result != 0 {
-                return Err(Error::new(EFAULT));
-            }
-        }
-
-        let result = unsafe { arch_copy_to_user(self.base, slice.as_ptr() as usize, self.len) };
-        println!("copy_from_slice: arch_copy_to_user returned {}", result);
-
-        if result == 0 {
+        if unsafe { arch_copy_to_user(self.base, slice.as_ptr() as usize, self.len) } == 0 {
             Ok(())
         } else {
             Err(Error::new(EFAULT))

@@ -108,7 +108,6 @@ pub fn tick(token: &mut CleanLockToken) {
 /// This function involves unsafe operations such as resetting state and releasing locks.
 pub unsafe extern "C" fn switch_finish_hook() {
     unsafe {
-        println!("switch_finish_hook: entered");
         match PercpuBlock::current().switch_internals.switch_result.take() {
             Some(switch_result) => {
                 drop(switch_result);
@@ -119,9 +118,7 @@ pub unsafe extern "C" fn switch_finish_hook() {
             }
         }
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-        println!("switch_finish_hook: lock released, calling switch_arch_hook");
         crate::percpu::switch_arch_hook();
-        println!("switch_finish_hook: completed");
     }
 }
 
