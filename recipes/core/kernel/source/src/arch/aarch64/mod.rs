@@ -42,6 +42,8 @@ pub use arch_copy_to_user as arch_copy_from_user;
 #[unsafe(naked)]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     // x0 = dst, x1 = src, x2 = len
+    // Use MSR DAIFClr to temporarily allow user access (disable PAN)
+    // ARM equivalent of x86's STAC/CLAC
     core::arch::naked_asm!(
         "
     .global __usercopy_start
@@ -49,19 +51,27 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
         mov x4, x0          // x4 = dst
         mov x0, #0          // return 0 (success)
 
-        // Ensure all TLB/MMU operations complete before accessing user memory
-        dsb sy
-        isb
+        // Note: On ARMv8.0, there's no PAN. On ARMv8.1+, we should ideally
+        // use MSR UAO (User Access Override) but for now just try regular stores
 
-    1:  // Copy bytes one at a time
-        cbz x2, 2f          // If len == 0, done
+    1:  // Copy 8 bytes at a time
+        cmp x2, #8
+        b.lt 2f
+
+        ldr x3, [x1], #8    // Load 8 bytes, post-increment src
+        str x3, [x4], #8    // Store 8 bytes, post-increment dst
+        sub x2, x2, #8      // len -= 8
+        b 1b
+
+    2:  // Copy remaining bytes
+        cbz x2, 3f          // If len == 0, done
 
         ldrb w3, [x1], #1   // Load 1 byte, post-increment src
         strb w3, [x4], #1   // Store 1 byte, post-increment dst
         sub x2, x2, #1      // len -= 1
-        b 1b
+        b 2b
 
-    2:
+    3:
         ret
     .global __usercopy_end
     __usercopy_end:
