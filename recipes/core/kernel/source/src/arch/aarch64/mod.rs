@@ -49,24 +49,19 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
         mov x4, x0          // x4 = dst
         mov x0, #0          // return 0 (success)
 
-    1:  // Copy 8 bytes at a time
-        cmp x2, #8
-        b.lt 2f
+        // Ensure all TLB/MMU operations complete before accessing user memory
+        dsb sy
+        isb
 
-        ldr x3, [x1], #8    // Load 8 bytes, post-increment src
-        str x3, [x4], #8    // Store 8 bytes, post-increment dst
-        sub x2, x2, #8      // len -= 8
-        b 1b
-
-    2:  // Copy remaining bytes
-        cbz x2, 3f          // If len == 0, done
+    1:  // Copy bytes one at a time
+        cbz x2, 2f          // If len == 0, done
 
         ldrb w3, [x1], #1   // Load 1 byte, post-increment src
         strb w3, [x4], #1   // Store 1 byte, post-increment dst
         sub x2, x2, #1      // len -= 1
-        b 2b
+        b 1b
 
-    3:
+    2:
         ret
     .global __usercopy_end
     __usercopy_end:
