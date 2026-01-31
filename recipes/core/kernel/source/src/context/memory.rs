@@ -15,7 +15,7 @@ use crate::{
     context::arch::setup_new_utable,
     cpu_set::LogicalCpuSet,
     memory::{
-        deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
+        allocate_frame, deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
         PageInfo, RaiiFrame, RefCount, RefKind,
     },
     paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
@@ -1275,9 +1275,26 @@ impl Grant {
 
         let (the_frame, the_frame_info) = the_zeroed_frame();
 
+        // For large allocations (e.g., bootstrap), eagerly allocate more pages to avoid
+        // page fault storm during writes. Limit to 8192 pages (32MB) to avoid slowdown
+        // from too many add_ref() calls to the shared zero frame.
+        let eager_pages = if span.count >= 256 {
+            let max_eager = core::cmp::min(span.count, 8192);
+            warn!("Grant::zeroed: large allocation detected ({} pages = {}MB), eagerly allocating {} pages",
+                  span.count, span.count * 4096 / 1024 / 1024, max_eager);
+            max_eager
+        } else {
+            MAX_EAGER_PAGES  // Keep default for small allocations
+        };
+
         // TODO: Use flush_all after a certain number of pages, otherwise no
 
-        for page in span.pages().take(MAX_EAGER_PAGES) {
+        let mut allocated_count = 0;
+        for page in span.pages().take(eager_pages) {
+            allocated_count += 1;
+            if allocated_count % 1000 == 0 {
+                warn!("Grant::zeroed: allocated {} / {} pages...", allocated_count, eager_pages);
+            }
             // Good thing with lazy page fault handlers, is that if we fail due to ENOMEM here, we
             // can continue and let the process face the OOM killer later.
             unsafe {
@@ -1295,6 +1312,10 @@ impl Grant {
             }
         }
 
+        if span.count >= 256 {
+            warn!("Grant::zeroed: allocation complete, allocated {} pages", allocated_count);
+        }
+
         Ok(Grant {
             base: span.base,
             info: GrantInfo {
@@ -1310,6 +1331,70 @@ impl Grant {
                         cow_file_ref: None,
                         phys_contiguous: false,
                     }
+                },
+            },
+        })
+    }
+
+    /// Allocate fresh uninitialized pages without zeroing
+    ///
+    /// This is faster than `zeroed()` because it:
+    /// - Allocates individual fresh frames (no shared zero frame contention)
+    /// - Doesn't map to COW shared zero page (no add_ref overhead)
+    /// - Doesn't zero memory (caller will overwrite it anyway)
+    ///
+    /// Use for bootstrap and other cases where pages will be immediately overwritten.
+    /// WARNING: Pages contain uninitialized memory until written!
+    pub fn uninitialized(
+        span: PageSpan,
+        flags: PageFlags<RmmA>,
+        mapper: &mut PageMapper,
+        flusher: &mut Flusher,
+    ) -> Result<Grant, Enomem> {
+        warn!("Grant::uninitialized: allocating {} pages ({} MB) with fresh frames",
+              span.count, span.count * 4096 / 1024 / 1024);
+
+        let mut allocated_count = 0;
+        warn!("Grant::uninitialized: about to start page loop for {} pages", span.count);
+        for page in span.pages() {
+            // Allocate fresh frame (contains uninitialized/garbage data)
+            let frame = allocate_frame().ok_or(Enomem)?;
+            allocated_count += 1;
+
+            if allocated_count == 1 {
+                warn!("Grant::uninitialized: first frame allocated successfully");
+            }
+
+            if allocated_count % 1000 == 0 {
+                warn!("Grant::uninitialized: allocated {} / {} pages...", allocated_count, span.count);
+            }
+
+            get_page_info(frame)
+                .expect("PageInfo must exist for allocated frame")
+                .refcount
+                .store(RefCount::One.to_raw(), Ordering::Relaxed);
+
+            unsafe {
+                let result = mapper
+                    .map_phys(page.start_address(), frame.base(), flags)
+                    .expect("TODO: page table OOM");
+                result.ignore();
+
+                flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
+            }
+        }
+
+        warn!("Grant::uninitialized: allocation complete, allocated {} pages", allocated_count);
+
+        Ok(Grant {
+            base: span.base,
+            info: GrantInfo {
+                page_count: span.count,
+                flags,
+                mapped: true,
+                provider: Provider::Allocated {
+                    cow_file_ref: None,
+                    phys_contiguous: false,
                 },
             },
         })
