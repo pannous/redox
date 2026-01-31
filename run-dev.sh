@@ -40,7 +40,7 @@ fi
 
 # CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # slower but works
 CPU="-accel hvf -cpu host -smp 4" # hvf fixed with ISB barriers (2026-01-11) true smp wip 01-25, 01-26
-# CPU="-accel hvf -cpu host -smp 1"  # debug single cpu
+# CPU="-accel hvf -cpu host -smp 1"  # debug single cpu - testing bootstrap deadlock
 # CPU="-accel hvf -cpu host"  # debug single cpu
 # CPU="-M virt,highmem=off -accel hvf -cpu host" # not needed, regular HVF works
 NETDEV_ARGS=()

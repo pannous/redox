@@ -42,6 +42,15 @@ pcid-spawner /etc/pcid.d/
 """
 
 [[files]]
+path = "/usr/lib/init.d/05_graphics"
+data = """
+# Start graphics console daemons (if display scheme exists)
+export RUST_LOG=warn
+nowait fbbootlogd
+nowait fbcond 1 2
+"""
+
+[[files]]
 path = "/etc/hostname"
 data = "redox"
 

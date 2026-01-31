@@ -458,8 +458,6 @@ build_drivers() {
         vesad fbcond fbbootlogd virtio-gpud virtio-gpu-venusd inputd
         # Network
         virtio-netd
-        # Test utilities
-        test-9p
     )
 
     RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \

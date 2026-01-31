@@ -35,7 +35,6 @@ The fundamental bottleneck is **frame allocation performance**:
 ## Viable Solutions
 
 ### Quick Win: Reduce Initfs Size (-15%)
-**Effort:** 5 minutes | **Impact:** 89MB → 77MB (15% faster)
 
 Remove non-essential binaries from initfs:
 - test-9p (2.4MB)
@@ -44,10 +43,9 @@ Remove non-essential binaries from initfs:
 - sleep (2.1MB)
 - simple-file (2.5MB)
 
-Still slow but measurable improvement.
+DONE! Still slow
 
 ### Option A: Optimize Frame Allocator (Fix Root Cause)
-**Effort:** 1-2 days | **Impact:** Could reduce to <1 minute
 
 Investigate and fix why `allocate_frame()` is so slow:
 1. Profile frame allocator with 22K allocation loop
@@ -68,9 +66,11 @@ Have UEFI bootloader allocate 87MB before starting kernel:
 
 Pros: Clean separation, no kernel allocation overhead
 Cons: Requires bootloader modification (but we control it)
+⚠️  bootloader is very fragile we may need to make a backup inside of the mount 
+⚠️  bootloader CANNOT be built with cranelift (And we want to avoid LLVM make )
 
 ### Option C: Multi-Stage Bootstrap (Complex)
-**Effort:** 3-4 days | **Impact:** Fast initial boot, defer full load
+Fast initial boot, defer full load
 
 Split initfs into:
 - Stage 1: Essential only (~10MB) - loads in <1 minute
@@ -80,19 +80,10 @@ Requires architectural changes to init system.
 
 ## Recommendation
 
-**Phase 1 (Immediate):** Remove test binaries (-15% quick win)
-
-**Phase 2 (This week):** Choose one:
-- **Option B** (bootloader pre-allocation) if we're comfortable modifying bootloader - cleanest solution
 - **Option A** (optimize allocator) if we want to fix the systemic issue - benefits all large allocations
-
-**Phase 3 (Future):** Consider Option C for production if needed
+- **Option B** (bootloader pre-allocation) if we're comfortable modifying bootloader - cleanest solution
 
 ## Files Modified (Reverted)
 
-All experimental changes have been reverted:
 - `recipes/core/kernel/source/src/syscall/process.rs` - Grant::uninitialized() attempt
-- `recipes/core/kernel/source/src/context/memory.rs` - Debug logging
-- `recipes/core/base/source/build-initfs-cranelift.sh` - Dynamic linking attempt
-
 Current code is back to Grant::zeroed() with eager allocation (10 min boot time).

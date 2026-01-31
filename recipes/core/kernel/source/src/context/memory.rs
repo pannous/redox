@@ -1275,11 +1275,12 @@ impl Grant {
 
         let (the_frame, the_frame_info) = the_zeroed_frame();
 
-        // For large allocations (e.g., bootstrap), eagerly allocate more pages to avoid
-        // page fault storm during writes. Limit to 8192 pages (32MB) to avoid slowdown
-        // from too many add_ref() calls to the shared zero frame.
+        // For large allocations (e.g., bootstrap), use 512 pages (tested maximum that works):
+        // - More than 512 pages: allocation loop hangs (threshold between 512-1000)
+        // - 512 pages = 2MB eager, remaining ~86MB uses COW page faults during copy
+        // REQUIRES: Single CPU (-smp 1) to avoid SMP deadlock in acquire_write()
         let eager_pages = if span.count >= 256 {
-            let max_eager = core::cmp::min(span.count, 8192);
+            let max_eager = core::cmp::min(span.count, 512);  // Maximum tested working value
             warn!("Grant::zeroed: large allocation detected ({} pages = {}MB), eagerly allocating {} pages",
                   span.count, span.count * 4096 / 1024 / 1024, max_eager);
             max_eager
@@ -1287,7 +1288,13 @@ impl Grant {
             MAX_EAGER_PAGES  // Keep default for small allocations
         };
 
-        // TODO: Use flush_all after a certain number of pages, otherwise no
+        // For large allocations (bootstrap), skip cross-CPU TLB shootdown during allocation
+        // to avoid deadlock. Do a single local flush at the end instead.
+        let skip_tlb_shootdown = eager_pages >= 256;  // Lower threshold since we reduced eager_pages
+
+        if skip_tlb_shootdown {
+            warn!("Grant::zeroed: SKIPPING TLB shootdown for large allocation ({} pages)", eager_pages);
+        }
 
         let mut allocated_count = 0;
         for page in span.pages().take(eager_pages) {
@@ -1308,7 +1315,18 @@ impl Grant {
                     break;
                 };
                 result.ignore();
-                flusher.queue(the_frame, None, TlbShootdownActions::NEW_MAPPING);
+
+                // Skip TLB shootdown for large allocations to avoid deadlock
+                if !skip_tlb_shootdown {
+                    flusher.queue(the_frame, None, TlbShootdownActions::NEW_MAPPING);
+                }
+            }
+        }
+
+        // For large allocations, do a single local TLB flush instead of cross-CPU shootdown
+        if skip_tlb_shootdown {
+            unsafe {
+                rmm::PageFlushAll::<RmmA>::new().flush();
             }
         }
 
