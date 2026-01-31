@@ -146,6 +146,7 @@ pub(super) fn init_from_dtb() {
 pub(super) fn init(madt: Madt) {
     let mut gicd_opt = None;
     let mut giccs = Vec::new();
+    let mut gicrs = Vec::new();
     for madt_entry in madt.iter() {
         trace!("{:#x?}", madt_entry);
         match madt_entry {
@@ -158,6 +159,14 @@ pub(super) fn init(madt: Madt) {
                 } else {
                     gicd_opt = Some(gicd);
                 }
+            }
+            MadtEntry::Gicr(gicr) => {
+                // Use addr_of! and read_unaligned for packed struct fields
+                use core::ptr;
+                let base = unsafe { ptr::read_unaligned(ptr::addr_of!(gicr.discovery_range_base_address)) };
+                let length = unsafe { ptr::read_unaligned(ptr::addr_of!(gicr.discovery_range_length)) };
+                info!("Found GICR: base=0x{:x}, length=0x{:x}", base, length);
+                gicrs.push(gicr);
             }
             _ => {}
         }
@@ -228,17 +237,36 @@ pub(super) fn init(madt: Madt) {
             info!("Initialized {} GICv2 CPU interfaces", cpu_idx);
         }
         3 => {
-            info!("GICv3 detected - looking up redistributors from FDT");
-            // GICv3: Get redistributor addresses from device tree
-            // Even when using ACPI, the FDT contains GIC topology info
-            let gicrs = unsafe {
-                get_gicv3_redistributors_from_fdt()
-            };
+            info!("GICv3 detected - extracting redistributors from ACPI MADT");
 
-            if gicrs.is_empty() {
-                warn!("No GICv3 redistributors found - PPIs will not work!");
+            // Extract redistributor addresses from ACPI GICR structures
+            let mut gicr_ranges = Vec::new();
+            for gicr in &gicrs {
+                // Use addr_of! and read_unaligned for packed struct fields
+                use core::ptr;
+                let base = unsafe { ptr::read_unaligned(ptr::addr_of!(gicr.discovery_range_base_address)) } as usize;
+                let length = unsafe { ptr::read_unaligned(ptr::addr_of!(gicr.discovery_range_length)) } as usize;
+
+                // Each redistributor is typically 128KB (0x20000 bytes)
+                // The discovery range may contain multiple redistributors
+                const GICR_SIZE: usize = 0x20000;
+                let num_redistributors = (length + GICR_SIZE - 1) / GICR_SIZE;
+
+                info!("GICR discovery range: base=0x{:x}, length=0x{:x}, contains {} redistributor(s)",
+                      base, length, num_redistributors);
+
+                // Add each redistributor in the range
+                for i in 0..num_redistributors {
+                    let redistributor_base = base + (i * GICR_SIZE);
+                    gicr_ranges.push((redistributor_base, GICR_SIZE));
+                    debug!("  Redistributor {}: 0x{:x}", i, redistributor_base);
+                }
+            }
+
+            if gicr_ranges.is_empty() {
+                warn!("No GICv3 redistributors found in ACPI MADT - PPIs will not work!");
             } else {
-                info!("Found {} GICv3 redistributor(s)", gicrs.len());
+                info!("Found {} GICv3 redistributor(s) from ACPI", gicr_ranges.len());
             }
 
             // GICv3: Initialize all CPU interfaces
@@ -254,7 +282,7 @@ pub(super) fn init(madt: Madt) {
                 let gic = GicV3 {
                     gic_dist_if,  // Copy of distributor interface
                     gic_cpu_if,
-                    gicrs: gicrs.clone(),  // Share redistributor addresses
+                    gicrs: gicr_ranges.clone(),  // Share redistributor addresses
                     irq_range: (0, 0),
                 };
                 let chip = IrqChipItem {
