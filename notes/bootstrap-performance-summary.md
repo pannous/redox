@@ -1,6 +1,40 @@
 # Bootstrap Performance Investigation Summary (2026-01-31)
 
-## LATEST UPDATE (Evening Session)
+## LATEST UPDATE (Feb 1 Morning - Option B Testing)
+
+### Direct Physmap with Lazy Page Faults
+
+**Discovery:** Bootloader already allocates all 87MB! We can map it directly instead of allocating+copying.
+
+**Implementation (Option B):**
+- Map bootloader's pre-allocated physical memory directly via Grant::new_phys_borrowed()
+- Map only 64-2048 pages eagerly (milliseconds!)
+- Rely on page fault handler for remaining pages (handler exists at context/memory.rs:2645-2649)
+
+**Results:**
+- ✅ Initial mapping completes in milliseconds (64 pages mapped)
+- ✅ Creates PhysBorrowed grant for all 22,772 pages
+- ✅ Bootstrap entry point and registers set up correctly
+- ❌ System hangs after usermode_bootstrap() returns
+- ❓ No page fault messages observed despite unmapped pages
+
+**Current Investigation:**
+- Page fault handler for PhysBorrowed exists and should work
+- System may be hanging before bootstrap context executes
+- No evidence of page faults being triggered
+- Possible issues:
+  1. Grant `mapped: true` flag preventing page faults?
+  2. Context not being scheduled?
+  3. Bootstrap not accessing unmapped pages?
+
+**Next Steps:**
+- Test with more eager pages (2048) to see if bootstrap can start without faults
+- Add logging to page fault handler to confirm if it's being called
+- Investigate why bootstrap context isn't executing
+
+---
+
+## PREVIOUS UPDATE (Evening Session)
 
 ### Two Critical Issues Identified
 
