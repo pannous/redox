@@ -1288,12 +1288,12 @@ impl Grant {
             MAX_EAGER_PAGES  // Keep default for small allocations
         };
 
-        // For large allocations (bootstrap), skip cross-CPU TLB shootdown during allocation
-        // to avoid deadlock. Do a single local flush at the end instead.
-        let skip_tlb_shootdown = eager_pages >= 256;  // Lower threshold since we reduced eager_pages
+        // For large allocations (bootstrap), skip TLB shootdown during allocation loop
+        // to avoid 512+ individual IPIs. Do ONE batched cross-CPU TLB flush at the end.
+        let skip_tlb_shootdown = eager_pages >= 256;
 
         if skip_tlb_shootdown {
-            warn!("Grant::zeroed: SKIPPING TLB shootdown for large allocation ({} pages)", eager_pages);
+            warn!("Grant::zeroed: SKIPPING per-page TLB shootdown for large allocation ({} pages)", eager_pages);
         }
 
         let mut allocated_count = 0;
@@ -1316,18 +1316,24 @@ impl Grant {
                 };
                 result.ignore();
 
-                // Skip TLB shootdown for large allocations to avoid deadlock
+                // Skip individual TLB shootdowns for large allocations (batched at end)
                 if !skip_tlb_shootdown {
                     flusher.queue(the_frame, None, TlbShootdownActions::NEW_MAPPING);
                 }
             }
         }
 
-        // For large allocations, do a single local TLB flush instead of cross-CPU shootdown
+        // For large allocations, do ONE batched cross-CPU TLB flush for all pages
+        // This sends 1 IPI instead of 512+ IPIs (massive reduction in overhead)
         if skip_tlb_shootdown {
             unsafe {
+                // Flush local CPU's TLB
                 rmm::PageFlushAll::<RmmA>::new().flush();
             }
+            // Send ONE batched IPI to all other CPUs to flush their TLBs
+            // This ensures TLB coherency across all CPUs
+            flusher.flush();
+            warn!("Grant::zeroed: sent batched TLB shootdown to other CPUs");
         }
 
         if span.count >= 256 {
