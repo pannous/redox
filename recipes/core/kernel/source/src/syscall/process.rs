@@ -120,10 +120,10 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                     use crate::context::memory::{Provider, Grant};
                     use crate::paging::PhysicalAddress;
 
-                    // Map a subset of pages eagerly, rest will be lazy-mapped on page fault
-                    // (mapping 22K pages in a loop is too slow even with direct physmap!)
-                    const EAGER_MAP_PAGES: usize = 64;  // Just enough to get started
-                    let pages_to_map = core::cmp::min(bootstrap.page_count, EAGER_MAP_PAGES);
+                    // OPTION B TEST: Map 2048 pages eagerly to let bootstrap start
+                    // If this works, the issue is page fault handling
+                    // If this hangs, the issue is the mapping loop itself
+                    let pages_to_map = 2048.min(bootstrap.page_count);  // Map 2048 pages
 
                     warn!("usermode_bootstrap: Eagerly mapping {} of {} pages (rest lazy)", pages_to_map, bootstrap.page_count);
 
@@ -160,7 +160,9 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
     warn!("usermode_bootstrap: Bootstrap entry point: {:#X}", bootstrap_entry);
+    warn!("usermode_bootstrap: Entry point check - is non-zero: {}", bootstrap_entry != 0);
     assert_ne!(bootstrap_entry, 0);
+    warn!("usermode_bootstrap: Assert passed, entry point is valid");
 
     // Start in a minimal environment without any stack.
 
@@ -175,6 +177,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         regs.set_instr_pointer(bootstrap_entry.try_into().unwrap());
     }
     warn!("usermode_bootstrap: Registers initialized, entry point set to {:#X}", bootstrap_entry);
+    warn!("usermode_bootstrap: Preparing to return");
     warn!("usermode_bootstrap: COMPLETE - returning to userspace_init");
 }
 
