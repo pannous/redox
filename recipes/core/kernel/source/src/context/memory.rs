@@ -1116,6 +1116,24 @@ pub struct GrantFileRef {
 impl Grant {
     // TODO: PageCount newtype, to avoid confusion between bytes and pages?
 
+    /// Create a PhysBorrowed grant for bootloader-allocated memory (fast path, no validation)
+    pub(crate) fn new_phys_borrowed(
+        base: Page,
+        page_count: usize,
+        flags: PageFlags<RmmA>,
+        phys_base: Frame,
+    ) -> Grant {
+        Grant {
+            base,
+            info: GrantInfo {
+                page_count,
+                flags,
+                mapped: true,
+                provider: Provider::PhysBorrowed { base: phys_base },
+            },
+        }
+    }
+
     // `base` must be mapped by the caller.
     pub fn allocated_one_page_nomap(base: Page, flags: PageFlags<RmmA>) -> Grant {
         Grant {
