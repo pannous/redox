@@ -94,14 +94,35 @@ scheme display.virtio-gpu-venus
 /usr/lib/drivers/virtio-gpu-venusd currently exits with 101
 
 # Test
-IMPORTANT: 
-after your injections ALWAYS test with 
-/opt/other/redox/run-venus.sh 
+IMPORTANT:
+after your injections ALWAYS test with
+/opt/other/redox/run-venus.sh
 should spawn a tmux session: redox-venus  ssh does NOT work in redox yet, disable
 
 Other scripts are using the system QEMU which does not have a Venus driver, so don't use them!
 
-Venus Driver prepared in the host /opt/other/qemu/build/qemu-system-aarch64 as well as here. 
+Venus Driver prepared in the host /opt/other/qemu/build/qemu-system-aarch64 as well as here.
+
+# Debugging Boot Issues
+
+For debugging boot failures or performance problems:
+
+```bash
+# Run with comprehensive logging
+./run-venus-debug.sh
+
+# Analyze the debug log
+./analyze-boot-failure.sh /tmp/qemu-redox-debug.log
+```
+
+This enables:
+- QEMU debug flags (guest_errors, unimp, int, cpu_reset)
+- HVF trace events (exceptions, VM exits, register state)
+- Automatic log analysis with pattern detection
+
+See `notes/qemu-debugging-guide.md` for detailed usage and troubleshooting.
+
+**Key Finding:** Redox boots successfully - previous "hang" was slow progress due to high VM exit rate (~128K events/sec). Logging reveals 353K WFI traps and frequent VirtIO MMIO polling as performance bottlenecks. 
 
 
 Find out why our custom qemu starts Alpine but does not start Redox at all. 
