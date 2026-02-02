@@ -13,5 +13,5 @@ common = { path = "../../common" }
 daemon = { path = "../../../daemon" }
 driver-block = { path = "../driver-block" }
 pcid = { path = "../../pcid" }
-libredox = "0.1.11"
+libredox = "0.1.12"
 redox_event = "0.4"

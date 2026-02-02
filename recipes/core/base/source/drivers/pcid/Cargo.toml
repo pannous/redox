@@ -19,10 +19,10 @@ log = "0.4"
 pci_types = "0.10"
 pico-args = { version = "0.5", features = ["combined-flags"] }
 plain = "0.2"
-redox-scheme = "0.8.3"
+redox-scheme = "0.9.0"
 redox_syscall = "0.7"
 serde = { version = "1", features = ["derive"] }
 
 common = { path = "../common" }
 daemon = { path = "../../daemon" }
-libredox = "0.1.11"
+libredox = "0.1.12"

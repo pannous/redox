@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-libredox = "0.1.11"
+libredox = "0.1.12"
 daemon = { path = "../../../daemon" }
 log = "0.4"
-redox-scheme = "0.8.3"
+redox-scheme = "0.9.0"
 redox_syscall = { version = "0.7", features = ["std"] }

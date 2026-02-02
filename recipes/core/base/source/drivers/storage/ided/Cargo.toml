@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
-libredox = "0.1.11"
+libredox = "0.1.12"
 log = "0.4"
 pcid = { path = "../../pcid" }
 daemon = { path = "../../../daemon" }

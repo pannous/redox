@@ -20,7 +20,7 @@ use std::{
     rc::Rc,
     slice,
 };
-use syscall::{error::*, flag::*, schemev2::NewFdFlags, Error, Stat};
+use syscall::{error::*, flag::*, schemev2::NewFdFlags, Stat};
 
 #[derive(Clone, Copy, Default)]
 struct MsgFlags(libc::c_int);

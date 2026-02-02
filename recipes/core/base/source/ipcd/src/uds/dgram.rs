@@ -20,7 +20,7 @@ use std::{
     mem,
     rc::Rc,
 };
-use syscall::{error::*, flag::*, schemev2::NewFdFlags, Error, FobtainFdFlags, Stat};
+use syscall::{error::*, flag::*, schemev2::NewFdFlags, FobtainFdFlags, Stat};
 
 impl DataPacket {
     pub fn serialize_to_stream(

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-libredox = "0.1.11"
+libredox = "0.1.12"
 orbclient = "0.3.47"
 redox_event = "0.4.1"
 redox_syscall = "0.7"

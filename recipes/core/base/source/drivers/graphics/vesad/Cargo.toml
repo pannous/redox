@@ -15,7 +15,7 @@ daemon = { path = "../../../daemon" }
 driver-graphics = { path = "../driver-graphics" }
 graphics-ipc = { path = "../graphics-ipc" }
 inputd = { path = "../../inputd" }
-libredox = "0.1.11"
+libredox = "0.1.12"
 
 [features]
 default = []

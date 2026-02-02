@@ -18,8 +18,17 @@ use redox_scheme::{CallerCtx, OpenResult, RequestKind, SignalBehavior, Socket};
 use syscall::data::Stat;
 use syscall::flag::EventFlags;
 use syscall::schemev2::NewFdFlags;
+use syscall::error::{Error, Result};
 use syscall::{
-    Error, Result, EBADF, EEXIST, ENOENT, EPERM, MODE_CHR, O_CREAT, O_EXCL, O_RDONLY, O_RDWR,
+    EBADF,
+    EEXIST,
+    ENOENT,
+    EPERM,
+    MODE_CHR,
+    O_CREAT,
+    O_EXCL,
+    O_RDONLY,
+    O_RDWR,
     O_WRONLY,
 };
 

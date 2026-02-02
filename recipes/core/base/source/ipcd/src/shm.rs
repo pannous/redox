@@ -4,10 +4,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     rc::Rc,
 };
-use syscall::{
-    data::Stat, error::*, schemev2::NewFdFlags, Error, Map, MapFlags, Result, MAP_PRIVATE,
-    PAGE_SIZE, PROT_READ, PROT_WRITE,
-};
+use syscall::{data::Stat, error::*, schemev2::NewFdFlags, Map, MapFlags, MAP_PRIVATE, PAGE_SIZE, PROT_READ, PROT_WRITE, };
 
 /// Access mode flags for shared memory handles
 #[derive(Clone, Copy)]

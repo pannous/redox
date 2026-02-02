@@ -16,4 +16,4 @@ driver-network = { path = "../driver-network" }
 
 event = { package = "redox_event", version = "0.4.2" }
 redox_syscall = "0.7"
-libredox = "0.1.11"
+libredox = "0.1.12"

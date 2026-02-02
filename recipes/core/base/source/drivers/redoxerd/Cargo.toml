@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0"
-libredox = "0.1"
+libredox = "0.1.12"
 redox_event = "0.4.1"
 redox_syscall = "0.7"
 redox_termios = "0.1"

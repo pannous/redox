@@ -3,7 +3,7 @@ use std::{
     cmp,
     collections::{HashMap, VecDeque},
 };
-use syscall::{error::*, flag::*, schemev2::NewFdFlags, Error};
+use syscall::{error::*, flag::*, schemev2::NewFdFlags};
 
 #[derive(Debug, Default)]
 pub struct Client {
