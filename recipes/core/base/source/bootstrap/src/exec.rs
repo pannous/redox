@@ -120,7 +120,7 @@ pub fn main() -> ! {
         .to_upper()
         .unwrap();
 
-    fexec_impl(
+    match fexec_impl(
         image_file,
         init_thr_fd,
         init_proc_fd,
@@ -129,10 +129,15 @@ pub fn main() -> ! {
         &envs,
         &extrainfo,
         None,
-    )
-    .expect("failed to execute init");
-
-    unreachable!()
+    ) {
+        Ok(_) => {
+            // fexec should never return - this indicates a serious bug
+            panic!("BUG: fexec_impl returned successfully but didn't replace process!");
+        }
+        Err(e) => {
+            panic!("failed to execute init: {:?}", e);
+        }
+    }
 }
 
 pub(crate) fn spawn(
