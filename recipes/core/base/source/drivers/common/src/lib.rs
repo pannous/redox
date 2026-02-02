@@ -248,14 +248,14 @@ impl Drop for PhysBorrowed {
 
 // TODO: temporary wrapper in redox_syscall?
 unsafe fn sys_call(fd: usize, buf: &mut [u8], metadata: &[u64]) -> Result<usize> {
-    Ok(syscall::syscall5(
+    syscall::syscall5(
         syscall::SYS_CALL,
         fd,
         buf.as_mut_ptr() as usize,
         buf.len(),
         metadata.len(),
         metadata.as_ptr() as usize,
-    )?)
+    ).map_err(|e| Error::new(e.errno))
 }
 
 /// Instructs the kernel to enable I/O ports for this (usermode) process (x86-specific).
@@ -268,7 +268,8 @@ pub fn acquire_port_io_rights() -> Result<()> {
     extern "C" {
         fn redox_cur_thrfd_v0() -> usize;
     }
-    let kernel_fd = syscall::dup(unsafe { redox_cur_thrfd_v0() }, b"open_via_dup")?;
+    let kernel_fd = syscall::dup(unsafe { redox_cur_thrfd_v0() }, b"open_via_dup")
+        .map_err(|e| Error::new(e.errno))?;
     let res = unsafe { sys_call(kernel_fd, &mut [], &[ProcSchemeVerb::Iopl as u64]) };
     let _ = syscall::close(kernel_fd);
     res?;

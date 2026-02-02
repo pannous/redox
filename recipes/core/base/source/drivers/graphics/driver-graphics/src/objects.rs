@@ -4,7 +4,8 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use drm_sys::{drm_mode_modeinfo, DRM_MODE_OBJECT_CONNECTOR, DRM_MODE_OBJECT_ENCODER};
-use syscall::{Error, Result, EINVAL};
+use syscall::error::{Error, Result};
+use syscall::EINVAL;
 
 use crate::GraphicsAdapter;
 

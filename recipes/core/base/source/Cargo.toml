@@ -18,24 +18,23 @@ members = [
     "ramfs",
     "randd",
     "zerod",
-    "test-9p",
-    "simple-edit",
-    "simple-ls",
-    "simple-coreutils",
-    "simple-pkg",
-    "simple-file",
-    "simple-xxd",
-    "gpu-info",
-    "vulkan-loader",
-    "venus-icd",
+    # "simple-edit",
+    # "simple-ls",
+    # "simple-coreutils",
+    # "simple-pkg",
+    # "simple-file",
+    # "simple-xxd",
+    # "gpu-info",
+    # "vulkan-loader",    # cdylib not supported by Cranelift
+    # "venus-icd",        # cdylib not supported by Cranelift
     "vkinfo",
     "vktriangle",
     "set-background",
     "draw-gradient",
     "strace",
-    "curl",
-    "sync",
-    "test-mode",
+    # "curl",
+    # "sync",
+    # "test-mode",
 
     "drivers/common",
     "drivers/executor",
@@ -67,7 +66,7 @@ members = [
     "drivers/input/ps2d",
     "drivers/input/usbhidd",
 
-    "drivers/net/alxd",
+    # "drivers/net/alxd",
     "drivers/net/driver-network",
     "drivers/net/e1000d",
     "drivers/net/ixgbed",
@@ -86,7 +85,7 @@ members = [
     "drivers/storage/usbscsid",
     "drivers/storage/virtio-blkd",
 
-    "drivers/fs/virtio-9pd",
+    # "drivers/fs/virtio/9pd",  # Removed - only notes remain
 
     "drivers/usb/xhcid",
     "drivers/usb/usbctl",
@@ -108,7 +107,7 @@ drm = { git = "https://github.com/Smithay/drm-rs.git" }
 drm-sys = { git = "https://github.com/Smithay/drm-rs.git" }
 
 # Updated for redox_syscall 0.7.0 compatibility
-redox-scheme = { path = "redox-scheme" }
+# redox-scheme = { path = "redox-scheme" }  # Removed - directory doesn't exist
 
 # For bottom - sysinfo with Redox support
 sysinfo = { git = "https://github.com/jackpot51/sysinfo.git" }

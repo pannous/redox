@@ -12,12 +12,12 @@ log = { version = "0.4", features = ["release_max_level_warn"] }
 redox-log = "0.1"
 event = { package = "redox_event", version = "0.4.1" }
 daemon = { path = "../daemon" }
-redox_syscall = "0.6"
+redox_syscall = "0.7"
 libredox = { version = "0.1.10", features = ["call"] }
 redox-scheme = "0.8.3"
 anyhow = "1"
 libc = "0.2"
-syscall = { package = "redox_syscall", version = "0.6" }
+syscall = { package = "redox_syscall", version = "0.7" }
 
 [dependencies.smoltcp]
 version = "0.12.0"

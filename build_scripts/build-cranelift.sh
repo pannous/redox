@@ -25,6 +25,8 @@ if [ -z "$NIGHTLY" ] && [ -f "$TOOLCHAIN_FILE" ]; then
     NIGHTLY="$(awk -F'\"' '/^channel/ {print $2; exit}' "$TOOLCHAIN_FILE")"
 fi
 
+OFFLINE="--config net.offline=false"
+
 # ============================================================================
 # Configuration - aarch64 is the default!
 # ============================================================================
@@ -295,7 +297,7 @@ rebuild_cookbook() {
     unset RUSTFLAGS
     unset RUSTUP_TOOLCHAIN
 
-    cargo build --release
+    cargo build $OFFLINE --release
 
     # Restore Cranelift flags
     export RUSTFLAGS="$saved_rustflags"
@@ -330,7 +332,7 @@ build_kernel() {
     RUSTFLAGS="$kernel_rustflags" \
     cargo build \
         --target ${TARGET_KERNEL}.json \
-        --release \
+        --release $OFFLINE \
         -Z build-std=core,alloc \
         -Zbuild-std-features=compiler-builtins-mem,compiler_builtins/no-f16-f128
 
@@ -369,7 +371,7 @@ build_relibc() {
     CARGO_TARGET_DIR="$(pwd)/target" \
     cargo build \
         --target ${TARGET_USER}-clif.json \
-        --release \
+        --release $OFFLINE \
         "${relibc_feature_args[@]}" \
         -Z build-std=core,alloc \
         -Zbuild-std-features=compiler_builtins/no-f16-f128
@@ -453,19 +455,19 @@ build_drivers() {
         # PCI and hardware
         pcid pcid-spawner acpid hwd
         # Storage
-        nvmed virtio-blkd virtio-9pd lived
+        nvmed virtio-blkd lived  # virtio-9pd removed
         # Graphics
         vesad fbcond fbbootlogd virtio-gpud virtio-gpu-venusd inputd
         # Network
         virtio-netd
         # Test utilities
-        test-9p
+        # test-9p  # Removed with virtio-9pd
     )
 
     RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
     cargo build \
         --target ${TARGET_USER}-clif.json \
-        --release \
+        --release $OFFLINE \
         -Z build-std=std,core,alloc,panic_abort \
         $(printf -- '-p %s ' "${drivers[@]}") 2>&1 || warn "Some drivers failed"
 
@@ -490,7 +492,7 @@ build_simple_coreutils() {
     RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
     cargo build \
         --target ${TARGET_USER}-clif.json \
-        --release \
+        --release $OFFLINE \
         -Z build-std=std,core,alloc,panic_abort \
         -Zbuild-std-features=compiler_builtins/no-f16-f128
 
@@ -539,7 +541,7 @@ build_orbital() {
     RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
     cargo build \
         --target ${TARGET_USER}-clif.json \
-        --release \
+        --release $OFFLINE \
         -Z build-std=std,core,alloc,panic_abort \
         -Zbuild-std-features=compiler_builtins/no-f16-f128
 

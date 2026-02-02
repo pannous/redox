@@ -21,8 +21,10 @@ use inputd::{VtEvent, VtEventKind};
 use libredox::Fd;
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, SignalBehavior, Socket};
+use syscall::error::{Error, Result};
+use syscall::flag::MapFlags;
 use syscall::schemev2::NewFdFlags;
-use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL, ENOENT, EOPNOTSUPP};
+use syscall::{EAGAIN, EBADF, EINVAL, ENOENT, EOPNOTSUPP};
 
 use crate::objects::{DrmObjectId, DrmObjects};
 use crate::properties::DrmPropertyKind;
