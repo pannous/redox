@@ -11,7 +11,7 @@ use std::task::Poll;
 use executor::LocalExecutor;
 use libredox::Fd;
 use partitionlib::{LogicalBlockSize, PartitionTable};
-use redox_scheme::scheme::SchemeAsync;
+use redox_scheme::scheme::{register_scheme_inner, SchemeAsync};
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket};
 use syscall::dirent::DirentBuf;
 use syscall::error::{Error, Result};
@@ -273,6 +273,7 @@ enum Handle {
     List(Vec<u8>),       // entries
     Disk(u32),           // disk num
     Partition(u32, u32), // disk num, part num
+    SchemeRoot,
 }
 
 pub struct DiskScheme<T> {
@@ -325,14 +326,10 @@ impl<T: Disk> DiskScheme<T> {
         executor: &impl ExecutorTrait,
     ) -> Self {
         assert!(scheme_name.starts_with("disk"));
-        let socket = Socket::nonblock(&scheme_name).expect("failed to create disk scheme");
+        let socket = Socket::nonblock().expect("failed to create disk scheme");
 
-        if let Some(daemon) = daemon {
-            daemon.ready();
-        }
-
-        Self {
-            scheme_name,
+        let mut scheme = Self {
+            scheme_name: scheme_name,
             socket,
             disks: disks
                 .into_iter()
@@ -340,7 +337,19 @@ impl<T: Disk> DiskScheme<T> {
                 .collect(),
             next_id: 0,
             handles: BTreeMap::new(),
+        };
+
+        let cap_id = scheme
+            .scheme_root()
+            .expect("failed to get this scheme root");
+        register_scheme_inner(&scheme.socket, &scheme.scheme_name, cap_id)
+            .expect("failed to register disk scheme root");
+
+        if let Some(daemon) = daemon {
+            daemon.ready();
         }
+
+        scheme
     }
 
     pub fn event_handle(&self) -> &Fd {
@@ -373,7 +382,8 @@ impl<T: Disk> DiskScheme<T> {
                     // correctly ordered wrt IO on the same fd.
                     call_request.handle_async(self).await
                 }
-                RequestKind::SendFd(sendfd_request) => Response::err(EOPNOTSUPP, sendfd_request),
+                RequestKind::SendFd(request) => Response::err(EOPNOTSUPP, request),
+                RequestKind::RecvFd(request) => Response::err(EOPNOTSUPP, request),
                 RequestKind::Cancellation(_cancellation_request) => {
                     // FIXME implement cancellation
                     continue;
@@ -425,7 +435,27 @@ impl<T: Disk> DiskScheme<T> {
 }
 
 impl<T: Disk> SchemeAsync for DiskScheme<T> {
-    async fn open(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+    fn scheme_root(&mut self) -> Result<usize> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+    async fn openat(
+        &mut self,
+        dirfd: usize,
+        path_str: &str,
+        flags: usize,
+        _fcntl_flags: u32,
+        ctx: &CallerCtx,
+    ) -> Result<OpenResult> {
+        if !matches!(
+            self.handles.get(&dirfd).ok_or(Error::new(EBADF))?,
+            Handle::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
+        }
+
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -537,6 +567,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
                 stat.st_blksize = disk.block_size();
                 Ok(())
             }
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -581,6 +612,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
                     j += 1;
                 }
             }
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         }
 
         Ok(i)
@@ -614,6 +646,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
                 let block = offset / u64::from(disk.block_size());
                 disk.read(Some(part_num as usize), block, buf).await
             }
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -637,6 +670,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
                 let block = offset / u64::from(disk.block_size());
                 disk.write(Some(part_num as usize), block, buf).await
             }
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -659,6 +693,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
 
                 part.size * u64::from(disk.block_size())
             }
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         })
     }
 
@@ -673,6 +708,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
                 disk.flush().await
             }
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 }
