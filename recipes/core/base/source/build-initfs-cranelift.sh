@@ -11,6 +11,8 @@ TARGET_ABS="${SCRIPT_DIR}/${TARGET}"
 CRANELIFT="/opt/other/rustc_codegen_cranelift/dist/lib/librustc_codegen_cranelift.dylib"
 RELIBC="/opt/other/redox/recipes/core/relibc/source/target/aarch64-unknown-redox-clif/release"
 REDOXFS="/opt/other/redox/recipes/core/redoxfs/source/target/aarch64-unknown-redox-clif/release/redoxfs"
+ONLINE="--config net.offline=false"
+# ONLINE=
 
 # Core initfs binaries
 BINS="init logd ramfs randd zerod"
@@ -46,7 +48,7 @@ export RUSTFLAGS="-Zcodegen-backend=${CRANELIFT} \
 echo "=== Building initfs binaries ==="
 cargo +${NIGHTLY} build \
     --target ${TARGET} \
-    --release \
+    --release $ONLINE \
     -Z build-std=core,alloc,std,panic_abort \
     -Zbuild-std-features=compiler_builtins/no-f16-f128 \
     $(for bin in $BINS; do echo "-p $bin"; done)
@@ -78,7 +80,7 @@ REDOXFS_SRC="/opt/other/redox/recipes/core/redoxfs/source"
 pushd "$REDOXFS_SRC" > /dev/null
 cargo +${NIGHTLY} build \
     --target "${TARGET_ABS}" \
-    --release \
+    --release $ONLINE \
     --no-default-features \
     --features "std,log" \
     --bin redoxfs \

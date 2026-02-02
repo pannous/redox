@@ -1310,6 +1310,7 @@ dependencies = [
  "drm",
  "graphics-ipc",
  "inputd",
+ "libredox",
 ]
 
 [[package]]
