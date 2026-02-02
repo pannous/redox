@@ -25,7 +25,7 @@ EFI_CODE="$ROOT/tools/firmware/edk2-aarch64-code.fd"
 EFI_VARS="$ROOT/tools/firmware/edk2-aarch64-vars.fd"
 
 # Debug log file
-QEMU_LOG_FILE="/tmp/qemu-redox-debug.log"
+QEMU_LOG_FILE="/opt/other/redox/qemu-redox-debug.log"
 rm -f "$QEMU_LOG_FILE"
 
 # MoltenVK ICD - Homebrew installation
@@ -96,7 +96,7 @@ echo "QEMU: $QEMU"
 echo "Image: $RAW_IMG"
 echo "Log file: $QEMU_LOG_FILE"
 echo ""
-echo "QEMU debug flags enabled:"
+echo "QEMU debug flags enabled: ALL"
 echo "  -d guest_errors    Log invalid guest operations"
 echo "  -d unimp           Log unimplemented features"
 echo "  -d int             Log interrupts/exceptions"
