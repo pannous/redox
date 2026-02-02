@@ -36,7 +36,7 @@ export VK_ICD_FILENAMES=/opt/homebrew/Cellar/molten-vk/1.4.0/etc/vulkan/icd.d/Mo
 export DYLD_LIBRARY_PATH=/opt/other/virglrenderer/install/lib:/opt/homebrew/lib:${DYLD_LIBRARY_PATH:-}
 
 # virglrenderer render server
-export RENDER_SERVER_EXEC_PATH=/opt/other/virglrenderer/builddir/server/virgl_render_server
+export RENDER_SERVER_EXEC_PATH=/opt/other/virglrenderer/build/server/virgl_render_server
 
 # Venus/virgl debug (comment out for production)
 export VKR_DEBUG=all
