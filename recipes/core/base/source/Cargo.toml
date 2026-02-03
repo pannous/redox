@@ -99,6 +99,7 @@ exclude = ["bootstrap"]
 # Low-level Redox OS crates should be kept in sync using workspace dependencies
 # Remember to also update bootstrap dependencies, those are not in the workspace
 [workspace.dependencies]
+anyhow = "1"
 libc = "0.2.180"
 log = "0.4"
 libredox = "0.1.12"
@@ -112,7 +113,6 @@ redox_syscall = "0.7"
 redox_termios = "0.1.3"
 
 [patch.crates-io]
-
 # Needs libc 0.2 backport of https://github.com/rust-lang/libc/pull/4825
 libc = { git = "https://gitlab.redox-os.org/redox-os/liblibc.git", branch = "redox-0.2" }
 orbclient = { git = "https://gitlab.redox-os.org/redox-os/orbclient.git", version = "0.3.44" }

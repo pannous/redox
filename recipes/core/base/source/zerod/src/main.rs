@@ -1,5 +1,5 @@
-use redox_scheme::scheme::SchemeSync;
-use redox_scheme::{RequestKind, SignalBehavior, Socket};
+use redox_scheme::{scheme::register_sync_scheme, RequestKind, SignalBehavior, Socket};
+use syscall::error::{ENODEV, ENOENT};
 
 use scheme::ZeroScheme;
 
@@ -25,12 +25,29 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         Ty::Null => "null",
         Ty::Zero => "zero",
     };
-    let socket = Socket::create(name).expect("zerod: failed to create zero scheme");
+    const MAX_RETRIES: usize = 200;
+    let mut retries = 0;
+    let socket = loop {
+        match Socket::create() {
+            Ok(socket) => break socket,
+            Err(err) if err.errno == ENODEV || err.errno == ENOENT => {
+                retries += 1;
+                if retries >= MAX_RETRIES {
+                    panic!("zerod: failed to create zero scheme: {}", err);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(err) => panic!("zerod: failed to create zero scheme: {}", err),
+        }
+    };
     let mut zero_scheme = ZeroScheme(ty);
 
-    libredox::call::setrens(0, 0).expect("zerod: failed to enter null namespace");
+    register_sync_scheme(&socket, name, &mut zero_scheme)
+        .expect("zerod: failed to register scheme to namespace");
 
     daemon.ready();
+
+    libredox::call::setrens(0, 0).expect("zerod: failed to enter null namespace");
 
     loop {
         let Some(request) = socket
@@ -47,7 +64,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                     .write_response(response, SignalBehavior::Restart)
                     .expect("zerod: failed to write responses to zero scheme");
             }
-            RequestKind::OnClose { id } => zero_scheme.on_close(id),
             _ => (),
         }
     }

@@ -1,6 +1,9 @@
 #![feature(never_type)]
 
 use std::io::{self, PipeWriter, Read, Write};
+use std::ops::FnOnce;
+use std::mem::drop;
+use std::result::Result::{Ok, Err};
 
 #[must_use = "Daemon::ready must be called"]
 pub struct Daemon {

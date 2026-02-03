@@ -431,3 +431,29 @@ pub unsafe extern "C" fn redox_get_socket_token_v0(
         &metadata,
     ))
 }
+
+// Namespace syscall stubs for redox-scheme 0.9.0 compatibility
+// TODO: Implement proper namespace support when kernel syscalls are available
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn redox_get_ns_v0() -> RawResult {
+    // Stub: Return 0 as default namespace FD
+    Error::mux(Ok(0))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn redox_setns_v0(_fd: usize) -> RawResult {
+    // Stub: Always succeed, return 0 as previous namespace FD
+    Error::mux(Ok(0))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn redox_register_scheme_to_ns_v0(
+    _ns_fd: usize,
+    _name_base: *const u8,
+    _name_len: usize,
+    _cap_fd: usize,
+) -> RawResult {
+    // Stub: Always succeed
+    Error::mux(Ok(0))
+}

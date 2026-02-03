@@ -4,49 +4,20 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     rc::Rc,
 };
-use syscall::{data::Stat, error::*, schemev2::NewFdFlags, Map, MapFlags, MAP_PRIVATE, PAGE_SIZE, PROT_READ, PROT_WRITE, };
-
-/// Access mode flags for shared memory handles
-#[derive(Clone, Copy)]
-struct AccessFlags {
-    read: bool,
-    write: bool,
-}
-
-impl AccessFlags {
-    fn from_open_flags(flags: usize) -> Self {
-        // O_RDONLY = 0, O_WRONLY = 1, O_RDWR = 2
-        let accmode = flags & syscall::O_ACCMODE;
-        Self {
-            read: accmode == syscall::O_RDONLY || accmode == syscall::O_RDWR,
-            write: accmode == syscall::O_WRONLY || accmode == syscall::O_RDWR,
-        }
-    }
-}
+use syscall::{
+    data::Stat, error::*, schemev2::NewFdFlags, Error, Map, MapFlags, Result, MAP_PRIVATE,
+    PAGE_SIZE, PROT_READ, PROT_WRITE,
+};
 
 enum Handle {
-    Shm { path: Rc<str>, access: AccessFlags },
+    Shm(Rc<str>),
     SchemeRoot,
 }
 impl Handle {
     fn as_shm(&self) -> Option<&Rc<str>> {
         match self {
-            Self::Shm { path, .. } => Some(path),
+            Self::Shm(path) => Some(path),
             Self::SchemeRoot => None,
-        }
-    }
-
-    fn can_read(&self) -> bool {
-        match self {
-            Self::Shm { access, .. } => access.read,
-            Self::SchemeRoot => false,
-        }
-    }
-
-    fn can_write(&self) -> bool {
-        match self {
-            Self::Shm { access, .. } => access.write,
-            Self::SchemeRoot => false,
         }
     }
 }
@@ -76,18 +47,27 @@ impl ShmScheme {
 }
 
 impl SchemeSync for ShmScheme {
-    fn open(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
-        if path.is_empty() {
-            let id = self.next_id;
-            self.next_id += 1;
+    fn scheme_root(&mut self) -> Result<usize> {
+        let id = self.next_id;
+        self.next_id += 1;
 
-            self.handles.insert(id, Handle::SchemeRoot);
-
-            return Ok(OpenResult::ThisScheme {
-                number: id,
-                flags: NewFdFlags::empty(),
-            });
+        self.handles.insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+    //FIXME: Handle O_RDONLY/O_WRONLY/O_RDWR
+    fn openat(
+        &mut self,
+        dirfd: usize,
+        path: &str,
+        flags: usize,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<OpenResult> {
+        let handle = self.handles.get(&dirfd).ok_or(Error::new(EBADF))?;
+        if !matches!(handle, Handle::SchemeRoot) {
+            return Err(Error::new(EACCES));
         }
+
         let path = Rc::from(path);
         let entry = match self.maps.entry(Rc::clone(&path)) {
             Entry::Occupied(e) => {
@@ -104,9 +84,7 @@ impl SchemeSync for ShmScheme {
             }
         };
         entry.refs += 1;
-
-        let access = AccessFlags::from_open_flags(flags);
-        self.handles.insert(self.next_id, Handle::Shm { path, access });
+        self.handles.insert(self.next_id, Handle::Shm(path));
 
         let id = self.next_id;
         self.next_id += 1;
@@ -136,7 +114,7 @@ impl SchemeSync for ShmScheme {
         Ok(PREFIX.len() + len)
     }
     fn on_close(&mut self, id: usize) {
-        let Handle::Shm { path, .. } = self.handles.remove(&id).unwrap() else {
+        let Handle::Shm(path) = self.handles.remove(&id).unwrap() else {
             return;
         };
         let mut entry = match self.maps.entry(path) {
@@ -223,20 +201,14 @@ impl SchemeSync for ShmScheme {
         id: usize,
         offset: u64,
         size: usize,
-        flags: MapFlags,
+        _flags: MapFlags,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        let path = handle.as_shm().ok_or(Error::new(EBADF))?;
-
-        // Check access permissions against mmap protection flags
-        if flags.contains(MapFlags::PROT_READ) && !handle.can_read() {
-            return Err(Error::new(EACCES));
-        }
-        if flags.contains(MapFlags::PROT_WRITE) && !handle.can_write() {
-            return Err(Error::new(EACCES));
-        }
-
+        let path = self
+            .handles
+            .get(&id)
+            .and_then(Handle::as_shm)
+            .ok_or(Error::new(EBADF))?;
         let total_size = offset as usize + size;
         match self
             .maps
@@ -265,11 +237,11 @@ impl SchemeSync for ShmScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        if !handle.can_read() {
-            return Err(Error::new(EBADF));
-        }
-        let path = handle.as_shm().ok_or(Error::new(EBADF))?;
+        let path = self
+            .handles
+            .get(&id)
+            .and_then(Handle::as_shm)
+            .ok_or(Error::new(EBADF))?;
         match self
             .maps
             .get_mut(path)
@@ -288,11 +260,11 @@ impl SchemeSync for ShmScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        if !handle.can_write() {
-            return Err(Error::new(EBADF));
-        }
-        let path = handle.as_shm().ok_or(Error::new(EBADF))?;
+        let path = self
+            .handles
+            .get(&id)
+            .and_then(Handle::as_shm)
+            .ok_or(Error::new(EBADF))?;
         match self
             .maps
             .get_mut(path)

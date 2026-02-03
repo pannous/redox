@@ -36,23 +36,11 @@ where
 {
     let mountpoint = mountpoint.as_ref();
 
-    // Mount options for user ownership on macOS
-    // defer_permissions: allows user to override file ownership/permissions for development
-    // This is needed to write to root-owned files in the mounted filesystem
-    #[cfg(target_os = "macos")]
-    let mount_options = vec![
-        MountOption::FSName("redoxfs".to_string()),
-        MountOption::AutoUnmount,
-        MountOption::CUSTOM("defer_permissions".to_owned()),
-    ];
-
-    #[cfg(not(target_os = "macos"))]
-    let mount_options = vec![
-        MountOption::FSName("redoxfs".to_string()),
-        MountOption::AutoUnmount,
-        MountOption::AllowOther,
-        MountOption::DefaultPermissions,
-    ];
+    // One of the uses of this redoxfs fuse wrapper is to populate a filesystem
+    // while building the Redox OS kernel. This means that we need to write on
+    // a filesystem that belongs to `root`, which in turn means that we need to
+    // be `root`, thus that we need to allow `root` to have access.
+    let defer_permissions = [MountOption::CUSTOM("defer_permissions".to_owned())];
 
     let res = {
         let mut session = Session::new(
@@ -60,7 +48,11 @@ where
                 fs: &mut filesystem,
             },
             mountpoint,
-            &mount_options,
+            if cfg!(target_os = "macos") {
+                &defer_permissions
+            } else {
+                &[]
+            },
         )?;
 
         let res = callback(mountpoint);
