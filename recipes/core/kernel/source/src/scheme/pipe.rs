@@ -1,21 +1,25 @@
-use alloc::{collections::VecDeque, sync::Arc};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
+use core::{
+    mem::size_of,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::Mutex;
 
 use crate::{
-    context::file::InternalFlags,
+    context::{self, file::FileDescriptor},
+    context::file::{FileDescription, InternalFlags},
     event,
     sync::{CleanLockToken, RwLock, WaitCondition, L1},
     syscall::{
         data::Stat,
-        error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
-        flag::{EventFlags, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK},
-        usercopy::{UserSliceRo, UserSliceWo},
+        error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, EMFILE},
+        flag::{CallFlags, EventFlags, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK},
+        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
-use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult, StrOrBytes};
+use super::{CallerCtx, FileHandle, GlobalSchemes, KernelScheme, OpenResult, StrOrBytes};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
@@ -30,6 +34,7 @@ const MAX_QUEUE_SIZE: usize = 65536;
 // In almost all places where Rust (and LLVM) uses pointers, they are limited to nonnegative isize,
 // so this is fine.
 const WRITE_NOT_READ_BIT: usize = 1;
+pub const PIPE_ROOT_ID: usize = usize::MAX - 1;
 
 fn from_raw_id(id: usize) -> (bool, usize) {
     (id & WRITE_NOT_READ_BIT != 0, id & !WRITE_NOT_READ_BIT)
@@ -43,6 +48,7 @@ pub fn pipe(token: &mut CleanLockToken) -> Result<(usize, usize)> {
         id,
         Arc::new(Pipe {
             queue: Mutex::new(VecDeque::new()),
+            fd_queue: Mutex::new(VecDeque::new()),
             read_condition: WaitCondition::new(),
             write_condition: WaitCondition::new(),
             writer_is_alive: AtomicBool::new(true),
@@ -82,7 +88,9 @@ impl KernelScheme for PipeScheme {
         }
         if !is_writer_not_reader
             && flags.contains(EVENT_READ)
-            && (!pipe.queue.lock().is_empty() || !pipe.writer_is_alive.load(Ordering::Acquire))
+            && (!pipe.queue.lock().is_empty()
+                || !pipe.fd_queue.lock().is_empty()
+                || !pipe.writer_is_alive.load(Ordering::Acquire))
         {
             ready |= EventFlags::EVENT_READ;
         }
@@ -157,6 +165,86 @@ impl KernelScheme for PipeScheme {
             InternalFlags::empty(),
         ))
     }
+
+    fn kfdwrite(
+        &self,
+        id: usize,
+        descs: Vec<Arc<spin::RwLock<FileDescription>>>,
+        _flags: CallFlags,
+        _arg: u64,
+        _metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        info!("pipe: kfdwrite id={id} fds={}", descs.len());
+        let (is_write_not_read, key) = from_raw_id(id);
+        if !is_write_not_read {
+            return Err(Error::new(EBADF));
+        }
+
+        let pipe = Arc::clone(
+            PIPES
+                .read(token.token())
+                .get(&key)
+                .ok_or(Error::new(EBADF))?,
+        );
+
+        if !pipe.reader_is_alive.load(Ordering::Relaxed) {
+            return Err(Error::new(EPIPE));
+        }
+
+        pipe.fd_queue.lock().push_back(descs);
+        event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
+        pipe.read_condition.notify(token);
+
+        Ok(1)
+    }
+
+    fn kfdread(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        _metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        info!("pipe: kfdread id={id}");
+        let (is_write_not_read, key) = from_raw_id(id);
+        if is_write_not_read {
+            return Err(Error::new(EBADF));
+        }
+        if payload.len() % size_of::<usize>() != 0 {
+            return Err(Error::new(EINVAL));
+        }
+
+        let pipe = Arc::clone(
+            PIPES
+                .read(token.token())
+                .get(&key)
+                .ok_or(Error::new(EBADF))?,
+        );
+
+        loop {
+            let mut queue = pipe.fd_queue.lock();
+            if let Some(descs) = queue.pop_front() {
+                info!("pipe: kfdread delivering fds={}", descs.len());
+                drop(queue);
+
+                if flags.contains(CallFlags::FD_UPPER) {
+                    return bulk_insert_fds(descs, payload, token);
+                }
+                return bulk_add_fds(descs, payload, token);
+            }
+
+            if !pipe.writer_is_alive.load(Ordering::SeqCst) {
+                return Ok(0);
+            } else if !pipe
+                .read_condition
+                .wait(queue, "PipeRead::fdread", token)
+            {
+                return Err(Error::new(EINTR));
+            }
+        }
+    }
     fn kopen(
         &self,
         path: &str,
@@ -182,13 +270,21 @@ impl KernelScheme for PipeScheme {
         _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let (_, key) = from_raw_id(id);
-
         let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        if id == PIPE_ROOT_ID {
+            if !buf.is_empty() {
+                return Err(Error::new(ENOENT));
+            }
+
+            let (read_id, _) = pipe(token)?;
+            return Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()));
+        }
+
         if buf == "write" {
             return Err(Error::new(EINVAL));
         }
 
+        let (_, key) = from_raw_id(id);
         let pipe = Arc::clone(
             PIPES
                 .read(token.token())
@@ -351,7 +447,86 @@ pub struct Pipe {
     read_condition: WaitCondition, // signals whether there are available bytes to read
     write_condition: WaitCondition, // signals whether there is room for additional bytes
     queue: Mutex<VecDeque<u8>>,
+    fd_queue: Mutex<VecDeque<Vec<Arc<spin::RwLock<FileDescription>>>>>,
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
+}
+
+fn bulk_add_fds(
+    descriptions: Vec<Arc<spin::RwLock<FileDescription>>>,
+    payload: UserSliceRw,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
+    let cnt = descriptions.len();
+    if payload.len() != cnt * size_of::<usize>() {
+        return Err(Error::new(EINVAL));
+    }
+    if descriptions.is_empty() {
+        return Ok(0);
+    }
+    let current_lock = context::current();
+    let current = current_lock.write(token.token());
+
+    let files: Vec<FileDescriptor> = descriptions
+        .into_iter()
+        .map(|description| FileDescriptor {
+            description,
+            cloexec: true,
+        })
+        .collect();
+    let handles = current
+        .bulk_add_files_posix(files)
+        .ok_or(Error::new(EMFILE))?;
+    let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+    for (handle, chunk) in handles.iter().zip(payload_chunks) {
+        chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+    }
+    Ok(handles.len())
+}
+
+fn bulk_insert_fds(
+    descriptions: Vec<Arc<spin::RwLock<FileDescription>>>,
+    payload: UserSliceRw,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
+    let cnt = descriptions.len();
+    if payload.len() != cnt * size_of::<usize>() {
+        return Err(Error::new(EINVAL));
+    }
+    if descriptions.is_empty() {
+        return Ok(0);
+    }
+    let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
+        description,
+        cloexec: true,
+    });
+    let first_fd = payload
+        .in_exact_chunks(size_of::<usize>())
+        .next()
+        .ok_or(Error::new(EINVAL))?
+        .read_usize()?;
+
+    let current_lock = context::current();
+    let current = current_lock.write(token.token());
+
+    if first_fd == usize::MAX {
+        let files = files_iter.collect::<Vec<_>>();
+        let handles = current
+            .bulk_insert_files_upper(files)
+            .ok_or(Error::new(EMFILE))?;
+        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+        for (handle, chunk) in handles.iter().zip(payload_chunks) {
+            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+        }
+        Ok(handles.len())
+    } else {
+        let handles: Vec<FileHandle> = payload
+            .usizes()
+            .map(|res| res.map(|i| FileHandle::from(i | syscall::UPPER_FDTBL_TAG)))
+            .collect::<Result<_, _>>()?;
+        let files = files_iter.collect::<Vec<_>>();
+        current.bulk_insert_files_upper_manual(files, &handles)?;
+        Ok(handles.len())
+    }
 }

@@ -14,7 +14,10 @@ use event::EventQueue;
 use inputd::ConsumerHandleEvent;
 use libredox::errno::EAGAIN;
 use orbclient::Event;
-use redox_scheme::{scheme::register_sync_scheme, RequestKind, SignalBehavior, Socket};
+use redox_scheme::{
+    scheme::{create_socket_for_scheme, register_sync_scheme},
+    RequestKind, SignalBehavior, Socket,
+};
 
 use crate::scheme::FbbootlogScheme;
 
@@ -33,7 +36,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         }
     }
 
-    let socket = Socket::nonblock().expect("fbbootlogd: failed to create fbbootlog scheme");
+    let (socket, needs_register) = create_socket_for_scheme("fbbootlog", true)
+        .expect("fbbootlogd: failed to create fbbootlog scheme");
 
     let mut scheme = FbbootlogScheme::new();
 
@@ -69,8 +73,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
             .expect("fbbootlogd: failed to send log fd to log scheme.");
     }
 
-    register_sync_scheme(&socket, "fbbootlog", &mut scheme)
-        .expect("fbbootlog: failed to register scheme to namespace");
+    if needs_register {
+        register_sync_scheme(&socket, "fbbootlog", &mut scheme)
+            .expect("fbbootlog: failed to register scheme to namespace");
+    }
 
     // This is not possible for now as fbbootlogd needs to open new displays at runtime for graphics
     // driver handoff. In the future inputd may directly pass a handle to the display instead.

@@ -67,11 +67,6 @@ after your injections ALWAYS test with
 /opt/other/redox/run-dev.sh --serial for verbose serial output in terminal or
 /opt/other/redox/run-dev.sh --tmux-gui for tmux session with gui window 
 
-# ⚠️ DO NOT TOUCH: Bootloader
-The UEFI bootloader (recipes/core/bootloader/) CANNOT be built on macOS.
-- Requires Linux + LLVM (Cranelift doesn't support PE/COFF format for aarch64-unknown-uefi)
-
-(different from - recipes/core/base/source/bootstrap = init/bootstrap INSIDE Redox OS )
 
 ⚠️ There are many sub-repositories in order to not get lost always go to the root directory:  
 cd /opt/other/redox

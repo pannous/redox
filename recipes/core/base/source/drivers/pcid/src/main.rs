@@ -10,7 +10,7 @@ use pci_types::{
     Bar as TyBar, CommandRegister, EndpointHeader, HeaderType, PciAddress,
     PciHeader as TyPciHeader, PciPciBridgeHeader,
 };
-use redox_scheme::{scheme::register_sync_scheme, RequestKind, SignalBehavior};
+use redox_scheme::{scheme::create_socket_for_scheme, scheme::register_sync_scheme, RequestKind, SignalBehavior};
 
 use crate::cfg_access::Pcie;
 use pcid_interface::{FullDeviceId, LegacyInterruptLine, PciBar, PciFunction, PciRom};
@@ -252,7 +252,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
     info!("PCI SG-BS:DV.F VEND:DEVI CL.SC.IN.RV");
 
     let mut scheme = scheme::PciScheme::new(pcie);
-    let socket = redox_scheme::Socket::create().expect("failed to open pci scheme socket");
+    let (socket, needs_register) =
+        create_socket_for_scheme("pci", false).expect("failed to open pci scheme socket");
 
     {
         match libredox::Fd::open("/scheme/acpi/register_pci", libredox::flag::O_WRONLY, 0) {
@@ -304,8 +305,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
     }
     debug!("Enumeration complete, now starting pci scheme");
 
-    register_sync_scheme(&socket, "pci", &mut scheme)
-        .expect("failed to register pci scheme to namespace");
+    if needs_register {
+        register_sync_scheme(&socket, "pci", &mut scheme)
+            .expect("failed to register pci scheme to namespace");
+    }
 
     let _ = daemon.ready();
 

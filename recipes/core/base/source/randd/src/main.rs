@@ -14,7 +14,7 @@ pub const MODE_READ: u16 = 0o4;
 use raw_cpuid::CpuId;
 
 use redox_scheme::{
-    scheme::{register_sync_scheme, SchemeSync},
+    scheme::{create_socket_for_scheme, register_sync_scheme, SchemeSync},
     CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket,
 };
 use syscall::data::Stat;
@@ -502,12 +502,15 @@ impl SchemeSync for RandScheme {
 }
 
 fn daemon(daemon: daemon::Daemon) -> ! {
-    let socket = Socket::create().expect("randd: failed to create rand scheme");
+    let (socket, needs_register) =
+        create_socket_for_scheme("rand", false).expect("randd: failed to create rand scheme");
 
     let mut scheme = RandScheme::new();
 
-    register_sync_scheme(&socket, "rand", &mut scheme)
-        .expect("randd: failed to register scheme to namespace");
+    if needs_register {
+        register_sync_scheme(&socket, "rand", &mut scheme)
+            .expect("randd: failed to register scheme to namespace");
+    }
 
     daemon.ready();
 

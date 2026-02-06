@@ -1,5 +1,7 @@
-use redox_scheme::{scheme::register_sync_scheme, RequestKind, SignalBehavior, Socket};
-use syscall::error::{ENODEV, ENOENT};
+use redox_scheme::{
+    scheme::{create_socket_for_scheme, register_sync_scheme},
+    RequestKind, SignalBehavior, Socket,
+};
 
 use scheme::ZeroScheme;
 
@@ -25,25 +27,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         Ty::Null => "null",
         Ty::Zero => "zero",
     };
-    const MAX_RETRIES: usize = 200;
-    let mut retries = 0;
-    let socket = loop {
-        match Socket::create() {
-            Ok(socket) => break socket,
-            Err(err) if err.errno == ENODEV || err.errno == ENOENT => {
-                retries += 1;
-                if retries >= MAX_RETRIES {
-                    panic!("zerod: failed to create zero scheme: {}", err);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(err) => panic!("zerod: failed to create zero scheme: {}", err),
-        }
-    };
+    let (socket, needs_register) =
+        create_socket_for_scheme(name, false).expect("zerod: failed to create zero scheme");
     let mut zero_scheme = ZeroScheme(ty);
 
-    register_sync_scheme(&socket, name, &mut zero_scheme)
-        .expect("zerod: failed to register scheme to namespace");
+    if needs_register {
+        register_sync_scheme(&socket, name, &mut zero_scheme)
+            .expect("zerod: failed to register scheme to namespace");
+    }
 
     daemon.ready();
 

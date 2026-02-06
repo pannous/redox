@@ -6,7 +6,8 @@ use alloc::vec::Vec;
 use syscall::CallFlags;
 use syscall::data::{GlobalSchemes, KernelSchemeInfo};
 use syscall::flag::{O_CLOEXEC, O_RDONLY};
-use syscall::{EINTR, Error};
+use libredox::Fd;
+use syscall::{EINTR, ENODEV, ENOENT, Error};
 
 use redox_rt::proc::*;
 
@@ -33,7 +34,17 @@ impl log::Log for Logger {
 
 const KERNEL_METADATA_BASE: usize = crate::arch::USERMODE_END - syscall::KERNEL_METADATA_SIZE;
 
+fn bootlog(msg: &str) {
+    let serio_fd = syscall::UPPER_FDTBL_TAG + GlobalSchemes::Serio as usize;
+    let debug_fd = syscall::UPPER_FDTBL_TAG + GlobalSchemes::Debug as usize;
+    let _ = syscall::write(serio_fd, msg.as_bytes());
+    let _ = syscall::write(serio_fd, b"\n");
+    let _ = syscall::write(debug_fd, msg.as_bytes());
+    let _ = syscall::write(debug_fd, b"\n");
+}
+
 pub fn main() -> ! {
+    bootlog("bootstrap: main begin");
     let mut cursor = KERNEL_METADATA_BASE;
     let kernel_scheme_infos = unsafe {
         let base_ptr = cursor as *const u8;
@@ -52,15 +63,18 @@ pub fn main() -> ! {
     };
 
     let kernel_schemes = KernelSchemeMap::new(kernel_scheme_infos);
+    bootlog("bootstrap: kernel schemes loaded");
 
     let auth = FdGuard::new(
         *kernel_schemes
             .get(GlobalSchemes::Proc)
             .expect("failed to get proc fd"),
     );
+    bootlog("bootstrap: proc fd ok");
     let pipe_fd = *kernel_schemes
         .get(GlobalSchemes::Pipe)
         .expect("failed to get pipe fd");
+    bootlog("bootstrap: pipe fd ok");
     let infos_arc = Arc::new(kernel_schemes);
 
     let this_thr_fd = auth
@@ -69,6 +83,7 @@ pub fn main() -> ! {
         .to_upper()
         .unwrap();
     let this_thr_fd = unsafe { redox_rt::initialize_freestanding(this_thr_fd) };
+    bootlog("bootstrap: cur-context ok");
 
     let mut env_bytes = [0_u8; 4096];
     let envs = {
@@ -86,6 +101,7 @@ pub fn main() -> ! {
         let bytes_read = fd
             .read(&mut env_bytes)
             .expect("bootstrap: failed to read env");
+        bootlog("bootstrap: env read ok");
 
         if bytes_read >= env_bytes.len() {
             // TODO: Handle this, we can allocate as much as we want in theory.
@@ -100,7 +116,7 @@ pub fn main() -> ! {
             .collect::<Vec<_>>()
     };
 
-    log::set_max_level(log::LevelFilter::Warn);
+    log::set_max_level(log::LevelFilter::Info);
 
     if let Some(log_env) = envs
         .iter()
@@ -112,6 +128,7 @@ pub fn main() -> ! {
     }
 
     let _ = log::set_logger(&Logger);
+    bootlog("bootstrap: logger ready");
 
     unsafe extern "C" {
         // The linker script will define this as the location of the initfs header.
@@ -121,6 +138,7 @@ pub fn main() -> ! {
     let initfs_length = unsafe {
         (*(core::ptr::addr_of!(__initfs_header) as *const redox_initfs::types::Header)).initfs_size
     };
+    bootlog("bootstrap: initfs header ok");
 
     let infos_arc_clone = infos_arc.clone();
     let initfs_fd = spawn(
@@ -134,16 +152,26 @@ pub fn main() -> ! {
             let initfs_start = core::ptr::addr_of!(__initfs_header);
             let initfs_length = initfs_length.get() as usize;
 
+            // Force legacy scheme creation to avoid cap-based issues during early bootstrap.
             crate::initfs::run(
                 core::slice::from_raw_parts(initfs_start, initfs_length),
                 write_fd,
                 &infos_arc_clone,
-                scheme_creation_cap,
+                0,
             );
         },
     );
+    bootlog("bootstrap: initfs spawn returned");
 
     let infos_arc_clone = infos_arc.clone();
+    let initfs_fd = if initfs_fd == usize::MAX {
+        log::warn!("bootstrap: falling back to open initfs:");
+        open_scheme_wait("initfs:")
+    } else {
+        initfs_fd
+    };
+    bootlog("bootstrap: initfs fd ready");
+
     let proc_fd = spawn(
         "process manager",
         &auth,
@@ -151,6 +179,15 @@ pub fn main() -> ! {
         pipe_fd,
         |write_fd| crate::procmgr::run(write_fd, &auth, &infos_arc_clone, scheme_creation_cap),
     );
+    bootlog("bootstrap: procmgr spawn returned");
+
+    let proc_fd = if proc_fd == usize::MAX {
+        log::warn!("bootstrap: falling back to open proc:");
+        open_scheme_wait("proc:")
+    } else {
+        proc_fd
+    };
+    bootlog("bootstrap: proc fd ready");
 
     let infos_arc_clone = infos_arc.clone();
     let initns_fd = spawn(
@@ -168,8 +205,17 @@ pub fn main() -> ! {
             )
         },
     );
+    bootlog("bootstrap: initnsmgr spawn returned");
+    let _initns_fd = if initns_fd == usize::MAX {
+        log::warn!("bootstrap: falling back to open namespace:");
+        open_scheme_wait("namespace:")
+    } else {
+        initns_fd
+    };
+    bootlog("bootstrap: namespace fd ready");
 
     let (init_proc_fd, init_thr_fd) = unsafe { make_init() };
+    bootlog("bootstrap: make_init ok");
     // from this point, this_thr_fd is no longer valid
 
     const CWD: &[u8] = b"/scheme/initfs";
@@ -189,6 +235,7 @@ pub fn main() -> ! {
     )
     .to_upper()
     .unwrap();
+    bootlog("bootstrap: open init ok");
 
     drop(infos_arc);
 
@@ -233,6 +280,14 @@ pub(crate) fn spawn(
         Ok(_) => {
             let _ = syscall::close(write);
 
+            if matches!(
+                name,
+                "initfs daemon" | "process manager" | "init namespace manager"
+            ) {
+                let _ = syscall::close(read);
+                return usize::MAX;
+            }
+
             let mut new_fd = usize::MAX;
             let fd_bytes = unsafe {
                 core::slice::from_raw_parts_mut(
@@ -243,7 +298,11 @@ pub(crate) fn spawn(
             loop {
                 match syscall::call_ro(read, fd_bytes, CallFlags::FD | CallFlags::FD_UPPER, &[]) {
                     Err(Error { errno: EINTR }) => continue,
-                    _ => break,
+                    Err(err) => {
+                        log::error!("bootstrap: failed to receive fd for {name}: {err}");
+                        continue;
+                    }
+                    Ok(_) => break,
                 }
             }
 
@@ -251,4 +310,26 @@ pub(crate) fn spawn(
         }
     }
     inner(write)
+}
+
+fn open_scheme_wait(path: &str) -> usize {
+    loop {
+        let flags = (O_RDONLY | O_CLOEXEC) as i32;
+        match Fd::open(path, flags, 0) {
+            Ok(fd) => {
+                let raw = fd.raw();
+                core::mem::forget(fd);
+                return raw;
+            }
+            Err(err)
+                if err.is_interrupt()
+                    || err.errno() == ENOENT
+                    || err.errno() == ENODEV =>
+            {
+                let _ = syscall::sched_yield();
+                continue;
+            }
+            Err(err) => panic!("bootstrap: failed to open {path}: {err:?}"),
+        }
+    }
 }

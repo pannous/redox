@@ -28,7 +28,8 @@ NOMENU="-boot menu=off,strict=on" #Doesn't prevent 2-second boot delay.  via ESC
 #     •   cache=writeback # Host cache used, asynchronous flush (fastest, least safe).
 # ,readonly=on  if you want guest writes to fail loudly
 # ,snapshot=on if you want guest writes to be discarded on shutdown
-echo "4-core HVF + $CACHE | /scheme/9p.hostshare/ for persistence"
+SMP="${SMP:-1}" # default to single CPU to avoid SMP hangs during early bring-up
+echo "${SMP}-core HVF + $CACHE | /scheme/9p.hostshare/ for persistence"
 
 if [[ ! -f "$RAW_IMG" ]]; then
     echo "Missing raw image: $RAW_IMG" >&2
@@ -39,9 +40,7 @@ if [[ ! -f "$RAW_IMG" ]]; then
 fi
 
 # CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # slower but works
-CPU="-accel hvf -cpu host -smp 4" # hvf fixed with ISB barriers (2026-01-11) true smp wip 01-25, 01-26
-# CPU="-accel hvf -cpu host -smp 1"  # debug single cpu
-# CPU="-accel hvf -cpu host"  # debug single cpu
+CPU="-accel hvf -cpu host -smp ${SMP}" # hvf fixed with ISB barriers (2026-01-11) true smp wip 01-25, 01-26
 # CPU="-M virt,highmem=off -accel hvf -cpu host" # not needed, regular HVF works
 NETDEV_ARGS=()
 if [[ "$HOST_SSH_PORT" != "0" ]]; then

@@ -196,7 +196,7 @@ impl Context {
             being_sigkilled: false,
             owner_proc_id,
 
-            ens: 0.into(),
+            ens: 1.into(),
             euid: 0,
             egid: 0,
             pid: 0,

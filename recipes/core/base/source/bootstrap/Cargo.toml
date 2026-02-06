@@ -35,3 +35,7 @@ lto = "fat"
 
 [profile.dev]
 panic = "abort"
+
+[patch.crates-io]
+libredox = { path = "/opt/other/redox/patches/libredox" }
+redox-scheme = { path = "/opt/other/redox/patches/redox-scheme" }

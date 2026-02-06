@@ -1,5 +1,5 @@
 use redox_scheme::{
-    scheme::{register_sync_scheme, SchemeSync},
+    scheme::{create_socket_for_scheme, register_sync_scheme, SchemeSync},
     RequestKind, Response, SignalBehavior, Socket,
 };
 use std::process;
@@ -9,12 +9,15 @@ use crate::scheme::LogScheme;
 mod scheme;
 
 fn daemon(daemon: daemon::Daemon) -> ! {
-    let socket = Socket::create().expect("logd: failed to create log scheme");
+    let (socket, needs_register) =
+        create_socket_for_scheme("log", false).expect("logd: failed to create log scheme");
 
     let mut scheme = LogScheme::new(&socket);
 
-    register_sync_scheme(&socket, "log", &mut scheme)
-        .expect("logd: failed to register scheme to namespace");
+    if needs_register {
+        register_sync_scheme(&socket, "log", &mut scheme)
+            .expect("logd: failed to register scheme to namespace");
+    }
 
     libredox::call::setrens(0, 0).expect("logd: failed to enter null namespace");
 

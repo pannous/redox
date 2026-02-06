@@ -3,7 +3,7 @@ use std::{env, process};
 mod filesystem;
 mod scheme;
 
-use redox_scheme::{RequestKind, SignalBehavior};
+use redox_scheme::{scheme::create_socket_for_scheme, RequestKind, SignalBehavior};
 
 use self::scheme::Scheme;
 
@@ -14,12 +14,15 @@ fn main() {
 fn daemon(daemon: daemon::Daemon) -> ! {
     let scheme_name = env::args().nth(1).expect("Usage:\n\tramfs SCHEME_NAME");
 
-    let socket = redox_scheme::Socket::create().expect("ramfs: failed to create socket");
+    let (socket, needs_register) =
+        create_socket_for_scheme(&scheme_name, false).expect("ramfs: failed to create socket");
 
     let mut scheme = Scheme::new(scheme_name.clone()).expect("ramfs: failed to initialize scheme");
 
-    redox_scheme::scheme::register_sync_scheme(&socket, &scheme_name, &mut scheme)
-        .expect("ramfs: failed to register to namespace");
+    if needs_register {
+        redox_scheme::scheme::register_sync_scheme(&socket, &scheme_name, &mut scheme)
+            .expect("ramfs: failed to register to namespace");
+    }
     daemon.ready();
     libredox::call::setrens(0, 0).expect("ramfs: failed to enter null namespace");
 

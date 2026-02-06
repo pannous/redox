@@ -206,6 +206,12 @@ impl SchemeList {
         self.insert_global(ns, "sys", GlobalSchemes::Sys);
         self.insert_global(ns, "time", GlobalSchemes::Time);
 
+        #[cfg(feature = "acpi")]
+        self.insert_global(ns, "acpi", GlobalSchemes::Acpi);
+
+        #[cfg(dtb)]
+        self.insert_global(ns, "dtb", GlobalSchemes::Dtb);
+
         ns
     }
 

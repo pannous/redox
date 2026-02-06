@@ -54,9 +54,11 @@ pub fn run(
     kernel_schemes: &KernelSchemeMap,
     scheme_creation_cap: usize,
 ) -> ! {
-    let socket =
-        Socket::create_inner(scheme_creation_cap, true).expect("failed to open proc scheme socket");
-    let _ = syscall::close(scheme_creation_cap);
+    let (socket, used_cap) =
+        crate::create_scheme_socket("proc", scheme_creation_cap, true);
+    if used_cap {
+        let _ = syscall::close(scheme_creation_cap);
+    }
 
     // TODO?
     let socket_ident = socket.inner().raw();
@@ -82,9 +84,19 @@ pub fn run(
 
     // send open-capability to bootstrap
     let new_id = scheme.handles.insert(Handle::SchemeRoot);
-    let cap_fd = socket
-        .create_this_scheme_fd(0, new_id, 0, 0)
-        .expect("failed to issue procmgr root fd");
+    let cap_fd = match socket.create_this_scheme_fd(0, new_id, 0, 0) {
+        Ok(fd) => fd,
+        Err(err) => {
+            log::warn!(
+                "procmgr: failed to issue procmgr root fd ({err}); falling back to kernel proc"
+            );
+            let kernel_proc = kernel_schemes
+                .get(GlobalSchemes::Proc)
+                .copied()
+                .expect("failed to get kernel proc fd");
+            syscall::dup(kernel_proc, &[]).expect("failed to dup kernel proc fd")
+        }
+    };
 
     log::debug!("process manager started");
     let _ = syscall::call_wo(write_fd, &cap_fd.to_ne_bytes(), CallFlags::FD, &[]);

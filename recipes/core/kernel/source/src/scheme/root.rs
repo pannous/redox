@@ -24,6 +24,14 @@ use crate::{
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+struct NewFdParams {
+    offset: u64,
+    number: usize,
+    flags: usize,
+    internal_flags: u8,
+}
 
 use super::{CallerCtx, KernelScheme, KernelSchemes, OpenResult};
 
@@ -383,6 +391,38 @@ impl KernelScheme for RootScheme {
         })?;
 
         Ok(())
+    }
+
+    fn kdup(
+        &self,
+        file: usize,
+        buf: UserSliceRo,
+        _caller: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        let handle = {
+            let handles = self.handles.read(token.token());
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        let Handle::Scheme(inner) = handle else {
+            return Err(Error::new(EOPNOTSUPP));
+        };
+
+        let params = unsafe { buf.read_exact::<NewFdParams>()? };
+        let internal_flags =
+            InternalFlags::from_extra0(params.internal_flags).ok_or(Error::new(EINVAL))?;
+
+        let desc = FileDescription {
+            offset: params.offset,
+            scheme: inner.scheme_id,
+            number: params.number,
+            flags: params.flags as u32,
+            internal_flags,
+        };
+
+        Ok(OpenResult::External(Arc::new(spin::RwLock::new(desc))))
     }
 
     fn kfdwrite(

@@ -1089,7 +1089,9 @@ pub fn new_child_process(args: &ForkArgs<'_>) -> Result<NewChildProc> {
 
 pub unsafe fn make_init() -> (&'static FdGuardUpper, &'static FdGuardUpper) {
     let proc_fd = FdGuard::new(
-        legacy_open_for_fdguard("/scheme/proc/init", syscall::O_CLOEXEC).expect("failed to create init"),
+        legacy_open_for_fdguard("/scheme/proc/init", syscall::O_CLOEXEC)
+            .or_else(|_| legacy_open_for_fdguard("/scheme/kernel.proc/init", syscall::O_CLOEXEC))
+            .expect("failed to create init"),
     )
     .to_upper()
     .unwrap();

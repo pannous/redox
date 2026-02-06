@@ -389,12 +389,15 @@ pub fn run(
     kernel_schemes: &KernelSchemeMap,
     scheme_creation_cap: usize,
 ) -> ! {
+    let _ = syscall::write(1, b"initfs: begin\n");
     log::info!("bootstrap: starting initfs scheme");
     let mut scheme = InitFsScheme::new(bytes);
 
-    let socket = Socket::create_inner(scheme_creation_cap, false)
-        .expect("failed to open initfs scheme socket");
-    let _ = syscall::close(scheme_creation_cap);
+    let (socket, used_cap) =
+        crate::create_scheme_socket("initfs", scheme_creation_cap, false);
+    if used_cap {
+        let _ = syscall::close(scheme_creation_cap);
+    }
 
     for fd in kernel_schemes.0.values() {
         let _ = syscall::close(*fd);
@@ -406,7 +409,11 @@ pub fn run(
     let cap_fd = socket
         .create_this_scheme_fd(0, new_id, 0, 0)
         .expect("failed to issue initfs root fd");
-    let _ = syscall::call_rw(sync_pipe, &mut cap_fd.to_ne_bytes(), CallFlags::FD, &[]);
+    let _ = syscall::write(1, b"initfs: created root fd\n");
+    log::info!("bootstrap: initfs root fd = {cap_fd}");
+    if let Err(err) = syscall::call_wo(sync_pipe, &cap_fd.to_ne_bytes(), CallFlags::FD, &[]) {
+        log::error!("bootstrap: initfs failed to send root fd: {err}");
+    }
     let _ = syscall::close(sync_pipe);
 
     loop {

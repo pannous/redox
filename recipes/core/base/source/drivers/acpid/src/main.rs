@@ -9,7 +9,7 @@ use std::sync::Arc;
 use ::acpi::aml::op_region::{RegionHandler, RegionSpace};
 use event::{EventFlags, RawEventQueue};
 use redox_scheme::{
-    scheme::{register_sync_scheme, SchemeSync},
+    scheme::{create_socket_for_scheme, register_sync_scheme, SchemeSync},
     RequestKind, Response, SignalBehavior, Socket,
 };
 use syscall::{EAGAIN, EWOULDBLOCK};
@@ -85,7 +85,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         .expect("acpid: failed to open `/scheme/kernel.acpi/kstop`");
 
     let mut event_queue = RawEventQueue::new().expect("acpid: failed to create event queue");
-    let socket = Socket::nonblock().expect("acpid: failed to create disk scheme");
+    let (socket, needs_register) =
+        create_socket_for_scheme("acpi", true).expect("acpid: failed to create disk scheme");
 
     let mut scheme = self::scheme::AcpiScheme::new(&acpi_context, &socket);
 
@@ -96,8 +97,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         .subscribe(socket.inner().raw(), 1, EventFlags::READ)
         .expect("acpid: failed to register scheme socket for event queue");
 
-    register_sync_scheme(&socket, "acpi", &mut scheme)
-        .expect("acpid: failed to register acpi scheme to namespace");
+    if needs_register {
+        register_sync_scheme(&socket, "acpi", &mut scheme)
+            .expect("acpid: failed to register acpi scheme to namespace");
+    }
 
     daemon.ready();
 

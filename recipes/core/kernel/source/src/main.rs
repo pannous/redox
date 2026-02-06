@@ -190,8 +190,10 @@ fn kmain(bootstrap: Bootstrap) -> ! {
     debug!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
+    debug!("BOOTSTRAP stored");
 
     profiling::ready_for_profiling();
+    debug!("Profiling ready");
 
     let owner = None; // kmain not owned by any fd
     match context::spawn(true, owner, userspace_init, &mut token) {
@@ -210,6 +212,7 @@ fn kmain(bootstrap: Bootstrap) -> ! {
             panic!("failed to spawn userspace_init: {:?}", err);
         }
     }
+    debug!("Bootstrap context spawned");
 
     run_userspace(&mut token)
 }
@@ -234,6 +237,7 @@ fn run_userspace(token: &mut CleanLockToken) -> ! {
     static IDLE_SPINS: AtomicU64 = AtomicU64::new(0);
     static SWITCH_SPINS: AtomicU64 = AtomicU64::new(0);
 
+    debug!("run_userspace: enter scheduler loop");
     loop {
         unsafe {
             interrupt::disable();
