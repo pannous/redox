@@ -1,0 +1,24 @@
+redox_cookbook v0.1.0 (/opt/other/redox)
+├── ansi-to-tui v7.0.0
+├── anyhow v1.0.100
+├── blake3 v1.5.3
+│   [build-dependencies]
+├── filedescriptor v0.8.3
+├── globset v0.4.18
+├── ignore v0.4.25
+├── libc v0.2.180
+├── object v0.36.7
+├── pbr v1.1.1
+├── pkgar v0.1.19 (https://gitlab.redox-os.org/redox-os/pkgar.git#e265d32c)
+├── pkgar-core v0.1.19 (https://gitlab.redox-os.org/redox-os/pkgar.git#e265d32c)
+├── pkgar-keys v0.1.19 (https://gitlab.redox-os.org/redox-os/pkgar.git#e265d32c)
+├── ratatui v0.29.0
+├── redox-pkg v0.2.9 (https://gitlab.redox-os.org/redox-os/pkgutils.git#cbf88111)
+├── redox_installer v0.2.40 (https://gitlab.redox-os.org/redox-os/installer.git#eff771e6)
+├── redoxer v0.2.61 (https://gitlab.redox-os.org/redox-os/redoxer.git#4cbd0fce)
+├── regex v1.12.2
+├── serde v1.0.197
+├── strip-ansi-escapes v0.2.1
+├── termion v4.0.6
+├── toml v0.8.23
+└── walkdir v2.5.0
