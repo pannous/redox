@@ -221,11 +221,12 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    debug!("AP {} initialized, entering scheduler", cpu_id);
+    warn!("SMP-DEBUG: AP {} initialized, entering scheduler", cpu_id);
 
     // Ready for profiling on this CPU
     profiling::ready_for_profiling();
 
+    debug!("SMP-DEBUG: AP {} calling run_userspace", cpu_id);
     // Enter the scheduler loop - contexts will be scheduled on this CPU
     run_userspace(&mut token);
 }

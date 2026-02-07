@@ -22,17 +22,21 @@ pub(super) fn init_from_dtb() {
         return;
     }
 
+    debug!("SMP-DEBUG: init_from_dtb() called - GIC should already be initialized");
+
     // The GIC should already be initialized from device tree by dtb::init()
     // IRQ_CHIP should contain the GIC controller
     // Now we just need to start secondary CPUs using PSCI
 
     if cfg!(feature = "multi_core") {
+        info!("SMP-DEBUG: multi_core feature enabled, starting secondary CPUs");
         unsafe {
             start_secondary_cpus_from_dtb(cpu_count as usize);
         }
     } else {
         warn!("SMP: multi_core feature not enabled");
     }
+    debug!("SMP-DEBUG: init_from_dtb() completed");
 }
 
 pub(super) fn init(madt: Madt) {
@@ -260,13 +264,18 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
         // Reset AP_READY flag
         crate::arch::start::AP_READY.store(false, Ordering::SeqCst);
 
+        debug!("SMP-DEBUG: About to call PSCI_CPU_ON with mpidr=0x{:x}", mpidr);
+
         // Call PSCI CPU_ON - pass PHYSICAL addresses
         let result = unsafe { psci_call(PSCI_CPU_ON_64, mpidr, entry_point_phys, args_phys) };
+
+        debug!("SMP-DEBUG: PSCI_CPU_ON returned {} (0=success, <0=error)", result);
 
         if result == 0 {
             debug!("PSCI CPU_ON succeeded for AP {}", ap_count);
 
             // Wait for AP to signal ready (with timeout)
+            debug!("SMP-DEBUG: Waiting for AP to signal ready...");
             let mut timeout = 10_000_000;  // ~10 seconds
             while !crate::arch::start::AP_READY.load(Ordering::SeqCst) && timeout > 0 {
                 hint::spin_loop();
@@ -274,9 +283,9 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
             }
 
             if timeout == 0 {
-                warn!("Timeout waiting for AP {} to become ready", ap_count);
+                warn!("SMP-DEBUG: TIMEOUT waiting for AP to become ready (never signaled AP_READY)");
             } else {
-                debug!("AP {} is ready", ap_count);
+                debug!("SMP-DEBUG: AP signaled ready (timeout remaining: {})", timeout);
             }
         } else {
             warn!("PSCI CPU_ON failed for AP {} with error code {}", ap_count, result);
@@ -379,13 +388,18 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
         // Reset AP_READY flag
         crate::arch::start::AP_READY.store(false, Ordering::SeqCst);
 
+        debug!("SMP-DEBUG: About to call PSCI_CPU_ON with mpidr=0x{:x}", mpidr);
+
         // Call PSCI CPU_ON - pass PHYSICAL addresses
         let result = unsafe { psci_call(PSCI_CPU_ON_64, mpidr, entry_point_phys, args_phys) };
+
+        debug!("SMP-DEBUG: PSCI_CPU_ON returned {} (0=success, <0=error)", result);
 
         if result == 0 {
             debug!("PSCI CPU_ON succeeded for AP {}", ap_count);
 
             // Wait for AP to signal ready (with timeout)
+            debug!("SMP-DEBUG: Waiting for AP to signal ready...");
             let mut timeout = 10_000_000;  // ~10 seconds
             while !crate::arch::start::AP_READY.load(Ordering::SeqCst) && timeout > 0 {
                 hint::spin_loop();
@@ -393,9 +407,9 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
             }
 
             if timeout == 0 {
-                warn!("Timeout waiting for AP {} to become ready", ap_count);
+                warn!("SMP-DEBUG: TIMEOUT waiting for AP to become ready (never signaled AP_READY)");
             } else {
-                debug!("AP {} is ready", ap_count);
+                debug!("SMP-DEBUG: AP signaled ready (timeout remaining: {})", timeout);
             }
 
             ap_count += 1;

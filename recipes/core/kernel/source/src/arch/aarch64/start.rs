@@ -482,88 +482,14 @@ global_asm!("
         mov w11, #0x4A  // 'J'
         str w11, [x9]
 
-        // Final synchronization
+        // Final synchronization before jump
         dsb ish
         isb
 
-        // Serial marker 'K' - Calculating PHYS_OFFSET address
-        mov w11, #0x4B  // 'K'
-        str w11, [x9]
-
-        // Load kernel_phys_base from KernelArgsAp (offset 32)
-        // x10 still contains args_phys (physical address of struct)
-        ldr x11, [x10, #32]  // x11 = kernel_phys_base
-
-        // Load KERNEL_OFFSET constant (0xFFFF_FF00_0000_0000)
-        movz x12, #0x0000, lsl #0
-        movk x12, #0x0000, lsl #16
-        movk x12, #0xFF00, lsl #32
-        movk x12, #0xFFFF, lsl #48
-
-        // Load address of ap_entry_minimal (KERNEL_OFFSET virtual address)
+        // SIMPLIFIED: Just load the KERNEL_OFFSET address and jump directly!
+        // The MMU is configured with TTBR1 for kernel space, so KERNEL_OFFSET addresses work
         adr x8, target_addr
-        ldr x8, [x8]          // x8 = KERNEL_OFFSET virtual address
-
-        // Convert to physical: phys = virtual - KERNEL_OFFSET + kernel_phys_base
-        sub x8, x8, x12       // x8 = offset from KERNEL_OFFSET
-        add x8, x8, x11       // x8 = physical address
-
-        // Serial marker 'P' - Physical address calculated
-        mov w11, #0x50  // 'P'
-        str w11, [x9]
-
-        // Load PHYS_OFFSET constant (0xFFFF_8000_0000_0000)
-        movz x6, #0x0000, lsl #0
-        movk x6, #0x0000, lsl #16
-        movk x6, #0x8000, lsl #32
-        movk x6, #0xFFFF, lsl #48
-
-        // Convert physical to PHYS_OFFSET virtual: virt = phys + PHYS_OFFSET
-        add x8, x8, x6        // x8 = PHYS_OFFSET virtual address
-
-        // Serial marker 'V' - PHYS_OFFSET virtual address ready
-        mov w11, #0x56  // 'V'
-        str w11, [x9]
-
-        // DIAGNOSTIC: Print first 4 nibbles of address
-        mov x12, x8
-        lsr x13, x12, #60
-        and x13, x13, #0xF
-        add w13, w13, #0x30
-        cmp w13, #0x39
-        ble 1f
-        add w13, w13, #7
-    1:
-        str w13, [x9]
-
-        lsr x13, x12, #56
-        and x13, x13, #0xF
-        add w13, w13, #0x30
-        cmp w13, #0x39
-        ble 2f
-        add w13, w13, #7
-    2:
-        str w13, [x9]
-
-        lsr x13, x12, #52
-        and x13, x13, #0xF
-        add w13, w13, #0x30
-        cmp w13, #0x39
-        ble 3f
-        add w13, w13, #7
-    3:
-        str w13, [x9]
-
-        lsr x13, x12, #48
-        and x13, x13, #0xF
-        add w13, w13, #0x30
-        cmp w13, #0x39
-        ble 4f
-        add w13, w13, #7
-    4:
-        str w13, [x9]
-
-        mov w11, #0x20; str w11, [x9]  // Space
+        ldr x8, [x8]          // x8 = KERNEL_OFFSET virtual address of ap_entry_minimal
 
         // Flush instruction cache
         ic iallu
@@ -574,7 +500,7 @@ global_asm!("
         mov w11, #0x3E  // '>'
         str w11, [x9]
 
-        // Jump to PHYS_OFFSET virtual address
+        // Jump directly to KERNEL_OFFSET address!
         br x8
 
         // Should never reach here
@@ -582,26 +508,38 @@ global_asm!("
         str w11, [x9]
 
     target_addr:
-        .quad {ap_entry}
+        .quad {start_fn}
 
     .Lap_stuck:
         wfi
         b .Lap_stuck
     ",
-    ap_entry = sym ap_entry_minimal,
+    start_fn = sym start,
 );
 
 /// Minimal AP entry - just test if we can reach Rust from assembly
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub unsafe extern "C" fn ap_entry_minimal(args_ptr: *const KernelArgs) -> ! {
-    // FIRST thing - write '!' to serial
-    let serial = 0x09000000 as *mut u32;
-    core::ptr::write_volatile(serial, 0x21); // '!'
-    core::ptr::write_volatile(serial, 0x52); // 'R'
-    core::ptr::write_volatile(serial, 0x55); // 'U'
-    core::ptr::write_volatile(serial, 0x53); // 'S'
-    core::ptr::write_volatile(serial, 0x54); // 'T'
+    // Write marker using inline assembly to avoid any Rust overhead
+    unsafe {
+        core::arch::asm!(
+            "mov x9, #0x09000000",
+            "mov w11, #0x21", // '!'
+            "str w11, [x9]",
+            "mov w11, #0x52", // 'R'
+            "str w11, [x9]",
+            "mov w11, #0x55", // 'U'
+            "str w11, [x9]",
+            "mov w11, #0x53", // 'S'
+            "str w11, [x9]",
+            "mov w11, #0x54", // 'T'
+            "str w11, [x9]",
+            out("x9") _,
+            out("x11") _,
+            options(nostack)
+        );
+    }
 
     // Now call the real start function
     start(args_ptr)
@@ -611,10 +549,13 @@ pub unsafe extern "C" fn ap_entry_minimal(args_ptr: *const KernelArgs) -> ! {
 /// This runs in the proven-working Rust environment, avoiding assembly-to-Rust transition issues
 #[inline(never)]
 unsafe fn start_ap_shared(args_phys: usize) -> ! {
-    // Write serial to confirm we're in AP init
-    let serial = 0x09000000 as *mut u32;
+    // Write serial to confirm we're in AP init - use PHYS_OFFSET mapping!
+    let serial = (crate::PHYS_OFFSET + 0x09000000) as *mut u32;
     unsafe {
         core::ptr::write_volatile(serial, 0x49); // 'I' = Init
+        core::ptr::write_volatile(serial, 0x4E); // 'N'
+        core::ptr::write_volatile(serial, 0x49); // 'I'
+        core::ptr::write_volatile(serial, 0x54); // 'T'
     }
 
     // Increment the shareable sync counter (now that we're in working Rust!)
@@ -635,22 +576,29 @@ unsafe fn start_ap_shared(args_phys: usize) -> ! {
     let args = unsafe { &*args_ptr };
     let cpu_id = crate::cpu_set::LogicalCpuId::new(args.cpu_id as u32);
 
+    debug!("SMP-DEBUG: AP {} (MPIDR derived) entering start_ap_shared", cpu_id.get());
+
     // Initialize paging (MAIR)
+    debug!("SMP-DEBUG: AP {} initializing paging", cpu_id.get());
     paging::init();
 
     // Initialize per-CPU block and set TPIDR_EL1
+    debug!("SMP-DEBUG: AP {} initializing per-CPU block", cpu_id.get());
     crate::misc::init(cpu_id);
 
-    warn!("AP {}: Initialized via shared start() path!", cpu_id.get());
+    warn!("SMP-DEBUG: AP {}: Initialized via shared start() path!", cpu_id.get());
 
     // Signal readiness
+    debug!("SMP-DEBUG: AP {} signaling ready via AP_READY flag", cpu_id.get());
     AP_READY.store(true, Ordering::SeqCst);
 
     // Wait for BSP to complete initialization
+    debug!("SMP-DEBUG: AP {} waiting for BSP_READY", cpu_id.get());
     while !BSP_READY.load(Ordering::SeqCst) {
         core::hint::spin_loop();
     }
 
+    debug!("SMP-DEBUG: AP {} calling kmain_ap to enter scheduler", cpu_id.get());
     // Call kmain_ap to enter scheduler
     crate::kmain_ap(cpu_id);
 }

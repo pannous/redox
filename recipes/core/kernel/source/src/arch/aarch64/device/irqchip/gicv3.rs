@@ -156,28 +156,34 @@ pub struct GicV3CpuIf;
 
 impl GicV3CpuIf {
     pub unsafe fn init(&mut self) {
+        debug!("SMP-DEBUG: GICv3CpuIf::init() starting");
         unsafe {
             // Enable system register access
             {
                 let value = 1_usize;
                 asm!("msr icc_sre_el1, {}", in(reg) value);
             }
+            debug!("SMP-DEBUG: GICv3 ICC_SRE_EL1 set to enable system register access");
             // Set control register
             {
                 let value = 0_usize;
                 asm!("msr icc_ctlr_el1, {}", in(reg) value);
             }
+            debug!("SMP-DEBUG: GICv3 ICC_CTLR_EL1 set");
             // Enable non-secure group 1
             {
                 let value = 1_usize;
                 asm!("msr icc_igrpen1_el1, {}", in(reg) value);
             }
+            debug!("SMP-DEBUG: GICv3 ICC_IGRPEN1_EL1 set to enable Group 1 interrupts");
             // Set CPU0's Interrupt Priority Mask
             {
                 let value = 0xFF_usize;
                 asm!("msr icc_pmr_el1, {}", in(reg) value);
             }
+            debug!("SMP-DEBUG: GICv3 ICC_PMR_EL1 set to 0xFF (accept all priorities)");
         }
+        debug!("SMP-DEBUG: GICv3CpuIf::init() completed");
     }
 
     unsafe fn irq_ack(&mut self) -> u32 {

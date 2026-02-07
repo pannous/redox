@@ -180,16 +180,18 @@ pub struct GicDistIf {
 impl GicDistIf {
     pub unsafe fn init(&mut self, addr: usize) {
         unsafe {
+            debug!("SMP-DEBUG: GicDistIf::init() starting at addr=0x{:x}", addr);
             self.address = addr;
 
             // Disable IRQ Distribution
             self.write(GICD_CTLR, 0);
+            debug!("SMP-DEBUG: GIC distributor disabled for configuration");
 
             let typer = self.read(GICD_TYPER);
             self.ncpus = ((typer & (0x7 << 5)) >> 5) + 1;
             self.nirqs = ((typer & 0x1f) + 1) * 32;
             info!(
-                "gic: Distributor supports {:?} CPUs and {:?} IRQs",
+                "SMP-DEBUG: GIC Distributor supports {} CPUs and {} IRQs",
                 self.ncpus, self.nirqs
             );
 
@@ -222,7 +224,9 @@ impl GicDistIf {
 
             // Enable IRQ group 0 and group 1 non-secure distribution
             self.write(GICD_CTLR, 0x3);
+            debug!("SMP-DEBUG: GIC distributor enabled (GICD_CTLR=0x3)");
         }
+        debug!("SMP-DEBUG: GicDistIf::init() completed");
     }
 
     pub unsafe fn irq_enable(&mut self, irq: u32) {
