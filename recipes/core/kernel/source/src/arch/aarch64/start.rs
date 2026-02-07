@@ -34,6 +34,11 @@ pub static AP_ENTRY_COUNT: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static mut IS_AP_FLAG: bool = false;
 
+/// Function pointer for AP entry - points directly to start_ap_shared_direct
+/// Cast as function pointer - naked functions don't have normal call ABI
+#[unsafe(no_mangle)]
+static AP_ENTRY_FN: unsafe extern "C" fn() -> ! = start_ap_shared_direct;
+
 /// Alternative counter using volatile ptr (bypasses atomic infrastructure for testing)
 pub static mut AP_ENTRY_VOLATILE: u32 = 0;
 
@@ -185,7 +190,8 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             core::ptr::write_volatile(serial, 0x50); // 'P'
         }
 
-        start_ap_shared(args_ptr as usize);
+        // Call implementation directly (naked function gets args in x0 from caller)
+        start_ap_shared_impl(args_ptr as usize);
     }
 
     // This is the BSP - continue with normal initialization
@@ -482,40 +488,81 @@ global_asm!("
         mov w11, #0x4A  // 'J'
         str w11, [x9]
 
-        // Final synchronization before jump
-        dsb ish
-        isb
-
-        // SIMPLIFIED: Just load the KERNEL_OFFSET address and jump directly!
-        // The MMU is configured with TTBR1 for kernel space, so KERNEL_OFFSET addresses work
-        adr x8, target_addr
-        ldr x8, [x8]          // x8 = KERNEL_OFFSET virtual address of ap_entry_minimal
-
-        // Flush instruction cache
-        ic iallu
-        dsb ish
-        isb
-
-        // Serial marker '>' - About to jump
-        mov w11, #0x3E  // '>'
+        // Serial marker '!' - Entering inline Rust init
+        mov w11, #0x21  // '!'
+        str w11, [x9]
+        mov w11, #0x52  // 'R'
+        str w11, [x9]
+        mov w11, #0x55  // 'U'
+        str w11, [x9]
+        mov w11, #0x53  // 'S'
+        str w11, [x9]
+        mov w11, #0x54  // 'T'
         str w11, [x9]
 
-        // Jump directly to KERNEL_OFFSET address!
-        br x8
+        // Load function pointer from AP_ENTRY_FN static (avoids wrapper!)
+        // This is a no-mangle static, so we can reference it directly
+        adrp x8, {ap_fn_ptr}
+        add x8, x8, :lo12:{ap_fn_ptr}
+        ldr x8, [x8]      // x8 = function pointer from AP_ENTRY_FN
 
-        // Should never reach here
-        mov w11, #0x58  // 'X' = jump failed!
+        // Debug: Print 'F' before call
+        mov w11, #0x46  // 'F' = about to call Function
         str w11, [x9]
 
-    target_addr:
-        .quad {start_fn}
+        // Set up argument: x0 = args_phys
+        mov x0, x10       // x10 still contains args_phys
+
+        // Debug: Print 'C' right before call
+        mov w11, #0x43  // 'C' = Calling now
+        str w11, [x9]
+
+        // Call via function pointer (indirect call, no wrapper!)
+        blr x8
+
+        // Debug: Print 'Z' if we return (should never happen)
+        mov w11, #0x5A  // 'Z' = returned!
+        str w11, [x9]
+
+        // Should never reach here (function never returns)
+        mov w11, #0x58  // 'X' = returned unexpectedly!
+        str w11, [x9]
 
     .Lap_stuck:
         wfi
         b .Lap_stuck
     ",
-    start_fn = sym start,
+    ap_fn_ptr = sym AP_ENTRY_FN,
 );
+
+/// Direct AP entry point - uses naked function to avoid wrapper
+/// This is called directly from assembly and must not return
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ap_start_rust() -> ! {
+    // Naked function - just write serial markers and jump to start_ap_shared
+    unsafe {
+        core::arch::naked_asm!(
+            // Write "!RUST" markers
+            "mov x9, #0x09000000",
+            "mov w11, #0x21",  // '!'
+            "str w11, [x9]",
+            "mov w11, #0x52",  // 'R'
+            "str w11, [x9]",
+            "mov w11, #0x55",  // 'U'
+            "str w11, [x9]",
+            "mov w11, #0x53",  // 'S'
+            "str w11, [x9]",
+            "mov w11, #0x54",  // 'T'
+            "str w11, [x9]",
+
+            // x0 already contains args_ptr from assembly, just jump to start
+            // Use direct branch to avoid return
+            "b {start_fn}",
+            start_fn = sym start,
+        )
+    }
+}
 
 /// Minimal AP entry - just test if we can reach Rust from assembly
 #[unsafe(no_mangle)]
@@ -545,29 +592,50 @@ pub unsafe extern "C" fn ap_entry_minimal(args_ptr: *const KernelArgs) -> ! {
     start(args_ptr)
 }
 
-/// AP initialization - called from shared start() function
-/// This runs in the proven-working Rust environment, avoiding assembly-to-Rust transition issues
-#[inline(never)]
-unsafe fn start_ap_shared(args_phys: usize) -> ! {
-    // Write serial to confirm we're in AP init - use PHYS_OFFSET mapping!
-    let serial = (crate::PHYS_OFFSET + 0x09000000) as *mut u32;
+/// AP initialization - NAKED function to avoid stack frame prologue
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn start_ap_shared_direct() -> ! {
     unsafe {
-        core::ptr::write_volatile(serial, 0x49); // 'I' = Init
-        core::ptr::write_volatile(serial, 0x4E); // 'N'
-        core::ptr::write_volatile(serial, 0x49); // 'I'
-        core::ptr::write_volatile(serial, 0x54); // 'T'
-    }
+        core::arch::naked_asm!(
+            // x0 contains args_phys
+            // Write INIT+ markers first
+            "mov x10, x0",              // Save args_phys
+            "mov x9, #0x09000000",
+            "mov w11, #0x49",          // 'I'
+            "str w11, [x9]",
+            "mov w11, #0x4E",          // 'N'
+            "str w11, [x9]",
+            "mov w11, #0x49",          // 'I'
+            "str w11, [x9]",
+            "mov w11, #0x54",          // 'T'
+            "str w11, [x9]",
+            "mov w11, #0x2B",          // '+'
+            "str w11, [x9]",
 
-    // Increment the shareable sync counter (now that we're in working Rust!)
+            // Now jump to the real implementation
+            "b {impl_fn}",
+            impl_fn = sym start_ap_shared_impl,
+        )
+    }
+}
+
+/// Actual AP initialization implementation
+#[inline(never)]
+unsafe fn start_ap_shared_impl(args_phys: usize) -> ! {
+    // Write serial markers
+    let serial_phys = 0x09000000 as *mut u32;
+
+    // Increment the shareable sync counter
     let old = crate::arch::smp_sync::increment_ap_entry();
 
     unsafe {
-        core::ptr::write_volatile(serial, 0x2B); // '+'
+        core::ptr::write_volatile(serial_phys, 0x2B); // '+'
         // Write count as digit
         if old < 10 {
-            core::ptr::write_volatile(serial, 0x30 + old);
+            core::ptr::write_volatile(serial_phys, 0x30 + old);
         } else {
-            core::ptr::write_volatile(serial, 0x58); // 'X'
+            core::ptr::write_volatile(serial_phys, 0x58); // 'X'
         }
     }
 
