@@ -66,6 +66,9 @@ IMPORTANT:
 after your injections ALWAYS test with 
 /opt/other/redox/run-dev.sh or
 
+# Dependencies Status
+FROZEN at Jan 26 versions - do not update kernel/relibc deps as they cause ABI incompatibility with Cranelift.
+
 ⚠️ There are many sub-repositories in order to not get lost always go to the root directory:  
 cd /opt/other/redox
 And from there go to the sub-components if necessary.
