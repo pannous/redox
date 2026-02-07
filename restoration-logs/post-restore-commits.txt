@@ -1,0 +1,33 @@
+=== . (main) ===
+68dd8d7741e feature(graphics): Restore gradient display on boot
+
+=== rust ===
+218660878a4 🎉 MILESTONE: QEMU/HVF WFI fix - 156% → 75% CPU (52% reduction)
+
+=== rustc_codegen_cranelift ===
+0e900f56 🎉 MILESTONE: QEMU/HVF WFI fix - 156% → 75% CPU (52% reduction)
+
+=== recipes/core/kernel/source ===
+5c6af01a Remove two unnecessary uses of spin::Once
+
+=== recipes/core/kernel/source/rmm ===
+7402d77 feature(major): Add SMP sync with shareable memory - APs still cannot call Rust
+
+=== recipes/core/relibc/source ===
+880d1c23 feat(relibc): Add namespace syscall stubs for redox-scheme 0.9.0 compatibility
+
+=== recipes/core/redoxfs/source ===
+0ba8eae 🎉 MILESTONE cpu 100->25% idle Disabled VFS Cache
+
+=== recipes/core/base/source ===
+544d6c72f docs: Update migration status - all 8 packages building, initfs binaries ready
+
+=== recipes/core/ion/source ===
+4af639dc 🎉 MILESTONE: QEMU/HVF WFI fix - 156% → 75% CPU (52% reduction)
+
+=== recipes/core/netutils/source ===
+7dd6214 🎉 MILESTONE: QEMU/HVF WFI fix - 156% → 75% CPU (52% reduction)
+
+=== recipes/core/uutils/source ===
+65d2b0ff5 🎉 MILESTONE: QEMU/HVF WFI fix - 156% → 75% CPU (52% reduction)
+
