@@ -4,7 +4,7 @@
 
 use core::{
     convert::TryFrom,
-    ffi::VaList,
+    ffi::VaListImpl,
     mem::{self, MaybeUninit},
     ptr, slice,
 };
@@ -13,12 +13,14 @@ use crate::{
     c_str::CStr,
     error::{Errno, ResultExt},
     header::{
+        bits_time::timespec,
         crypt::{crypt_data, crypt_r},
         errno::{self, ENAMETOOLONG},
         fcntl, limits,
         stdlib::getenv,
-        sys_ioctl, sys_resource, sys_time, sys_utsname, termios,
-        time::timespec,
+        sys_ioctl, sys_resource,
+        sys_select::timeval,
+        sys_time, sys_utsname, termios,
     },
     out::Out,
     platform::{
@@ -45,6 +47,8 @@ use super::{
     errno::{E2BIG, EINVAL, ENOMEM},
     stdio::snprintf,
 };
+
+use crate::header::signal::{sigprocmask, sigset_t, sigsuspend};
 
 mod brk;
 mod getopt;
@@ -111,21 +115,10 @@ pub const _CS_POSIX_V7_LPBIG_OFFBIG_LDFLAGS: c_int = 1145;
 pub const _CS_POSIX_V7_LPBIG_OFFBIG_LIBS: c_int = 1146;
 pub const _CS_POSIX_V7_LPBIG_OFFBIG_LINTFLAGS: c_int = 1147;
 
-// Re-exported from pthread.h. `pthread_atfork` should be in pthread.h according to the
-// standard, but glibc exports it here as well. We ONLY exported it in unistd.h till recently.
-unsafe extern "C" {
-    #[unsafe(no_mangle)]
-    pub fn pthread_atfork(
-        prepare: Option<extern "C" fn()>,
-        parent: Option<extern "C" fn()>,
-        child: Option<extern "C" fn()>,
-    ) -> c_int;
-}
-
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/fork.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _Fork() -> pid_t {
-    Sys::fork().or_minus_one_errno()
+    unsafe { Sys::fork() }.or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/_Exit.html>.
@@ -137,7 +130,7 @@ pub extern "C" fn _exit(status: c_int) -> ! {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/access.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
-    let path = CStr::from_ptr(path);
+    let path = unsafe { CStr::from_ptr(path) };
     Sys::access(path, mode).map(|()| 0).or_minus_one_errno()
 }
 
@@ -145,9 +138,9 @@ pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn alarm(seconds: c_uint) -> c_uint {
     // TODO setitimer is unimplemented on Redox and obsolete
-    let mut timer = sys_time::itimerval {
-        it_value: sys_time::timeval {
-            tv_sec: seconds as time_t,
+    let timer = sys_time::itimerval {
+        it_value: timeval {
+            tv_sec: time_t::from(seconds),
             tv_usec: 0,
         },
         ..Default::default()
@@ -168,14 +161,14 @@ pub extern "C" fn alarm(seconds: c_uint) -> c_uint {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/chdir.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
-    let path = CStr::from_ptr(path);
+    let path = unsafe { CStr::from_ptr(path) };
     Sys::chdir(path).map(|()| 0).or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/chown.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chown(path: *const c_char, owner: uid_t, group: gid_t) -> c_int {
-    let path = CStr::from_ptr(path);
+    let path = unsafe { CStr::from_ptr(path) };
     Sys::chown(path, owner, group)
         .map(|()| 0)
         .or_minus_one_errno()
@@ -228,7 +221,7 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: size_t) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
     let mut data = crypt_data::new();
-    crypt_r(key, salt, &mut data as *mut _)
+    unsafe { crypt_r(key, salt, &mut data as *mut _) }
 }
 
 /// Non-POSIX, see <https://www.man7.org/linux/man-pages/man3/daemon.3.html>.
@@ -289,11 +282,11 @@ pub extern "C" fn dup3(fildes: c_int, fildes2: c_int, flag: c_int) -> c_int {
 ///
 /// # Deprecation
 /// The `encrypt()` function was marked obsolescent in the Open Group Base Specifications Issue 8.
-#[deprecated]
+//#[deprecated]
 // #[unsafe(no_mangle)]
-pub extern "C" fn encrypt(block: [c_char; 64], edflag: c_int) {
-    unimplemented!();
-}
+//pub extern "C" fn encrypt(block: [c_char; 64], edflag: c_int) {
+//    unimplemented!();
+//}
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html>.
 #[unsafe(no_mangle)]
@@ -302,9 +295,11 @@ pub unsafe extern "C" fn execl(
     arg0: *const c_char,
     mut __valist: ...
 ) -> c_int {
-    with_argv(__valist, arg0, |args, _remaining_va| {
-        execv(path, args.as_ptr().cast())
-    })
+    unsafe {
+        with_argv(__valist, arg0, |args, _remaining_va| {
+            execv(path, args.as_ptr().cast())
+        })
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html>.
@@ -314,10 +309,12 @@ pub unsafe extern "C" fn execle(
     arg0: *const c_char,
     mut __valist: ...
 ) -> c_int {
-    with_argv(__valist, arg0, |args, mut remaining_va| {
-        let envp = remaining_va.arg::<*const *mut c_char>();
-        execve(path, args.as_ptr().cast(), envp)
-    })
+    unsafe {
+        with_argv(__valist, arg0, |args, mut remaining_va| {
+            let envp = remaining_va.arg::<*const *mut c_char>();
+            execve(path, args.as_ptr().cast(), envp)
+        })
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html>.
@@ -327,15 +324,17 @@ pub unsafe extern "C" fn execlp(
     arg0: *const c_char,
     mut __valist: ...
 ) -> c_int {
-    with_argv(__valist, arg0, |args, _remaining_va| {
-        execvp(file, args.as_ptr().cast())
-    })
+    unsafe {
+        with_argv(__valist, arg0, |args, _remaining_va| {
+            execvp(file, args.as_ptr().cast())
+        })
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *mut c_char) -> c_int {
-    execve(path, argv, platform::environ)
+    unsafe { execve(path, argv, platform::environ) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html>.
@@ -345,8 +344,8 @@ pub unsafe extern "C" fn execve(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    let path = CStr::from_ptr(path);
-    Sys::execve(path, argv, envp)
+    let path = unsafe { CStr::from_ptr(path) };
+    unsafe { Sys::execve(path, argv, envp) }
         .map(|()| unreachable!())
         .or_minus_one_errno()
 }
@@ -358,7 +357,7 @@ pub unsafe extern "C" fn fexecve(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    Sys::fexecve(fd, argv, envp)
+    unsafe { Sys::fexecve(fd, argv, envp) }
         .map(|()| unreachable!())
         .or_minus_one_errno()
 }
@@ -368,18 +367,18 @@ const PATH_SEPARATOR: u8 = b':';
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *mut c_char) -> c_int {
-    let file = CStr::from_ptr(file);
+    let file = unsafe { CStr::from_ptr(file) };
 
     if file.to_bytes().contains(&b'/')
         || (cfg!(target_os = "redox") && file.to_bytes().contains(&b':'))
     {
-        execv(file.as_ptr(), argv)
+        unsafe { execv(file.as_ptr(), argv) }
     } else {
         let mut error = errno::ENOENT;
 
-        let path_env = getenv(c"PATH".as_ptr());
+        let path_env = unsafe { getenv(c"PATH".as_ptr()) };
         if !path_env.is_null() {
-            let path_env = CStr::from_ptr(path_env);
+            let path_env = unsafe { CStr::from_ptr(path_env) };
             for path in path_env.to_bytes().split(|&b| b == PATH_SEPARATOR) {
                 let file = file.to_bytes();
                 let length = file.len() + path.len() + 2;
@@ -390,7 +389,7 @@ pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *mut c_char) -
                 program.push(b'\0');
 
                 let program_c = CStr::from_bytes_with_nul(&program).unwrap();
-                execv(program_c.as_ptr(), argv);
+                unsafe { execv(program_c.as_ptr(), argv) };
 
                 match platform::ERRNO.get() {
                     errno::ENOENT => (),
@@ -427,16 +426,16 @@ pub extern "C" fn fdatasync(fildes: c_int) -> c_int {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/fork.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fork() -> pid_t {
-    for prepare in &fork_hooks[0] {
+    for prepare in unsafe { &fork_hooks[0] } {
         prepare();
     }
-    let pid = Sys::fork().or_minus_one_errno();
+    let pid = unsafe { Sys::fork() }.or_minus_one_errno();
     if pid == 0 {
-        for child in &fork_hooks[2] {
+        for child in unsafe { &fork_hooks[2] } {
             child();
         }
     } else if pid != -1 {
-        for parent in &fork_hooks[1] {
+        for parent in unsafe { &fork_hooks[1] } {
             parent();
         }
     }
@@ -467,7 +466,7 @@ pub unsafe extern "C" fn getcwd(mut buf: *mut c_char, mut size: size_t) -> *mut 
         size = stack_buf.len();
     }
 
-    let ret = match Sys::getcwd(Out::from_raw_parts(buf.cast(), size)) {
+    let ret = match Sys::getcwd(unsafe { Out::from_raw_parts(buf.cast(), size) }) {
         Ok(()) => buf,
         Err(Errno(errno)) => {
             ERRNO.set(errno);
@@ -551,7 +550,7 @@ pub unsafe extern "C" fn getgroups(size: c_int, list: *mut gid_t) -> c_int {
             // where the actual number of entries in the group list is obviously nonnegative
             .map_err(|_| Errno(EINVAL))?;
 
-        let list = Out::from_raw_parts(list, size);
+        let list = unsafe { Out::from_raw_parts(list, size) };
 
         Sys::getgroups(list)
     })()
@@ -573,23 +572,22 @@ pub unsafe extern "C" fn gethostname(mut name: *mut c_char, mut len: size_t) -> 
         .map(|()| 0)
         .or_minus_one_errno();
     if err < 0 {
-        mem::forget(uts);
         return err;
     }
-    for c in uts.assume_init().nodename.iter() {
+    for c in unsafe { uts.assume_init() }.nodename.iter() {
         if len == 0 {
             break;
         }
         len -= 1;
 
-        *name = *c;
+        unsafe { *name = *c };
 
-        if *name == 0 {
+        if unsafe { *name } == 0 {
             // We do want to copy the zero also, so we check this after the copying.
             break;
         }
 
-        name = name.offset(1);
+        name = unsafe { name.offset(1) };
     }
     0
 }
@@ -656,9 +654,9 @@ pub extern "C" fn getppid() -> pid_t {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getresgid(rgid: *mut gid_t, egid: *mut gid_t, sgid: *mut gid_t) -> c_int {
     Sys::getresgid(
-        Out::nullable(rgid),
-        Out::nullable(egid),
-        Out::nullable(sgid),
+        unsafe { Out::nullable(rgid) },
+        unsafe { Out::nullable(egid) },
+        unsafe { Out::nullable(sgid) },
     )
     .map(|()| 0)
     .or_minus_one_errno()
@@ -668,9 +666,9 @@ pub unsafe extern "C" fn getresgid(rgid: *mut gid_t, egid: *mut gid_t, sgid: *mu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getresuid(ruid: *mut uid_t, euid: *mut uid_t, suid: *mut uid_t) -> c_int {
     Sys::getresuid(
-        Out::nullable(ruid),
-        Out::nullable(euid),
-        Out::nullable(suid),
+        unsafe { Out::nullable(ruid) },
+        unsafe { Out::nullable(euid) },
+        unsafe { Out::nullable(suid) },
     )
     .map(|()| 0)
     .or_minus_one_errno()
@@ -713,7 +711,7 @@ pub extern "C" fn isatty(fd: c_int) -> c_int {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/lchown.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lchown(path: *const c_char, owner: uid_t, group: gid_t) -> c_int {
-    let path = CStr::from_ptr(path);
+    let path = unsafe { CStr::from_ptr(path) };
     Sys::lchown(path, owner, group)
         .map(|()| 0)
         .or_minus_one_errno()
@@ -722,8 +720,8 @@ pub unsafe extern "C" fn lchown(path: *const c_char, owner: uid_t, group: gid_t)
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/link.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn link(path1: *const c_char, path2: *const c_char) -> c_int {
-    let path1 = CStr::from_ptr(path1);
-    let path2 = CStr::from_ptr(path2);
+    let path1 = unsafe { CStr::from_ptr(path1) };
+    let path2 = unsafe { CStr::from_ptr(path2) };
     Sys::link(path1, path2).map(|()| 0).or_minus_one_errno()
 }
 
@@ -741,7 +739,8 @@ pub unsafe extern "C" fn lockf(fildes: c_int, function: c_int, size: off_t) -> c
     match function {
         fcntl::F_TEST => {
             fl.l_type = fcntl::F_RDLCK as c_short;
-            if fcntl::fcntl(fildes, fcntl::F_GETLK, &mut fl as *mut _ as c_ulonglong) < 0 {
+            if unsafe { fcntl::fcntl(fildes, fcntl::F_GETLK, &mut fl as *mut _ as c_ulonglong) } < 0
+            {
                 return -1;
             }
             if fl.l_type == fcntl::F_UNLCK as c_short || fl.l_pid == getpid() {
@@ -752,13 +751,19 @@ pub unsafe extern "C" fn lockf(fildes: c_int, function: c_int, size: off_t) -> c
         }
         fcntl::F_ULOCK => {
             fl.l_type = fcntl::F_UNLCK as c_short;
-            return fcntl::fcntl(fildes, fcntl::F_SETLK, &mut fl as *mut _ as c_ulonglong);
+            return unsafe {
+                fcntl::fcntl(fildes, fcntl::F_SETLK, &mut fl as *mut _ as c_ulonglong)
+            };
         }
         fcntl::F_TLOCK => {
-            return fcntl::fcntl(fildes, fcntl::F_SETLK, &mut fl as *mut _ as c_ulonglong);
+            return unsafe {
+                fcntl::fcntl(fildes, fcntl::F_SETLK, &mut fl as *mut _ as c_ulonglong)
+            };
         }
         fcntl::F_LOCK => {
-            return fcntl::fcntl(fildes, fcntl::F_SETLKW, &mut fl as *mut _ as c_ulonglong);
+            return unsafe {
+                fcntl::fcntl(fildes, fcntl::F_SETLKW, &mut fl as *mut _ as c_ulonglong)
+            };
         }
         _ => {
             platform::ERRNO.set(errno::EINVAL);
@@ -780,29 +785,36 @@ pub extern "C" fn nice(incr: c_int) -> c_int {
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/pause.html>.
-// #[unsafe(no_mangle)]
-pub extern "C" fn pause() -> c_int {
-    unimplemented!();
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pause() -> c_int {
+    let mut pset = mem::MaybeUninit::<sigset_t>::uninit();
+    unsafe { sigprocmask(0, ptr::null_mut(), pset.as_mut_ptr()) };
+    let set = unsafe { pset.assume_init() };
+    unsafe { sigsuspend(&set) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/pipe.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pipe(fildes: *mut c_int) -> c_int {
-    pipe2(fildes, 0)
+    unsafe { pipe2(fildes, 0) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/pipe.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pipe2(fildes: *mut c_int, flags: c_int) -> c_int {
-    Sys::pipe2(Out::nonnull(fildes.cast::<[c_int; 2]>()), flags)
+    Sys::pipe2(unsafe { Out::nonnull(fildes.cast::<[c_int; 2]>()) }, flags)
         .map(|()| 0)
         .or_minus_one_errno()
 }
 
-/// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/close.html>.
-// #[unsafe(no_mangle)]
+/// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/posix_close.html>.
+#[unsafe(no_mangle)]
 pub extern "C" fn posix_close(fildes: c_int, flag: c_int) -> c_int {
-    unimplemented!();
+    // Since we do not define `POSIX_CLOSE_RESTART`, this function is
+    // equivalent to `close`. In the future when we move file descriptors
+    // to userspace, it would only make sense to define `POSIX_CLOSE_RESTART`
+    // if `close` is not atomic.
+    close(fildes)
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/read.html>.
@@ -815,7 +827,7 @@ pub unsafe extern "C" fn pread(
 ) -> ssize_t {
     Sys::pread(
         fildes,
-        slice::from_raw_parts_mut(buf.cast::<u8>(), nbyte),
+        unsafe { slice::from_raw_parts_mut(buf.cast::<u8>(), nbyte) },
         offset,
     )
     .map(|read| read as ssize_t)
@@ -832,7 +844,7 @@ pub unsafe extern "C" fn pwrite(
 ) -> ssize_t {
     Sys::pwrite(
         fildes,
-        slice::from_raw_parts(buf.cast::<u8>(), nbyte),
+        unsafe { slice::from_raw_parts(buf.cast::<u8>(), nbyte) },
         offset,
     )
     .map(|read| read as ssize_t)
@@ -861,8 +873,8 @@ pub unsafe extern "C" fn readlink(
     buf: *mut c_char,
     bufsize: size_t,
 ) -> ssize_t {
-    let path = CStr::from_ptr(path);
-    let buf = slice::from_raw_parts_mut(buf as *mut u8, bufsize as usize);
+    let path = unsafe { CStr::from_ptr(path) };
+    let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, bufsize as usize) };
     Sys::readlink(path, buf)
         .map(|read| read as ssize_t)
         .or_minus_one_errno()
@@ -876,8 +888,8 @@ pub unsafe extern "C" fn readlinkat(
     buf: *mut c_char,
     len: size_t,
 ) -> ssize_t {
-    let pathname = CStr::from_ptr(pathname);
-    let mut buf = slice::from_raw_parts_mut(buf.cast(), len);
+    let pathname = unsafe { CStr::from_ptr(pathname) };
+    let mut buf = unsafe { slice::from_raw_parts_mut(buf.cast(), len) };
     Sys::readlinkat(dirfd, pathname, &mut buf)
         .map(|read| {
             read.try_into()
@@ -890,7 +902,7 @@ pub unsafe extern "C" fn readlinkat(
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/rmdir.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
-    let path = CStr::from_ptr(path);
+    let path = unsafe { CStr::from_ptr(path) };
     Sys::rmdir(path).map(|()| 0).or_minus_one_errno()
 }
 
@@ -919,7 +931,9 @@ pub extern "C" fn setgid(gid: gid_t) -> c_int {
 /// TODO: specified in `grp.h`?
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setgroups(size: size_t, list: *const gid_t) -> c_int {
-    Sys::setgroups(size, list).map(|()| 0).or_minus_one_errno()
+    unsafe { Sys::setgroups(size, list) }
+        .map(|()| 0)
+        .or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/setpgid.html>.
@@ -989,7 +1003,7 @@ pub extern "C" fn setuid(uid: uid_t) -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn sleep(seconds: c_uint) -> c_uint {
     let rqtp = timespec {
-        tv_sec: seconds as time_t,
+        tv_sec: time_t::from(seconds),
         tv_nsec: 0,
     };
     let mut rmtp = timespec {
@@ -1014,7 +1028,7 @@ pub unsafe extern "C" fn swab(src: *const c_void, dest: *mut c_void, nbytes: ssi
     }
     let number_of_swaps = nbytes / 2;
     let mut offset = 0;
-    for i in 0..number_of_swaps {
+    for _ in 0..number_of_swaps {
         unsafe {
             src.offset(offset).copy_to(dest.offset(offset + 1), 1);
             src.offset(offset + 1).copy_to(dest.offset(offset), 1);
@@ -1026,15 +1040,15 @@ pub unsafe extern "C" fn swab(src: *const c_void, dest: *mut c_void, nbytes: ssi
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/symlink.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn symlink(path1: *const c_char, path2: *const c_char) -> c_int {
-    let path1 = CStr::from_ptr(path1);
-    let path2 = CStr::from_ptr(path2);
+    let path1 = unsafe { CStr::from_ptr(path1) };
+    let path2 = unsafe { CStr::from_ptr(path2) };
     Sys::symlink(path1, path2).map(|()| 0).or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/sync.html>.
 #[unsafe(no_mangle)]
 pub extern "C" fn sync() {
-    Sys::sync();
+    if let Ok(()) = Sys::sync() {}; // TODO handle error
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcgetpgrp.html>.
@@ -1068,7 +1082,7 @@ pub unsafe extern "C" fn truncate(path: *const c_char, length: off_t) -> c_int {
 
     let res = ftruncate(fd, length);
 
-    Sys::close(fd);
+    if let Ok(()) = Sys::close(fd) {}; // TODO handle error
 
     res
 }
@@ -1114,11 +1128,11 @@ pub extern "C" fn ttyname_r(fildes: c_int, name: *mut c_char, namesize: size_t) 
 pub extern "C" fn ualarm(usecs: useconds_t, interval: useconds_t) -> useconds_t {
     // TODO setitimer is unimplemented on Redox and obsolete
     let mut timer = sys_time::itimerval {
-        it_value: sys_time::timeval {
+        it_value: timeval {
             tv_sec: 0,
             tv_usec: usecs as suseconds_t,
         },
-        it_interval: sys_time::timeval {
+        it_interval: timeval {
             tv_sec: 0,
             tv_usec: interval as suseconds_t,
         },
@@ -1137,7 +1151,7 @@ pub extern "C" fn ualarm(usecs: useconds_t, interval: useconds_t) -> useconds_t 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/unlink.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
-    let path = CStr::from_ptr(path);
+    let path = unsafe { CStr::from_ptr(path) };
     Sys::unlink(path).map(|()| 0).or_minus_one_errno()
 }
 
@@ -1150,7 +1164,7 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn usleep(useconds: useconds_t) -> c_int {
     let rqtp = timespec {
-        tv_sec: (useconds / 1_000_000) as time_t,
+        tv_sec: time_t::from(useconds / 1_000_000),
         tv_nsec: ((useconds % 1_000_000) * 1000) as c_long,
     };
     let rmtp = ptr::null_mut();
@@ -1170,16 +1184,17 @@ pub extern "C" fn vfork() -> pid_t {
     unimplemented!();
 }
 
-unsafe fn with_argv<'a>(
-    mut va: VaList<'a>,
+unsafe fn with_argv(
+    mut va: VaListImpl,
     arg0: *const c_char,
-    f: impl FnOnce(&[*const c_char], VaList<'a>) -> c_int,
+    f: impl FnOnce(&[*const c_char], VaListImpl) -> c_int,
 ) -> c_int {
-    let argc = 1 + {
-        let mut copy = va.clone();
-        core::iter::from_fn(|| Some(copy.arg::<*const c_char>()))
-            .position(|p| p.is_null())
-            .unwrap()
+    let argc = 1 + unsafe {
+        va.with_copy(|mut copy| {
+            core::iter::from_fn(|| Some(copy.arg::<*const c_char>()))
+                .position(|p| p.is_null())
+                .unwrap()
+        })
     };
 
     let mut stack: [MaybeUninit<*const c_char>; 32] = [MaybeUninit::uninit(); 32];
@@ -1188,12 +1203,12 @@ unsafe fn with_argv<'a>(
         stack.as_mut_slice()
     } else if argc < 4096 {
         // TODO: Use ARG_MAX, not this hardcoded constant
-        let ptr = crate::header::stdlib::malloc(argc * mem::size_of::<*const c_char>());
+        let ptr = unsafe { crate::header::stdlib::malloc(argc * mem::size_of::<*const c_char>()) };
         if ptr.is_null() {
             platform::ERRNO.set(ENOMEM);
             return -1;
         }
-        slice::from_raw_parts_mut(ptr.cast::<MaybeUninit<*const c_char>>(), argc)
+        unsafe { slice::from_raw_parts_mut(ptr.cast::<MaybeUninit<*const c_char>>(), argc) }
     } else {
         platform::ERRNO.set(E2BIG);
         return -1;
@@ -1201,17 +1216,17 @@ unsafe fn with_argv<'a>(
     out[0].write(arg0);
 
     for i in 1..argc {
-        out[i].write(va.arg::<*const c_char>());
+        out[i].write(unsafe { va.arg::<*const c_char>() });
     }
     out[argc].write(core::ptr::null());
     // NULL
-    va.arg::<*const c_char>();
+    unsafe { va.arg::<*const c_char>() };
 
-    f((&*out).assume_init_ref(), va);
+    f(unsafe { (&*out).assume_init_ref() }, va);
 
     // f only returns if it fails
     if argc >= 32 {
-        crate::header::stdlib::free(out.as_mut_ptr().cast());
+        unsafe { crate::header::stdlib::free(out.as_mut_ptr().cast()) };
     }
     -1
 }
@@ -1219,7 +1234,7 @@ unsafe fn with_argv<'a>(
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/write.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn write(fildes: c_int, buf: *const c_void, nbyte: size_t) -> ssize_t {
-    let buf = slice::from_raw_parts(buf as *const u8, nbyte as usize);
+    let buf = unsafe { slice::from_raw_parts(buf as *const u8, nbyte as usize) };
     Sys::write(fildes, buf)
         .map(|bytes| bytes as ssize_t)
         .or_minus_one_errno()

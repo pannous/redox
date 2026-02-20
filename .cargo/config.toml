@@ -23,4 +23,4 @@ CFLAGS_riscv64gc_unknown_redox="-march=rv64gc -mabi=lp64d"
 CARGO_INCREMENTAL="1"
 
 [net]
-offline = true
+offline = false

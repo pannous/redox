@@ -7,13 +7,13 @@
 //! Specifications Issue 6, and the entire `sys/timeb.h` header was removed in
 //! Issue 7.
 
-// TODO: set this for entire crate when possible
-#![deny(unsafe_op_in_unsafe_fn)]
-
 use core::ptr::NonNull;
 
 use crate::{
-    header::sys_time::{gettimeofday, timeval, timezone},
+    header::{
+        sys_select::timeval,
+        sys_time::{gettimeofday, timezone},
+    },
     platform::types::{c_int, c_short, c_ushort, time_t},
 };
 

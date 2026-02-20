@@ -1,14 +1,13 @@
 use core::mem::size_of;
 
 use crate::header::{
+    bits_time::timespec,
     fcntl::{O_CLOEXEC, O_CREAT, O_RDWR},
     signal::sigset_t,
-    time::timespec,
 };
 
 use super::libredox::RawResult;
 
-use bitflags::Flags;
 use syscall::{EINVAL, Error, Result};
 
 #[unsafe(no_mangle)]
@@ -40,12 +39,13 @@ pub unsafe extern "C" fn redox_event_queue_get_events_v1(
             size_of::<syscall::Event>(),
             "EOF not yet defined for event queue reads"
         );
-        buf.write(event::raw::RawEventV1 {
-            fd: event.id,
-            // Convert syscall EventFlags bits to event::raw::EventFlags bits directly
-            flags: event.flags.bits() as u32,
-            user_data: event.data,
-        });
+        unsafe {
+            buf.write(event::raw::RawEventV1 {
+                fd: event.id,
+                flags: event::raw::EventFlags::from(event.flags).bits(),
+                user_data: event.data,
+            })
+        };
 
         Ok(1)
     })())
@@ -58,13 +58,13 @@ pub unsafe extern "C" fn redox_event_queue_ctl_v1(
     user_data: usize,
 ) -> RawResult {
     Error::mux((|| -> Result<usize> {
-        // Convert u32 flags to syscall EventFlags
-        // The flag bits have the same meaning across both types
         let res = syscall::write(
             queue,
             &syscall::Event {
                 id: fd,
-                flags: syscall::EventFlags::from_bits_retain(flags as usize),
+                flags: event::raw::EventFlags::from_bits(flags)
+                    .ok_or(Error::new(EINVAL))?
+                    .into(),
                 data: user_data,
             },
         )?;

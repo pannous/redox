@@ -1,8 +1,4 @@
-use alloc::{
-    borrow::ToOwned,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{borrow::ToOwned, string::String};
 use core::{ffi::VaList, ptr::null_mut};
 
 use crate::{
@@ -14,11 +10,14 @@ use crate::{
         unistd::getpid,
     },
     io::Write,
-    platform::{self, types::*},
+    platform::{
+        self,
+        types::{c_char, c_int},
+    },
     sync::Mutex,
 };
 
-use bitflags::{Flags, bitflags};
+use bitflags::bitflags;
 use chrono::{DateTime, Utc};
 
 use super::{
@@ -31,7 +30,7 @@ use super::{
 
 pub(super) static LOGGER: Mutex<LogParams<LogFile>> = Mutex::new(LogParams::new(None));
 
-pub struct LogParams<L: LogSink> {
+pub(super) struct LogParams<L: LogSink> {
     /// Identity prepended to each log message. POSIX does not specific what to do when it's empty,
     /// but the program name is a common default.
     ident: String,
@@ -50,7 +49,7 @@ impl<L: LogSink> LogParams<L> {
         }
     }
 
-    pub fn write_log(&mut self, priority: Priority, message: CStr<'_>, mut ap: VaList) {
+    pub fn write_log(&mut self, priority: Priority, message: CStr<'_>, ap: VaList) {
         if message.is_empty() {
             return;
         }

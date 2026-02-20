@@ -17,14 +17,14 @@ name = "redox-initfs-dump"
 path = "src/bin/dump.rs"
 
 [dependencies]
-anyhow = "1"
+anyhow.workspace = true
 clap = {version = "4", features = ["cargo"]}
 env_logger = "0.8"
-log = "0.4"
+log.workspace = true
+pathdiff = "0.2.1"
 plain = "0.2"
 twox-hash = "1.6"
 
-archive-common = {path = "../archive-common"}
 redox-initfs = {path = ".."}
 
 [[bin]]

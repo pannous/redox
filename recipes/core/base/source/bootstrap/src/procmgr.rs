@@ -29,14 +29,17 @@ use redox_scheme::{
     Socket, Tag,
 };
 use slab::Slab;
+use syscall::data::GlobalSchemes;
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    ContextStatus, ContextVerb, CtxtStsBuf, EACCES, EAGAIN, EBADF, EBADFD, ECANCELED, ECHILD,
-    EEXIST, EINTR, EINVAL, ENOENT, ENOSYS, EOPNOTSUPP, EOWNERDEAD, EPERM, ERESTART, ESRCH,
+    CallFlags, ContextStatus, ContextVerb, CtxtStsBuf, EACCES, EAGAIN, EBADF, EBADFD, ECANCELED,
+    ECHILD, EEXIST, EINTR, EINVAL, ENOENT, ENOSYS, EOPNOTSUPP, EOWNERDEAD, EPERM, ERESTART, ESRCH,
     EWOULDBLOCK, Error, Event, EventFlags, FobtainFdFlags, MapFlags, O_ACCMODE, O_CREAT, O_RDONLY,
     PAGE_SIZE, ProcSchemeAttrs, Result, SenderInfo, SetSighandlerData, SigProcControl, Sigcontrol,
     sig_bit,
 };
+
+use crate::KernelSchemeMap;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 enum VirtualId {
@@ -45,13 +48,31 @@ enum VirtualId {
     InternalId(u64),
 }
 
-pub fn run(write_fd: usize, auth: &FdGuard) {
-    let socket = Socket::nonblock("proc").expect("failed to open proc scheme socket");
+pub fn run(
+    write_fd: FdGuard,
+    auth: &FdGuard,
+    kernel_schemes: &KernelSchemeMap,
+    scheme_creation_cap: usize,
+) -> ! {
+    let socket =
+        Socket::create_inner(scheme_creation_cap, true).expect("failed to open proc scheme socket");
+    let _ = syscall::close(scheme_creation_cap);
 
     // TODO?
     let socket_ident = socket.inner().raw();
 
-    let queue = RawEventQueue::new().expect("failed to create event queue");
+    let queue = RawEventQueue::new(
+        *kernel_schemes
+            .get(GlobalSchemes::Event)
+            .expect("failed to get event fd"),
+    )
+    .expect("failed to create event queue");
+    for (scheme, fd) in kernel_schemes.0.iter() {
+        if *scheme == GlobalSchemes::Proc {
+            continue;
+        }
+        let _ = syscall::close(*fd);
+    }
 
     queue
         .subscribe(socket.inner().raw(), socket_ident, EventFlags::EVENT_READ)
@@ -59,9 +80,20 @@ pub fn run(write_fd: usize, auth: &FdGuard) {
 
     let mut scheme = ProcScheme::new(auth, &queue);
 
+    // send open-capability to bootstrap
+    let new_id = scheme.handles.insert(Handle::SchemeRoot);
+    let cap_fd = socket
+        .create_this_scheme_fd(0, new_id, 0, 0)
+        .expect("failed to issue procmgr root fd");
+
     log::debug!("process manager started");
-    let _ = syscall::write(write_fd, &[0]);
-    let _ = syscall::close(write_fd);
+    let _ = syscall::call_wo(
+        write_fd.as_raw_fd(),
+        &cap_fd.to_ne_bytes(),
+        CallFlags::FD,
+        &[],
+    );
+    drop(write_fd);
 
     let mut states = HashMap::<VirtualId, PendingState, DefaultHashBuilder>::new();
     let mut awoken = VecDeque::<VirtualId>::new();
@@ -160,8 +192,8 @@ pub fn run(write_fd: usize, auth: &FdGuard) {
 
             log::trace!("--THREAD DIED {}, {}", event.data, thread.pid.0);
 
-            if let Err(_err) = scheme.queue.unsubscribe(event.data, event.data) {
-                log::error!("failed to unsubscribe from fd {}", event.data);
+            if let Err(err) = scheme.queue.unsubscribe(event.data, event.data) {
+                log::error!("failed to unsubscribe from fd {}: {err}", event.data);
             }
             scheme.thread_lookup.remove(&event.data);
             proc.threads.retain(|rc| !Rc::ptr_eq(rc, &thread_rc));
@@ -205,8 +237,8 @@ fn handle_scheme<'a>(
                 Err(req) => return Response::ready_err(ENOSYS, req),
             };
             match op {
-                Op::Open(op) => Ready(Response::open_dup_like(
-                    scheme.on_open(op.path(), op.flags, &caller),
+                Op::OpenAt(op) => Ready(Response::open_dup_like(
+                    scheme.on_openat(op.fd, op.path(), *op.flags(), op.fcntl_flags, &caller),
                     op,
                 )),
                 Op::Dup(op) => Ready(Response::open_dup_like(scheme.on_dup(op.fd, op.buf()), op)),
@@ -378,8 +410,6 @@ struct Process {
     rgid: u32,
     egid: u32,
     sgid: u32,
-    rns: u32,
-    ens: u32,
 
     status: ProcessStatus,
     disabled_setpgid: bool,
@@ -523,6 +553,9 @@ enum Handle {
 
     // A handle that grants the holder the capability to obtain process credentials.
     ProcCredsCapability,
+
+    // A handle that grants the holder the capability to open process scheme resource.
+    SchemeRoot,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -536,9 +569,10 @@ enum WaitpidTarget {
 // backend
 struct RawEventQueue(FdGuard);
 impl RawEventQueue {
-    pub fn new() -> Result<Self> {
-        // Use legacy SYS_OPEN - openat(0, path) returns EOPNOTSUPP for scheme paths
-        crate::compat::open_fd("/scheme/event", O_CREAT).map(Self)
+    pub fn new(cap_fd: usize) -> Result<Self> {
+        syscall::openat(cap_fd, "", O_CREAT, 0)
+            .map(FdGuard::new)
+            .map(Self)
     }
     pub fn subscribe(&self, fd: usize, ident: usize, flags: EventFlags) -> Result<()> {
         self.0.write(&Event {
@@ -587,7 +621,11 @@ impl<'a> ProcScheme<'a> {
         match self.handles[req.id()] {
             ref mut st @ Handle::Init => {
                 let mut fd_out = usize::MAX;
-                if let Err(e) = req.obtain_fd(socket, FobtainFdFlags::empty(), core::slice::from_mut(&mut fd_out)) {
+                if let Err(e) = req.obtain_fd(
+                    socket,
+                    FobtainFdFlags::empty(),
+                    core::slice::from_mut(&mut fd_out),
+                ) {
                     return Response::new(Err(e), req);
                 };
                 let fd = FdGuard::new(fd_out);
@@ -619,8 +657,6 @@ impl<'a> ProcScheme<'a> {
                     rgid: 0,
                     egid: 0,
                     sgid: 0,
-                    rns: 1,
-                    ens: 1,
                     name: ArrayString::<32>::from_str("[init]").unwrap(),
 
                     status: ProcessStatus::PossiblyRunnable,
@@ -663,8 +699,6 @@ impl<'a> ProcScheme<'a> {
             rgid,
             egid,
             sgid,
-            ens,
-            rns,
             name,
             ..
         } = *proc_guard.borrow();
@@ -697,8 +731,6 @@ impl<'a> ProcScheme<'a> {
             rgid,
             egid,
             sgid,
-            rns,
-            ens,
             name,
 
             status: ProcessStatus::PossiblyRunnable,
@@ -743,7 +775,7 @@ impl<'a> ProcScheme<'a> {
             pid: pid.0 as u32,
             euid: proc.euid,
             egid: proc.egid,
-            ens: proc.ens,
+            ens: 0,
             debug_name: arraystring_to_bytes(proc.name),
         })?;
 
@@ -766,7 +798,18 @@ impl<'a> ProcScheme<'a> {
         self.thread_lookup.insert(ident, thread_weak);
         Ok(thread)
     }
-    fn on_open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+    fn on_openat(
+        &mut self,
+        fd: usize,
+        path: &str,
+        flags: usize,
+        _fcntl_flags: u32,
+        ctx: &CallerCtx,
+    ) -> Result<OpenResult> {
+        match self.handles[fd] {
+            Handle::SchemeRoot => {}
+            _ => return Err(Error::new(EACCES)),
+        };
         let path = path.trim_start_matches('/');
         Ok(match path {
             "init" => {
@@ -814,8 +857,8 @@ impl<'a> ProcScheme<'a> {
             rgid: process.rgid,
             egid: process.egid,
             sgid: process.sgid,
-            ens: process.ens,
-            rns: process.rns,
+            ens: 1,
+            rns: 1,
         };
         *buf.get_mut(..size_of::<ProcMeta>())
             .and_then(|b| plain::from_mut_bytes(b).ok())
@@ -834,7 +877,7 @@ impl<'a> ProcScheme<'a> {
                 buf[..len].copy_from_slice(&src_buf[..len]);
                 Ok(len)
             }
-            Handle::Init | Handle::Thread(_) | Handle::ProcCredsCapability => {
+            Handle::Init | Handle::Thread(_) | Handle::ProcCredsCapability | Handle::SchemeRoot => {
                 return Err(Error::new(EBADF));
             }
         }
@@ -883,7 +926,9 @@ impl<'a> ProcScheme<'a> {
                     fd: thread.fd.dup(buf)?.take(),
                 })
             }
-            Handle::Init | Handle::Ps(_) | Handle::ProcCredsCapability => Err(Error::new(EBADF)),
+            Handle::Init | Handle::Ps(_) | Handle::ProcCredsCapability | Handle::SchemeRoot => {
+                Err(Error::new(EBADF))
+            }
         }
     }
     fn on_call(
@@ -920,19 +965,7 @@ impl<'a> ProcScheme<'a> {
                     log::trace!("Invalid proc call: {metadata:?}");
                     return Response::ready_err(EINVAL, op);
                 };
-                fn cvt_u32(u: u32) -> Option<u32> {
-                    if u == u32::MAX { None } else { Some(u) }
-                }
                 match verb {
-                    ProcCall::Setrens => Ready(Response::new(
-                        self.on_setrens(
-                            fd_pid,
-                            cvt_u32(metadata[1] as u32),
-                            cvt_u32(metadata[2] as u32),
-                        )
-                        .map(|()| 0),
-                        op,
-                    )),
                     ProcCall::Exit => self.on_exit_start(
                         fd_pid,
                         metadata[1] as u16,
@@ -1048,6 +1081,10 @@ impl<'a> ProcScheme<'a> {
                         }
                     }
                     ProcCall::GetProcCredentials => Response::ready_err(EACCES, op),
+
+                    // setrens is no longer implemented as procmgr call
+                    // FIXME remove this ProcCall variant
+                    ProcCall::Setrens => Response::ready_err(EINVAL, op),
                 }
             }
             Handle::Ps(_) => Response::ready_err(EOPNOTSUPP, op),
@@ -1064,6 +1101,7 @@ impl<'a> ProcScheme<'a> {
                     _ => Response::ready_err(EINVAL, op),
                 }
             }
+            Handle::SchemeRoot => Response::ready_err(EBADF, op),
         }
     }
     fn on_getpgid(&mut self, caller_pid: ProcessId, target_pid: ProcessId) -> Result<ProcessId> {
@@ -1578,7 +1616,6 @@ impl<'a> ProcScheme<'a> {
         }
         Ok(())
     }
-    #[allow(dead_code)]
     fn ancestors(&self, pid: ProcessId) -> impl Iterator<Item = ProcessId> + '_ {
         struct Iter<'a> {
             cur: Option<ProcessId>,
@@ -1598,69 +1635,6 @@ impl<'a> ProcScheme<'a> {
             cur: Some(pid),
             procs: &self.processes,
         }
-    }
-    fn on_setrens(&mut self, pid: ProcessId, rns: Option<u32>, ens: Option<u32>) -> Result<()> {
-        let proc_rc = self.processes.get(&pid).ok_or(Error::new(EBADFD))?;
-        let mut process = proc_rc.borrow_mut();
-
-        let setrns = if rns.is_none() {
-            // Ignore RNS if -1 is passed
-            false
-        } else if rns == Some(0) {
-            // Allow entering capability mode
-            true
-        } else if process.rns == 0 {
-            // Do not allow leaving capability mode
-            return Err(Error::new(EPERM));
-        } else if process.euid == 0 {
-            // Allow setting RNS if root
-            true
-        } else if rns == Some(process.ens) {
-            // Allow setting RNS if used for ENS
-            true
-        } else if rns == Some(process.rns) {
-            // Allow setting RNS if used for RNS
-            true
-        } else {
-            // Not permitted otherwise
-            return Err(Error::new(EPERM));
-        };
-
-        let setens = if ens.is_none() {
-            // Ignore ENS if -1 is passed
-            false
-        } else if ens == Some(0) {
-            // Allow entering capability mode
-            true
-        } else if process.ens == 0 {
-            // Do not allow leaving capability mode
-            return Err(Error::new(EPERM));
-        } else if process.euid == 0 {
-            // Allow setting ENS if root
-            true
-        } else if ens == Some(process.ens) {
-            // Allow setting ENS if used for ENS
-            true
-        } else if ens == Some(process.rns) {
-            // Allow setting ENS if used for RNS
-            true
-        } else {
-            // Not permitted otherwise
-            return Err(Error::new(EPERM));
-        };
-
-        if setrns {
-            process.rns = rns.unwrap();
-        }
-        if setens {
-            process.ens = ens.unwrap();
-        }
-        if setrns || setens {
-            if let Err(err) = process.sync_kernel_attrs(pid, self.auth) {
-                log::warn!("Failed to sync kernel attrs in setrens: {err}");
-            }
-        }
-        Ok(())
     }
     fn work_on(
         &mut self,
@@ -1873,10 +1847,9 @@ impl<'a> ProcScheme<'a> {
             }
         }
     }
-    #[allow(dead_code)]
     fn debug(&self) {
-        log::trace!("PROCESSES\n{:#?}", self.processes,);
-        log::trace!("HANDLES\n{:#?}", self.handles,);
+        log::trace!("PROCESSES\n{:#?}", self.processes);
+        log::trace!("HANDLES\n{:#?}", self.handles);
     }
     fn on_kill_thread(
         &mut self,
@@ -2235,7 +2208,7 @@ impl<'a> ProcScheme<'a> {
                                 .expect("TODO");
                         }
                     }
-                    KillTarget::Proc(_proc) => {
+                    KillTarget::Proc(proc) => {
                         match mode {
                             KillMode::Queued(arg) => {
                                 if sig_group != 1 {
@@ -2250,7 +2223,7 @@ impl<'a> ProcScheme<'a> {
                                 let rtq = target_proc.rtqs.get_mut(rtidx).unwrap();
 
                                 // TODO(feat): configurable limit?
-                                if rtq.len() > 32 {
+                                if rtq.len() >= 32 {
                                     return SendResult::FullQ;
                                 }
 
@@ -2286,7 +2259,7 @@ impl<'a> ProcScheme<'a> {
                                 continue;
                             };
                             log::trace!("TCTL {:#x?}", &**tctl);
-                            if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig)
+                            if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & (1 << sig_idx)
                                 != 0
                             {
                                 thread
@@ -2525,17 +2498,15 @@ impl<'a> ProcScheme<'a> {
         // TODO: enforce uid == 0?
 
         let mut string = alloc::format!(
-            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<16}\n",
+            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<16}\n",
             "PID",
             "PGID",
             "PPID",
             "SID",
             "RUID",
             "RGID",
-            "RNS",
             "EUID",
             "EGID",
-            "ENS",
             "NTHRD",
             "STATUS",
             "NAME",
@@ -2551,17 +2522,15 @@ impl<'a> ProcScheme<'a> {
             use core::fmt::Write;
             writeln!(
                 string,
-                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<16}",
+                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<16}",
                 pid.0,
                 process.pgid.0,
                 process.ppid.0,
                 process.sid.0,
                 process.ruid,
                 process.rgid,
-                process.rns,
                 process.euid,
                 process.egid,
-                process.ens,
                 process.threads.len(),
                 status,
                 process.name,
@@ -2613,7 +2582,7 @@ impl Process {
                 pid: my_pid.0 as u32,
                 euid: self.euid,
                 egid: self.egid,
-                ens: self.ens,
+                ens: 0,
                 debug_name: arraystring_to_bytes(self.name),
             })?;
         }

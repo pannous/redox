@@ -4,4 +4,7 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
-libc = "0.2.177"
+libc.workspace = true
+libredox.workspace = true
+redox-scheme.workspace = true
+redox_syscall.workspace = true

@@ -5,8 +5,10 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use object::elf;
+#[cfg(not(target_arch = "x86"))]
 use object::{
-    NativeEndian, elf,
+    NativeEndian,
     read::elf::{Rela as _, Sym},
 };
 
@@ -16,6 +18,7 @@ use core::{
 };
 
 use crate::{
+    ALLOCATOR,
     c_str::{CStr, CString},
     error::Errno,
     header::{
@@ -23,22 +26,26 @@ use crate::{
         fcntl, sys_mman,
         unistd::F_OK,
     },
-    ld_so::dso::{SymbolBinding, resolve_sym},
+    ld_so::dso::SymbolBinding,
     out::Out,
     platform::{
         Pal, Sys,
-        types::{c_int, c_uint, c_void},
+        types::{c_int, c_void},
     },
     sync::rwlock::RwLock,
 };
+#[cfg(not(target_arch = "x86"))]
+use crate::{ld_so::dso::resolve_sym, platform::types::c_uint};
 
+#[cfg(not(target_arch = "x86"))]
+use super::dso::Rela;
 use super::{
     PATH_SEP,
     access::accessible,
     boot_timing,
     callbacks::LinkerCallbacks,
     debug::{_dl_debug_state, _r_debug, RTLDState},
-    dso::{DSO, ProgramHeader, Rela},
+    dso::{DSO, ProgramHeader},
     tcb::{Master, Tcb},
 };
 
@@ -362,7 +369,7 @@ bitflags::bitflags! {
 
 #[derive(Default)]
 pub struct Config {
-    debug_flags: DebugFlags,
+    pub debug_flags: DebugFlags,
     library_path: Option<String>,
     /// Resolve symbols at program startup.
     bind_now: bool,
@@ -526,9 +533,12 @@ impl Linker {
         scope: ScopeKind,
         noload: bool,
     ) -> Result<ObjectHandle> {
-        trace!(
+        log::trace!(
             "[ld.so] load_library(name={:?}, resolve={:#?}, scope={:#?}, noload={})",
-            name, resolve, scope, noload
+            name,
+            resolve,
+            scope,
+            noload
         );
 
         if noload && resolve == Resolve::Now {
@@ -612,7 +622,7 @@ impl Linker {
                     ti_offset: symbol.value,
                 };
 
-                unsafe { __tls_get_addr(&mut tls_index) }
+                unsafe { __tls_get_addr(&raw mut tls_index) }
             }
         })
     }
@@ -623,7 +633,7 @@ impl Linker {
             return;
         }
 
-        trace!(
+        log::trace!(
             "[ld.so] unloading {} (sc={}, wc={})",
             obj.name,
             Arc::strong_count(&obj),
@@ -797,6 +807,7 @@ impl Linker {
                     #[cfg(target_os = "redox")]
                     Some(thr_fd),
                 );
+                tcb.mspace = ALLOCATOR.get();
 
                 #[cfg(target_os = "redox")]
                 {
@@ -1107,8 +1118,8 @@ extern "C" fn __plt_resolve_inner(obj: *const DSO, relocation_index: c_uint) -> 
     } else {
         rela.r_offset(NativeEndian) as *mut u64
     };
-
-    trace!("@plt: {} -> *mut {:p}", name, ptr);
+    #[cfg(feature = "trace_tls")]
+    log::trace!("@plt: {} -> *mut {:p}", name, ptr);
 
     unsafe { *ptr = resolved as u64 }
     resolved

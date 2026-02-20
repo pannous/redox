@@ -1,6 +1,6 @@
 // Start code adapted from https://gitlab.redox-os.org/redox-os/relibc/blob/master/src/start.rs
 
-#![deny(unsafe_op_in_unsafe_fn)]
+use core::slice;
 
 use alloc::{
     borrow::ToOwned,
@@ -9,15 +9,26 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use object::{
+    NativeEndian,
+    elf::{self, PT_DYNAMIC, PT_PHDR},
+    read::elf::{Dyn as _, ProgramHeader as _},
+};
 
 use crate::{
-    ALLOCATOR,
     c_str::CStr,
     header::{
-        sys_auxv::{AT_ENTRY, AT_PHDR},
+        elf::{AT_BASE, AT_ENTRY, AT_PHDR, AT_PHENT, AT_PHNUM},
         unistd,
     },
-    platform::{get_auxv, get_auxvs, types::c_char},
+    ld_so::{
+        dso::{
+            DT_RELR, DT_RELRENT, DT_RELRSZ, Dyn, ProgramHeader, Rel, Rela, Relocation,
+            RelocationKind, Relr, apply_relr,
+        },
+        linker::DebugFlags,
+    },
+    platform::{auxv_iter, get_auxvs, types::c_char},
     start::Stack,
     sync::mutex::Mutex,
 };
@@ -25,10 +36,8 @@ use crate::{
 use super::{
     PATH_SEP,
     access::accessible,
-    boot_timing,
     debug::_r_debug,
     linker::{Config, Linker},
-    shared_cache::init_shared_cache,
     tcb::Tcb,
 };
 
@@ -154,13 +163,156 @@ fn resolve_path_name(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn relibc_ld_so_start(sp: &'static mut Stack, ld_entry: usize) -> usize {
-    // Initialize boot timing at the very start
-    boot_timing::init();
-    boot_timing::log("start", "entry");
+pub unsafe extern "C" fn relibc_ld_so_start(
+    sp: &'static mut Stack,
+    ld_entry: usize,
+    dynamic: *const Dyn,
+) -> usize {
+    // Relocate ourselves.
+    //
+    // This function is very delicate as it must **not** contain relocations itself. References to
+    // external symbols **cannot** be made until `stage2()` so, this function might not be very
+    // elegant.
+    //
+    // At this stage the TCB is not setup either so `expect_notls` must be used instead of `expect`
+    // and `unwrap`.
+    let mut at_phdr = None;
+    let mut at_phnum = None;
+    let mut at_phent = None;
+    let mut at_base = None;
+    let mut at_entry = None;
+    for [kind, value] in unsafe { auxv_iter(sp.auxv().cast::<usize>()) } {
+        match kind {
+            AT_PHDR => at_phdr = Some(value as *const ProgramHeader),
+            AT_PHNUM => at_phnum = Some(value),
+            AT_PHENT => at_phent = Some(value),
+            AT_BASE => at_base = Some(value),
+            AT_ENTRY => at_entry = Some(value),
+            _ => {}
+        }
+    }
 
+    let at_phdr = at_phdr.expect_notls("`AT_PHDR` must be present");
+    let at_phnum = at_phnum.expect_notls("`AT_PHNUM` must be present if `AT_PHDR` is");
+    let at_phent = at_phent.expect_notls("`AT_PHENT` must be present if `AT_PHDR` is");
+    assert!(!at_phdr.is_null() && at_phnum != 0 && at_phent == size_of::<ProgramHeader>());
+    let phdrs = unsafe { slice::from_raw_parts(at_phdr, at_phnum) };
+
+    let at_entry = at_entry.expect_notls("`AT_ENTRY` must be present");
+    let at_base = at_base.unwrap_or_default();
+
+    let self_base = if at_base != 0 {
+        at_base
+    } else {
+        let ph = phdrs
+            .iter()
+            .find(|ph| ph.p_type(NativeEndian) == PT_DYNAMIC as u32)
+            .unwrap();
+        unsafe { dynamic.byte_sub(ph.p_vaddr(NativeEndian) as usize) as usize }
+    };
+
+    let is_manual = at_entry == ld_entry; // Whether the dynamic linker was invoked as a command.
+
+    let mut i = dynamic;
+    let mut rela_ptr = None;
+    let mut rela_len = None;
+    let mut relr_ptr = None;
+    let mut relr_len = None;
+    let mut rel_ptr = None;
+    let mut rel_len = None;
+    loop {
+        let entry = unsafe { &*i };
+        let val = entry.d_val(NativeEndian);
+        let ptr = val as *const u8;
+        match entry.d_tag(NativeEndian) as u32 {
+            elf::DT_NULL => break,
+            elf::DT_RELA => rela_ptr = Some(ptr.cast::<Rela>()),
+            elf::DT_RELASZ => rela_len = Some(val as usize / size_of::<Rela>()),
+            elf::DT_RELAENT => {
+                assert_eq!(val as usize, size_of::<Rela>(),);
+            }
+            elf::DT_REL => rel_ptr = Some(ptr.cast::<Rel>()),
+            elf::DT_RELSZ => rel_len = Some(val as usize / size_of::<Rel>()),
+            elf::DT_RELENT => {
+                assert_eq!(val as usize, size_of::<Rel>());
+            }
+            DT_RELR => relr_ptr = Some(ptr.cast::<Relr>()),
+            DT_RELRSZ => relr_len = Some(val as usize / size_of::<Relr>()),
+            DT_RELRENT => {
+                assert_eq!(val as usize, size_of::<Relr>());
+            }
+            _ => {}
+        }
+        i = unsafe { i.add(1) };
+    }
+
+    unsafe fn get_array<'a, T>(
+        ptr: Option<*const T>,
+        len: Option<usize>,
+        base_addr: usize,
+    ) -> &'a [T] {
+        if let Some(ptr) = ptr {
+            let len = len.expect_notls("dynamic entry was present without it's corresponding size");
+            unsafe { core::slice::from_raw_parts(ptr.byte_add(base_addr), len) }
+        } else {
+            &[]
+        }
+    }
+
+    fn do_relocs<'a, T>(relocs: &'a [T], self_base: usize)
+    where
+        Relocation: From<&'a T>,
+    {
+        for reloc in relocs {
+            let reloc: Relocation = reloc.into();
+            let ptr = (reloc.offset + self_base) as *mut usize;
+            match reloc.kind {
+                RelocationKind::RELATIVE => {
+                    unsafe { *ptr = self_base + reloc.addend.unwrap_or_default() };
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let rela = unsafe { get_array::<Rela>(rela_ptr, rela_len, self_base) };
+    let rel = unsafe { get_array::<Rel>(rel_ptr, rel_len, self_base) };
+    do_relocs(rela, self_base);
+    do_relocs(rel, self_base);
+
+    unsafe {
+        let relr = get_array(relr_ptr, relr_len, self_base);
+        apply_relr(self_base as *const u8, relr);
+    }
+
+    let mut base_addr = None;
+    if !is_manual {
+        // if we are not running in manual mode, then the main
+        // program is already loaded by the kernel and we want
+        // to use it. on redox, we treat it the same.
+        for ph in phdrs.iter() {
+            if ph.p_type(NativeEndian) == PT_PHDR {
+                assert!(base_addr.is_none(), "`PT_PHDR` cannot occur more than once");
+                base_addr = Some(unsafe {
+                    phdrs
+                        .as_ptr()
+                        .cast::<u8>()
+                        .sub(ph.p_vaddr(NativeEndian) as usize)
+                } as usize);
+            }
+        }
+    }
+
+    stage2(sp, self_base, is_manual, base_addr)
+}
+
+fn stage2(
+    sp: &'static mut Stack,
+    self_base: usize,
+    is_manual: bool,
+    base_addr: Option<usize>,
+) -> usize {
     // Setup TCB for ourselves.
-    let tcb_start = boot_timing::start();
     unsafe {
         #[cfg(target_os = "redox")]
         let thr_fd =
@@ -184,18 +336,28 @@ pub unsafe extern "C" fn relibc_ld_so_start(sp: &'static mut Stack, ld_entry: us
             )
             .expect_notls("no proc fd present");
 
+            let ns_fd = crate::platform::get_auxv_raw(
+                sp.auxv().cast(),
+                redox_rt::auxv_defs::AT_REDOX_NS_FD,
+            )
+            .filter(|&fd| fd != usize::MAX)
+            .map(|fd| {
+                redox_rt::proc::FdGuard::new(fd)
+                    .to_upper()
+                    .expect_notls("failed to move ns fd to upper table")
+            });
+
             redox_rt::initialize(
                 redox_rt::proc::FdGuard::new(proc_fd)
                     .to_upper()
                     .expect_notls("failed to move proc fd to upper table"),
+                ns_fd,
             );
             redox_rt::signal::setup_sighandler(&tcb.os_specific, true);
         }
     }
-    boot_timing::end(tcb_start, "init", "tcb_setup");
 
     // We get the arguments, the environment, and the auxilary vector
-    let args_start = boot_timing::start();
     let (argv, envs, auxv) = unsafe {
         let argv_start = sp.argv() as *mut usize;
         let (argv, argv_end) = get_argv(argv_start);
@@ -203,9 +365,7 @@ pub unsafe extern "C" fn relibc_ld_so_start(sp: &'static mut Stack, ld_entry: us
         let auxv = get_auxvs(envs_end.add(1));
         (argv, envs, auxv)
     };
-    boot_timing::end(args_start, "init", "parse_args");
 
-    let env_start = boot_timing::start();
     unsafe {
         crate::platform::OUR_ENVIRON.unsafe_set(
             envs.iter()
@@ -226,23 +386,15 @@ pub unsafe extern "C" fn relibc_ld_so_start(sp: &'static mut Stack, ld_entry: us
 
         crate::platform::environ = crate::platform::OUR_ENVIRON.unsafe_mut().as_mut_ptr();
     }
-    boot_timing::end(env_start, "init", "setup_environ");
-
-    let is_manual = if let Some(img_entry) = get_auxv(&auxv, AT_ENTRY) {
-        img_entry == ld_entry
-    } else {
-        true
-    };
 
     // we might need global lock for this kind of stuff
-    _r_debug.lock().r_ldbase = ld_entry;
+    _r_debug.lock().r_ldbase = self_base;
 
     // TODO: Fix memory leak, although minimal.
-    let platform_start = boot_timing::start();
+    #[cfg(target_os = "redox")]
     unsafe {
-        crate::platform::init(auxv.clone());
+        crate::platform::init_inner(auxv.clone());
     }
-    boot_timing::end(platform_start, "init", "platform_init");
 
     let name_or_path = if is_manual {
         // ld.so is run directly by user and not via execve() or similar systemcall
@@ -260,65 +412,36 @@ pub unsafe extern "C" fn relibc_ld_so_start(sp: &'static mut Stack, ld_entry: us
         argv[0].to_string()
     };
 
-    let resolve_start = boot_timing::start();
     let (path, _name) = match resolve_path_name(&name_or_path, &envs) {
         Some((p, n)) => (p, n),
         None => {
-            eprintln!("ld.so: failed to locate '{}'", name_or_path);
+            eprintln!("[ld.so]: failed to locate '{name_or_path}'");
             unistd::_exit(1);
         }
     };
-    boot_timing::end(resolve_start, "init", "resolve_path");
 
-    // if we are not running in manual mode, then the main
-    // program is already loaded by the kernel and we want
-    // to use it. on redox, we treat it the same.
-    let base_addr = {
-        let mut base = None;
-        if !is_manual && cfg!(not(target_os = "redox")) {
-            let phdr = get_auxv(&auxv, AT_PHDR).unwrap();
-            if phdr != 0 {
-                base = Some(phdr - SIZEOF_EHDR);
-            }
+    let config = Config::from_env(&envs);
+    if config.debug_flags.contains(DebugFlags::LOAD) {
+        println!("[ld.so]: relocated self at {self_base:#x}!");
+        if let Some(base_addr) = base_addr {
+            println!("[ld.so]: executable has been already loaded at {base_addr:#x?}");
         }
-        base
-    };
+    }
 
-    // Initialize symbol cache (skipped if /tmp doesn't exist yet)
-    let cache_start = boot_timing::start();
-    init_shared_cache();
-    boot_timing::end(cache_start, "cache", "init_shared_cache");
-
-    // Create linker and load program
-    let linker_start = boot_timing::start();
-    let mut linker = Linker::new(Config::from_env(&envs));
-    boot_timing::end(linker_start, "link", "linker_new");
-
-    let load_start = boot_timing::start();
+    let mut linker = Linker::new(config);
     let entry = match linker.load_program(&path, base_addr) {
-        Ok(entry) => {
-            boot_timing::end(load_start, "link", "load_program");
-            entry
-        }
+        Ok(entry) => entry,
         Err(err) => {
-            eprintln!("[ld.so]: failed to link '{}': {:?}", path, err);
+            eprintln!("[ld.so]: failed to link '{path}': {err:?}");
             eprintln!("[ld.so]: enable debug output with `LD_DEBUG=all` for more information");
             unistd::_exit(1);
         }
     };
-
-    let finalize_start = boot_timing::start();
     if let Some(tcb) = unsafe { Tcb::current() } {
         tcb.linker_ptr = Box::into_raw(Box::new(Mutex::new(linker)));
-        tcb.mspace = ALLOCATOR.get();
     }
-    boot_timing::end(finalize_start, "link", "finalize");
-
-    // Log completion
-    boot_timing::log("done", &path);
-
     if is_manual {
-        eprintln!("[ld.so]: entry '{}': {:#x}", path, entry);
+        eprintln!("[ld.so]: entry '{path}': {entry:#x}");
     }
     entry
 }

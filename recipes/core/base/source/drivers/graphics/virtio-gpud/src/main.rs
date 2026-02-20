@@ -580,6 +580,7 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         has_venus,
         config.num_capsets.get(),
     )?;
+    deamon.ready();
 
     // Signal that the daemon is ready (display scheme exists)
     deamon.ready();

@@ -1,11 +1,14 @@
 use std::collections::BTreeMap;
-use std::fs::read_dir;
+use std::env;
+use std::ffi::OsString;
 use std::io::Result;
 use std::path::Path;
-use std::process::Command;
-use std::{env, fs};
 
 use libredox::flag::{O_RDONLY, O_WRONLY};
+
+use crate::script::Command;
+
+mod script;
 
 fn switch_stdio(stdio: &str) -> Result<()> {
     let stdin = libredox::Fd::open(stdio, O_RDONLY, 0)?;
@@ -19,189 +22,160 @@ fn switch_stdio(stdio: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn run(file: &Path) -> Result<()> {
-    for line in fs::read_to_string(file)?.lines() {
-        run_command(line);
+struct InitConfig {
+    log_debug: bool,
+    skip_cmd: Vec<String>,
+    envs: BTreeMap<String, OsString>,
+}
+
+impl InitConfig {
+    fn new() -> Self {
+        let log_level = env::var("INIT_LOG_LEVEL").unwrap_or("INFO".into());
+        let log_debug = matches!(log_level.as_str(), "DEBUG" | "TRACE");
+        let skip_cmd: Vec<String> = match env::var("INIT_SKIP") {
+            Ok(v) if v.len() > 0 => v.split(',').map(|s| s.to_string()).collect(),
+            _ => Vec::new(),
+        };
+
+        Self {
+            log_debug,
+            skip_cmd,
+            envs: BTreeMap::from([("RUST_BACKTRACE".to_owned(), "1".into())]),
+        }
+    }
+}
+
+fn switch_root(prefix: &Path, etcdir: &Path, config: &mut InitConfig) {
+    config
+        .envs
+        .insert("PATH".to_owned(), prefix.join("bin").into_os_string());
+    config.envs.insert(
+        "LD_LIBRARY_PATH".to_owned(),
+        prefix.join("lib").into_os_string(),
+    );
+
+    let entries = match config::config_for_dirs(&[
+        prefix.join("lib").join("init.d"),
+        etcdir.join("init.d"),
+    ]) {
+        Ok(list) => list,
+        Err(err) => {
+            eprintln!("init: failed to switchroot: '{prefix:?}', '{etcdir:?}': {err}");
+            return;
+        }
+    };
+
+    for entry_path in entries {
+        if let Err(err) = run(&entry_path, config) {
+            eprintln!("init: failed to run '{}': {}", entry_path.display(), err);
+        }
+    }
+}
+
+fn run(file: &Path, config: &mut InitConfig) -> Result<()> {
+    let (script, errors) = script::Script::from_file(file)?;
+
+    for error in errors {
+        eprintln!("init: {}: {error}", file.display());
+    }
+
+    for cmd in script.0 {
+        if config.log_debug {
+            eprintln!("init: running: {cmd:?}");
+        }
+        run_command(cmd, config);
     }
 
     Ok(())
 }
 
-fn run_command(line_raw: &str) {
-    let line = line_raw.trim();
-    if line.is_empty() || line.starts_with('#') {
-        return;
-    }
-    debug_serial(&format!("init: running: {}", line));
-    let mut args = line.split(' ').map(|arg| {
-        if arg.starts_with('$') {
-            env::var(&arg[1..]).unwrap_or(String::new())
-        } else {
-            arg.to_string()
+fn run_command(cmd: Command, config: &mut InitConfig) {
+    match cmd {
+        Command::Nothing => {}
+        Command::Echo(text) => println!("{text}"),
+        Command::Export(var, value) => unsafe { env::set_var(var, value) },
+        Command::SwitchRoot(prefix, etcdir) => {
+            switch_root(&prefix, &etcdir, config);
         }
-    });
-
-    if let Some(cmd) = args.next() {
-        match cmd.as_str() {
-            "cd" => {
-                let Some(dir) = args.next() else {
-                    println!("init: failed to cd: no argument");
-                    return;
-                };
-                if let Err(err) = env::set_current_dir(&dir) {
-                    println!("init: failed to cd to '{}': {}", dir, err);
-                }
+        Command::Stdio(stdio) => {
+            if let Err(err) = switch_stdio(&stdio) {
+                eprintln!("init: failed to switch stdio to '{}': {}", stdio, err);
             }
-            "echo" => {
-                println!("{}", args.collect::<Vec<_>>().join(" "));
+        }
+        Command::Unset(envs) => {
+            for env in envs {
+                unsafe { env::remove_var(&env) };
             }
-            "export" => {
-                let Some(var) = args.next() else {
-                    println!("init: failed to export: no argument");
-                    return;
-                };
-                let mut value = String::new();
-                if let Some(arg) = args.next() {
-                    value.push_str(&arg);
-                }
-                for arg in args {
-                    value.push(' ');
-                    value.push_str(&arg);
-                }
-                unsafe { env::set_var(var, value) };
+        }
+        Command::Nowait(cmd) => {
+            if config.skip_cmd.contains(&cmd.cmd) {
+                eprintln!("init: skipping '{} {}'", cmd.cmd, cmd.args.join(" "));
+                return;
             }
-            "run" => {
-                let Some(new_file) = args.next() else {
-                    println!("init: failed to run: no argument");
-                    return;
-                };
-                if let Err(err) = run(&Path::new(&new_file)) {
-                    println!("init: failed to run '{}': {}", new_file, err);
-                }
+
+            let mut command = cmd.into_command(&config.envs);
+
+            match command.spawn() {
+                Ok(_child) => {}
+                Err(err) => eprintln!("init: failed to execute '{:?}': {}", command, err),
             }
-            "run.d" => {
-                // This must be a BTreeMap to iterate in sorted order.
-                let mut entries = BTreeMap::new();
-                let mut missing_arg = true;
+        }
+        Command::Notify(cmd) => {
+            if config.skip_cmd.contains(&cmd.cmd) {
+                eprintln!("init: skipping '{} {}'", cmd.cmd, cmd.args.join(" "));
+                return;
+            }
 
-                for new_dir in args {
-                    if !Path::new(&new_dir).exists() {
-                        // Skip non-existent dirs
-                        continue;
-                    }
-                    missing_arg = false;
+            let command = cmd.into_command(&config.envs);
 
-                    let list = match read_dir(&new_dir) {
-                        Ok(list) => list,
-                        Err(err) => {
-                            println!("init: failed to run.d: '{}': {}", new_dir, err);
-                            continue;
-                        }
-                    };
-                    for entry_res in list {
-                        match entry_res {
-                            Ok(entry) => {
-                                // This intentionally overwrites older entries with
-                                // the same filename to allow overriding entries in
-                                // one search dir with those in a later search dir.
-                                entries.insert(entry.file_name(), entry.path());
-                            }
-                            Err(err) => {
-                                println!("init: failed to run.d: '{}': {}", new_dir, err);
-                            }
-                        }
-                    }
-                }
+            daemon::Daemon::spawn(command);
+        }
+        Command::Scheme(scheme, cmd) => {
+            if config.skip_cmd.contains(&cmd.cmd) {
+                eprintln!("init: skipping '{} {}'", cmd.cmd, cmd.args.join(" "));
+                return;
+            }
 
-                if missing_arg {
-                    println!("init: failed to run.d: no argument or all dirs are non-existent");
+            let command = cmd.into_command(&config.envs);
+
+            daemon::SchemeDaemon::spawn(command, &scheme);
+        }
+        Command::Regular(cmd) => {
+            if config.skip_cmd.contains(&cmd.cmd) {
+                eprintln!("init: skipping '{} {}'", cmd.cmd, cmd.args.join(" "));
+                return;
+            }
+
+            let mut command = cmd.into_command(&config.envs);
+
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(err) => {
+                    eprintln!("init: failed to execute {:?}: {}", command, err);
                     return;
                 }
-
-                // This takes advantage of BTreeMap iterating in sorted order.
-                for (_, entry_path) in entries {
-                    if let Err(err) = run(&entry_path) {
-                        println!("init: failed to run '{}': {}", entry_path.display(), err);
+            };
+            match child.wait() {
+                Ok(exit_status) => {
+                    if !exit_status.success() {
+                        eprintln!("{command:?} failed with {exit_status}");
                     }
                 }
-            }
-            "stdio" => {
-                let Some(stdio) = args.next() else {
-                    println!("init: failed to set stdio: no argument");
-                    return;
-                };
-                if let Err(err) = switch_stdio(&stdio) {
-                    println!("init: failed to switch stdio to '{}': {}", stdio, err);
-                }
-            }
-            "unset" => {
-                for arg in args {
-                    unsafe { env::remove_var(&arg) };
-                }
-            }
-            "nowait" => {
-                let Some(cmd) = args.next() else {
-                    println!("init: failed to run nowait: no argument");
-                    return;
-                };
-                let mut command = Command::new(cmd);
-
-                for arg in args {
-                    command.arg(arg);
-                }
-
-                match command.spawn() {
-                    Ok(_child) => {}
-                    Err(err) => println!("init: failed to execute '{}': {}", line, err),
-                }
-            }
-            _ => {
-                let mut command = Command::new(cmd.clone());
-                for arg in args {
-                    command.arg(arg);
-                }
-
-                let mut child = match command.spawn() {
-                    Ok(child) => child,
-                    Err(err) => {
-                        println!("init: failed to execute '{}': {}", line, err);
-                        return;
-                    }
-                };
-                match child.wait() {
-                    Ok(exit_status) => {
-                        if !exit_status.success() {
-                            println!("{cmd} failed with {exit_status}");
-                        }
-                    }
-                    Err(err) => {
-                        println!("init: failed to wait for '{}': {}", line, err)
-                    }
+                Err(err) => {
+                    eprintln!("init: failed to wait for {:?}: {}", command, err)
                 }
             }
         }
     }
 }
 
-fn debug_serial(msg: &str) {
-    // Write directly to kernel debug scheme for early output
-    if let Ok(fd) = libredox::Fd::open("/scheme/debug", O_WRONLY, 0) {
-        let _ = fd.write(msg.as_bytes());
-        let _ = fd.write(b"\n");
-    }
-}
-
-pub fn main() {
-    debug_serial("=== init starting ===");
-
-    let config = "/scheme/initfs/etc/init.rc";
-    debug_serial("init: opening init.rc");
-
-    if let Err(err) = run(&Path::new(config)) {
-        let msg = format!("init: failed to run {}: {}", config, err);
-        debug_serial(&msg);
-        println!("{}", msg);
-    }
+fn main() {
+    let mut init_config = InitConfig::new();
+    switch_root(
+        Path::new("/scheme/initfs"),
+        Path::new("/scheme/initfs/etc"),
+        &mut init_config,
+    );
 
     libredox::call::setrens(0, 0).expect("init: failed to enter null namespace");
 

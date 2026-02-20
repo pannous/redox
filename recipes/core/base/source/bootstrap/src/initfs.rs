@@ -8,7 +8,7 @@ use alloc::string::String;
 use hashbrown::HashMap;
 use redox_initfs::{InitFs, Inode, InodeDir, InodeKind, InodeStruct, types::Timespec};
 
-use redox_path::canonicalize_to_standard;
+use redox_rt::proc::FdGuard;
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, scheme::SchemeSync};
 
 use redox_scheme::{SignalBehavior, Socket};
@@ -21,7 +21,28 @@ use syscall::error::*;
 use syscall::flag::*;
 use syscall::schemev2::NewFdFlags;
 
-struct Handle {
+use crate::KernelSchemeMap;
+
+enum Handle {
+    Node(Node),
+    SchemeRoot,
+}
+impl Handle {
+    fn as_node(&self) -> Result<&Node> {
+        match self {
+            Handle::Node(n) => Ok(n),
+            _ => Err(Error::new(EBADF)),
+        }
+    }
+    fn as_node_mut(&mut self) -> Result<&mut Node> {
+        match self {
+            Handle::Node(n) => Ok(n),
+            _ => Err(Error::new(EBADF)),
+        }
+    }
+}
+
+struct Node {
     inode: Inode,
     // TODO: Any better way to implement fpath? Or maybe work around it, e.g. by giving paths such
     // as `initfs:__inodes__/<inode>`?
@@ -91,7 +112,20 @@ fn inode_len(inode: InodeStruct<'static>) -> Result<usize> {
 }
 
 impl SchemeSync for InitFsScheme {
-    fn open(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
+    fn openat(
+        &mut self,
+        dirfd: usize,
+        path: &str,
+        flags: usize,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<OpenResult> {
+        if !matches!(
+            self.handles.get(&dirfd).ok_or(Error::new(EBADF))?,
+            Handle::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
+        }
         let mut components = path
             // trim leading and trailing slash
             .trim_matches('/')
@@ -150,18 +184,19 @@ impl SchemeSync for InitFsScheme {
             Self::get_inode(&self.fs, current_inode)?.kind(),
             InodeKind::Link(_)
         );
+        let o_stat_nofollow = flags & O_STAT != 0 && flags & O_NOFOLLOW != 0;
         let o_symlink = flags & O_SYMLINK != 0;
-        if is_link && !o_symlink {
+        if is_link && !o_stat_nofollow && !o_symlink {
             return Err(Error::new(EXDEV));
         }
 
         let id = self.next_id();
         let old = self.handles.insert(
             id,
-            Handle {
+            Handle::Node(Node {
                 inode: current_inode,
                 filename: path.into(),
-            },
+            }),
         );
         assert!(old.is_none());
 
@@ -183,7 +218,11 @@ impl SchemeSync for InitFsScheme {
             return Ok(0);
         };
 
-        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = self
+            .handles
+            .get_mut(&id)
+            .ok_or(Error::new(EBADF))?
+            .as_node_mut()?;
 
         match Self::get_inode(&self.fs, handle.inode)?.kind() {
             InodeKind::File(file) => {
@@ -198,12 +237,7 @@ impl SchemeSync for InitFsScheme {
             InodeKind::Dir(_) => Err(Error::new(EISDIR)),
             InodeKind::Link(link) => {
                 let link_data = link.data().map_err(|_| Error::new(EIO))?;
-                let path = core::str::from_utf8(link_data).map_err(|_| Error::new(ENOENT))?;
-                let cannonical =
-                    canonicalize_to_standard(Some("/"), path).ok_or_else(|| Error::new(ENOENT))?;
-                let data = cannonical.as_bytes();
-
-                let src_buf = &data[core::cmp::min(offset, data.len())..];
+                let src_buf = &link_data[core::cmp::min(offset, link_data.len())..];
 
                 let to_copy = core::cmp::min(src_buf.len(), buffer.len());
                 buffer[..to_copy].copy_from_slice(&src_buf[..to_copy]);
@@ -222,7 +256,7 @@ impl SchemeSync for InitFsScheme {
         let Ok(offset) = u32::try_from(opaque_offset) else {
             return Ok(buf);
         };
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?.as_node()?;
         let InodeKind::Dir(dir) = Self::get_inode(&self.fs, handle.inode)?.kind() else {
             return Err(Error::new(ENOTDIR));
         };
@@ -247,19 +281,23 @@ impl SchemeSync for InitFsScheme {
     }
 
     fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
-        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = self
+            .handles
+            .get_mut(&id)
+            .ok_or(Error::new(EBADF))?
+            .as_node_mut()?;
 
         Ok(inode_len(Self::get_inode(&self.fs, handle.inode)?)? as u64)
     }
 
     fn fcntl(&mut self, id: usize, _cmd: usize, _arg: usize, _ctx: &CallerCtx) -> Result<usize> {
-        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?.as_node()?;
 
         Ok(0)
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?.as_node()?;
 
         // TODO: Copy scheme part in kernel
         let scheme_path = b"/scheme/initfs";
@@ -274,20 +312,22 @@ impl SchemeSync for InitFsScheme {
     }
 
     fn fstat(&mut self, id: usize, stat: &mut Stat, _ctx: &CallerCtx) -> Result<()> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?.as_node()?;
 
         let Timespec { sec, nsec } = self.fs.image_creation_time();
 
         let inode = Self::get_inode(&self.fs, handle.inode)?;
 
+        stat.st_ino = inode.id();
         stat.st_mode = inode.mode()
             | match inode.kind() {
                 InodeKind::Dir(_) => MODE_DIR,
                 InodeKind::File(_) => MODE_FILE,
+                InodeKind::Link(_) => MODE_SYMLINK,
                 _ => 0,
             };
-        stat.st_uid = inode.uid();
-        stat.st_gid = inode.gid();
+        stat.st_uid = 0;
+        stat.st_gid = 0;
         stat.st_size = u64::try_from(inode_len(inode)?).unwrap_or(u64::MAX);
 
         stat.st_ctime = sec.get();
@@ -315,11 +355,13 @@ impl SchemeSync for InitFsScheme {
         _ctx: &CallerCtx,
     ) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        let data = match Self::get_inode(&self.fs, handle.inode)?.kind() {
+        let Handle::Node(node) = handle else {
+            return Err(Error::new(EBADF));
+        };
+        let data = match Self::get_inode(&self.fs, node.inode)?.kind() {
             InodeKind::File(file) => file.data().map_err(|_| Error::new(EIO))?,
             InodeKind::Dir(_) => return Err(Error::new(EISDIR)),
-            InodeKind::Link(_link) => return Err(Error::new(ELOOP)),
+            InodeKind::Link(_) => return Err(Error::new(ELOOP)),
             InodeKind::Unknown => return Err(Error::new(EIO)),
         };
 
@@ -339,13 +381,36 @@ impl SchemeSync for InitFsScheme {
     }
 }
 
-pub fn run(bytes: &'static [u8], sync_pipe: usize) -> ! {
+pub fn run(
+    bytes: &'static [u8],
+    sync_pipe: FdGuard,
+    kernel_schemes: &KernelSchemeMap,
+    scheme_creation_cap: usize,
+) -> ! {
+    log::info!("bootstrap: starting initfs scheme");
     let mut scheme = InitFsScheme::new(bytes);
 
-    let socket = Socket::create("initfs").expect("failed to open initfs scheme socket");
+    let socket = Socket::create_inner(scheme_creation_cap, false)
+        .expect("failed to open initfs scheme socket");
+    let _ = syscall::close(scheme_creation_cap);
 
-    let _ = syscall::write(sync_pipe, &[0]);
-    let _ = syscall::close(sync_pipe);
+    for fd in kernel_schemes.0.values() {
+        let _ = syscall::close(*fd);
+    }
+
+    // send open-capability to bootstrap
+    let new_id = scheme.next_id();
+    scheme.handles.insert(new_id, Handle::SchemeRoot);
+    let cap_fd = socket
+        .create_this_scheme_fd(0, new_id, 0, 0)
+        .expect("failed to issue initfs root fd");
+    let _ = syscall::call_rw(
+        sync_pipe.as_raw_fd(),
+        &mut cap_fd.to_ne_bytes(),
+        CallFlags::FD,
+        &[],
+    );
+    drop(sync_pipe);
 
     loop {
         let Some(req) = socket
@@ -380,17 +445,23 @@ pub fn run(bytes: &'static [u8], sync_pipe: usize) -> ! {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn redox_read_v1(fd: usize, ptr: *mut u8, len: usize) -> isize {
-    Error::mux(syscall::read(fd, core::slice::from_raw_parts_mut(ptr, len))) as isize
+    Error::mux(syscall::read(fd, unsafe {
+        core::slice::from_raw_parts_mut(ptr, len)
+    })) as isize
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn redox_write_v1(fd: usize, ptr: *const u8, len: usize) -> isize {
-    Error::mux(syscall::write(fd, core::slice::from_raw_parts(ptr, len))) as isize
+    Error::mux(syscall::write(fd, unsafe {
+        core::slice::from_raw_parts(ptr, len)
+    })) as isize
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn redox_open_v1(ptr: *const u8, len: usize, flags: usize) -> isize {
-    Error::mux(crate::compat::open(core::str::from_raw_parts(ptr, len), flags)) as isize
+pub unsafe fn redox_dup_v1(fd: usize, buf: *const u8, len: usize) -> isize {
+    Error::mux(syscall::dup(fd, unsafe {
+        core::slice::from_raw_parts(buf, len)
+    })) as isize
 }
 
 #[unsafe(no_mangle)]

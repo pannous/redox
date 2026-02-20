@@ -12,11 +12,12 @@
 //! events are available.
 
 use core::mem::size_of;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::transmute;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use inputd::{VtActivate, VtEvent, VtEventKind};
+use inputd::{ControlEvent, VtEvent, VtEventKind};
 
 use libredox::errno::ESTALE;
 use redox_scheme::scheme::SchemeSync;
@@ -24,7 +25,13 @@ use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior,
 
 use orbclient::{Event, EventOption};
 use syscall::schemev2::NewFdFlags;
-use syscall::{Error as SysError, EventFlags, EINVAL};
+use syscall::{Error as SysError, EventFlags, EACCES, EBADF, EINVAL};
+
+pub mod keymap;
+
+use keymap::KeymapKind;
+
+use crate::keymap::KeymapData;
 
 enum Handle {
     Producer,
@@ -46,6 +53,7 @@ enum Handle {
         is_earlyfb: bool,
     },
     Control,
+    SchemeRoot,
 }
 
 struct InputScheme {
@@ -58,6 +66,9 @@ struct InputScheme {
     vts: BTreeSet<usize>,
     super_key: bool,
     active_vt: Option<usize>,
+    active_keymap: KeymapData,
+    lshift: bool,
+    rshift: bool,
 
     has_new_events: bool,
 }
@@ -74,7 +85,10 @@ impl InputScheme {
             vts: BTreeSet::new(),
             super_key: false,
             active_vt: None,
-
+            // TODO: configurable init?
+            active_keymap: KeymapData::new(KeymapKind::US),
+            lshift: false,
+            rshift: false,
             has_new_events: false,
         }
     }
@@ -119,10 +133,44 @@ impl InputScheme {
 
         self.active_vt = Some(new_active);
     }
+
+    fn switch_keymap(&mut self, new_active: usize) {
+        if new_active == self.active_keymap.get_kind() as usize {
+            return;
+        }
+
+        log::debug!(
+            "switching from keymap #{} to keymap #{}",
+            self.active_keymap.get_kind(),
+            KeymapKind::from(new_active),
+        );
+
+        self.active_keymap = KeymapData::new(new_active.into());
+    }
 }
 
 impl SchemeSync for InputScheme {
-    fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> syscall::Result<OpenResult> {
+    fn scheme_root(&mut self) -> syscall::Result<usize> {
+        let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
+        self.handles.insert(fd, Handle::SchemeRoot);
+        Ok(fd)
+    }
+
+    fn openat(
+        &mut self,
+        dirfd: usize,
+        path: &str,
+        _flags: usize,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> syscall::Result<OpenResult> {
+        if !matches!(
+            self.handles.get(&dirfd).ok_or(SysError::new(EINVAL))?,
+            Handle::SchemeRoot
+        ) {
+            return Err(SysError::new(EACCES));
+        }
+
         let mut path_parts = path.split('/');
 
         let command = path_parts.next().ok_or(SysError::new(EINVAL))?;
@@ -137,7 +185,6 @@ impl SchemeSync for InputScheme {
                 if self.active_vt.is_none() {
                     self.switch_vt(vt);
                 }
-
                 Handle::Consumer {
                     events: EventFlags::empty(),
                     pending: Vec::new(),
@@ -289,6 +336,7 @@ impl SchemeSync for InputScheme {
                 log::error!("control tried to read");
                 return Err(SysError::new(EINVAL));
             }
+            Handle::SchemeRoot => return Err(SysError::new(EBADF)),
         }
     }
 
@@ -306,15 +354,21 @@ impl SchemeSync for InputScheme {
 
         match handle {
             Handle::Control => {
-                if buf.len() != size_of::<VtActivate>() {
+                if buf.len() != size_of::<ControlEvent>() {
                     log::error!("control tried to write incorrectly sized command");
                     return Err(SysError::new(EINVAL));
                 }
 
                 // SAFETY: We have verified the size of the buffer above.
-                let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
+                let cmd = unsafe { &*buf.as_ptr().cast::<ControlEvent>() };
 
-                self.switch_vt(cmd.vt);
+                match cmd.kind {
+                    1 => self.switch_vt(cmd.data),
+                    2 => self.switch_keymap(cmd.data),
+                    k => {
+                        log::warn!("unknown control {}", k);
+                    }
+                }
 
                 return Ok(buf.len());
             }
@@ -328,44 +382,49 @@ impl SchemeSync for InputScheme {
                 return Err(SysError::new(EINVAL));
             }
             Handle::Producer => {}
+            Handle::SchemeRoot => return Err(SysError::new(EBADF)),
         }
 
         if buf.len() == 1 && buf[0] > 0xf4 {
             return Ok(1);
         }
 
-        let events = unsafe {
+        let mut events = Cow::from(unsafe {
             core::slice::from_raw_parts(
                 buf.as_ptr() as *const Event,
                 buf.len() / size_of::<Event>(),
             )
-        };
+        });
 
-        for event in events.iter() {
+        for i in 0..events.len() {
             let mut new_active_opt = None;
-            match event.to_option() {
-                EventOption::Key(key_event) => match key_event.scancode {
-                    f @ 0x3B..=0x44 if self.super_key => {
-                        // F1 through F10
+            match events[i].to_option() {
+                EventOption::Key(mut key_event) => match key_event.scancode {
+                    f @ orbclient::K_F1..=orbclient::K_F10 if self.super_key => {
                         new_active_opt = Some((f - 0x3A) as usize);
                     }
-
-                    0x57 if self.super_key => {
-                        // F11
+                    orbclient::K_F11 if self.super_key => {
                         new_active_opt = Some(11);
                     }
-
-                    0x58 if self.super_key => {
-                        // F12
+                    orbclient::K_F12 if self.super_key => {
                         new_active_opt = Some(12);
                     }
-
-                    0x5B => {
-                        // Super
+                    orbclient::K_SUPER => {
                         self.super_key = key_event.pressed;
                     }
+                    orbclient::K_LEFT_SHIFT => {
+                        self.lshift = key_event.pressed;
+                    }
+                    orbclient::K_RIGHT_SHIFT => {
+                        self.rshift = key_event.pressed;
+                    }
 
-                    _ => (),
+                    key => {
+                        let shift = self.lshift | self.rshift;
+                        let ev = self.active_keymap.get_char(key, shift);
+                        key_event.character = ev;
+                        events.to_mut()[i] = key_event.to_event();
+                    }
                 },
 
                 EventOption::Resize(resize_event) => {
@@ -405,6 +464,13 @@ impl SchemeSync for InputScheme {
 
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
         assert!(matches!(handle, Handle::Producer));
+
+        let buf = unsafe {
+            core::slice::from_raw_parts(
+                (events.as_ptr()) as *const u8,
+                events.len() * size_of::<Event>(),
+            )
+        };
 
         if let Some(active_vt) = self.active_vt {
             for handle in self.handles.values_mut() {
@@ -462,11 +528,10 @@ impl SchemeSync for InputScheme {
                 log::error!("producer or control tried to use an event queue");
                 Err(SysError::new(EINVAL))
             }
+            Handle::SchemeRoot => Err(SysError::new(EBADF)),
         }
     }
-}
 
-impl InputScheme {
     fn on_close(&mut self, id: usize) {
         let handle = self.handles.remove(&id).unwrap();
 
@@ -486,12 +551,12 @@ impl InputScheme {
     }
 }
 
-fn deamon(deamon: daemon::Daemon) -> anyhow::Result<()> {
+fn deamon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
     // Create the ":input" scheme.
-    let socket_file = Socket::create("input")?;
+    let socket_file = Socket::create()?;
     let mut scheme = InputScheme::new();
 
-    deamon.ready();
+    let _ = daemon.ready_sync_scheme(&socket_file, &mut scheme);
 
     loop {
         scheme.has_new_events = false;
@@ -566,32 +631,57 @@ fn deamon(deamon: daemon::Daemon) -> anyhow::Result<()> {
     }
 }
 
-fn daemon_runner(daemon: daemon::Daemon) -> ! {
+fn daemon_runner(daemon: daemon::SchemeDaemon) -> ! {
     deamon(daemon).unwrap();
     unreachable!();
 }
 
-fn main() {
-    common::setup_logging(
-        "input",
-        "inputd",
-        "inputd",
-        common::output_level(),
-        common::file_level(),
-    );
+const HELP: &str = r#"
+inputd [-K keymap|-A vt|--keymaps]
+   -A vt       : set current virtual display
+   -K keymap   : set keyboard mapping
+   --keymaps   : list available keyboard mappings
+"#;
 
+fn main() {
     let mut args = std::env::args().skip(1);
 
     if let Some(val) = args.next() {
+        // TODO: Get current VT or keymap
         match val.as_ref() {
             // Activates a VT.
             "-A" => {
                 let vt = args.next().unwrap().parse::<usize>().unwrap();
                 let mut handle =
-                    inputd::ControlHandle::new().expect("inputd: failed to open display handle");
+                    inputd::ControlHandle::new().expect("inputd: failed to open control handle");
                 handle
                     .activate_vt(vt)
                     .expect("inputd: failed to activate VT");
+            }
+            // Activates a keymap.
+            "-K" => {
+                let vt = args
+                    .next()
+                    .unwrap()
+                    .to_ascii_lowercase()
+                    .parse::<KeymapKind>()
+                    .expect("inputd: unrecognized keymap code (see: inputd --keymaps)");
+
+                let mut handle =
+                    inputd::ControlHandle::new().expect("inputd: failed to open control handle");
+                handle
+                    .activate_keymap(vt as usize)
+                    .expect("inputd: failed to activate keymap");
+            }
+            // List available keymaps
+            "--keymaps" => {
+                // TODO: configurable KeymapKind using files
+                for key in vec!["dvorak", "us", "gb", "azerty", "bepo", "it"] {
+                    println!("{}", key);
+                }
+            }
+            "--help" => {
+                println!("{}", HELP);
             }
 
             // List available keymaps (stub - keymaps are handled by ps2d)
@@ -608,6 +698,14 @@ fn main() {
             _ => panic!("inputd: invalid argument: {}", val),
         }
     } else {
-        daemon::Daemon::new(daemon_runner);
+        common::setup_logging(
+            "input",
+            "inputd",
+            "inputd",
+            common::output_level(),
+            common::file_level(),
+        );
+
+        daemon::SchemeDaemon::new(daemon_runner);
     }
 }

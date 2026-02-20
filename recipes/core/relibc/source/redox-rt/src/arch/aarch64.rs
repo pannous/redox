@@ -94,7 +94,6 @@ unsafe extern "C" fn fork_impl(args: &ForkArgs, initial_rsp: *mut usize) -> usiz
 unsafe extern "C" fn child_hook(scratchpad: &ForkScratchpad) {
     //let _ = syscall::write(1, alloc::format!("CUR{cur_filetable_fd}PROC{new_proc_fd}THR{new_thr_fd}\n").as_bytes());
     let _ = syscall::close(scratchpad.cur_filetable_fd);
-    // SAFETY: This is called from the child process after fork, with valid scratchpad data
     unsafe {
         crate::child_hook_common(crate::ChildHookCommonArgs {
             new_thr_fd: FdGuard::new(scratchpad.new_thr_fd),
@@ -103,8 +102,8 @@ unsafe extern "C" fn child_hook(scratchpad: &ForkScratchpad) {
             } else {
                 Some(FdGuard::new(scratchpad.new_proc_fd))
             },
-        });
-    }
+        })
+    };
 }
 
 asmfunction!(__relibc_internal_fork_wrapper (usize) -> usize: ["
@@ -452,31 +451,35 @@ pub fn current_sp() -> usize {
 }
 
 pub unsafe fn manually_enter_trampoline() {
-    // SAFETY: We are in an unsafe function and require valid TCB
     let ctl = unsafe { &Tcb::current().unwrap().os_specific.control };
 
     ctl.saved_archdep_reg.set(0);
     let ip_location = &ctl.saved_ip as *const _ as usize;
 
-    // SAFETY: Inline assembly to enter signal trampoline
     unsafe {
         core::arch::asm!("
-            bl 2f
-            b 3f
-        2:
-            str lr, [x0]
-            b __relibc_internal_sigentry
-        3:
-        ", inout("x0") ip_location => _, out("lr") _);
+                bl 2f
+                b 3f
+            2:
+                str lr, [x0]
+                b __relibc_internal_sigentry
+            3:
+            ",
+            inout("x0") ip_location => _, out("lr") _);
     }
 }
 
-pub unsafe fn arch_pre(_stack: &mut SigStack, _os: &mut SigArea) -> PosixStackt {
+pub unsafe fn arch_pre(stack: &mut SigStack, os: &mut SigArea) -> PosixStackt {
     PosixStackt {
         sp: core::ptr::null_mut(), // TODO
         size: 0,                   // TODO
         flags: 0,                  // TODO
     }
+}
+pub fn arch_ret_to_sig(stack: &mut SigStack, control: &Sigcontrol) {
+    let orig_pc = core::mem::replace(&mut stack.regs.pc, __relibc_internal_sigentry as usize);
+    control.saved_ip.set(orig_pc);
+    control.saved_archdep_reg.set(stack.regs.x0);
 }
 pub(crate) static PROC_FD: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::MAX);
 static PROC_CALL: [usize; 1] = [ProcCall::Sigdeq as usize];

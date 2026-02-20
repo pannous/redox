@@ -9,17 +9,16 @@ use redox_scheme::{
 use std::env;
 use syscall::{EOPNOTSUPP, EVENT_READ};
 
-use crate::scheme::{FbconScheme, VtIndex};
+use crate::scheme::{FbconScheme, Handle, VtIndex};
 
 mod display;
 mod scheme;
 mod text;
 
 fn main() {
-    daemon::Daemon::new(daemon);
+    daemon::SchemeDaemon::new(daemon);
 }
-
-fn daemon(daemon: daemon::Daemon) -> ! {
+fn daemon(daemon: daemon::SchemeDaemon) -> ! {
     let vt_ids = env::args()
         .skip(1)
         .map(|arg| arg.parse().expect("invalid vt number"))
@@ -36,7 +35,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
 
     // FIXME listen for resize events from inputd and handle them
 
-    let mut socket = Socket::nonblock("fbcon").expect("fbcond: failed to create fbcon scheme");
+    let mut socket = Socket::nonblock().expect("fbcond: failed to create fbcon scheme");
     event_queue
         .subscribe(
             socket.inner().raw(),
@@ -47,11 +46,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
 
     let mut scheme = FbconScheme::new(&vt_ids, &mut event_queue);
 
+    let _ = daemon.ready_sync_scheme(&socket, &mut scheme);
+
     // This is not possible for now as fbcond needs to open new displays at runtime for graphics
     // driver handoff. In the future inputd may directly pass a handle to the display instead.
     // libredox::call::setrens(0, 0).expect("fbcond: failed to enter null namespace");
-
-    daemon.ready();
 
     let mut blocked = Vec::new();
 
@@ -205,7 +204,8 @@ fn handle_event(
 
     for (handle_id, handle) in scheme.handles.iter_mut() {
         let handle = match handle {
-            handle => handle,
+            Handle::SchemeRoot => continue,
+            Handle::Vt(handle) => handle,
         };
 
         if !handle.events.contains(EVENT_READ) {

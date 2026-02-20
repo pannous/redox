@@ -22,7 +22,7 @@ use crate::{
 
 use crate::context::context::FdTbl;
 
-use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
+use super::{CallerCtx, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
@@ -34,12 +34,13 @@ use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
     slice, str,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
+use syscall::data::GlobalSchemes;
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -393,20 +394,7 @@ impl ProcScheme {
 }
 
 impl KernelScheme for ProcScheme {
-    fn kopen(
-        &self,
-        path: &str,
-        _flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if path != "authority" {
-            return Err(Error::new(ENOENT));
-        }
-        static LOCK: AtomicBool = AtomicBool::new(false);
-        if LOCK.swap(true, Ordering::Relaxed) {
-            return Err(Error::new(EEXIST));
-        }
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(
             id,
@@ -416,7 +404,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::Authority,
             },
         );
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(id)
     }
 
     fn fevent(
@@ -843,10 +831,7 @@ fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(Kerne
     let desc = file_descriptor.description.read();
     let (scheme_id, number) = (desc.scheme, desc.number);
 
-    let scheme = scheme::schemes(token.token())
-        .get(scheme_id)
-        .ok_or(Error::new(ENODEV))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     Ok((scheme, number))
 }
@@ -1196,7 +1181,6 @@ impl ContextHandle {
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
                             //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
-
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {
@@ -1246,10 +1230,51 @@ impl ContextHandle {
                 guard.name.push_str(debug_name);
 
                 guard.pid = info.pid as usize;
-                guard.ens = (info.ens as usize).into();
                 guard.euid = info.euid;
                 guard.egid = info.egid;
                 Ok(size_of::<ProcSchemeAttrs>())
+            }
+            ContextHandle::OpenViaDup => {
+                let mut args = buf.usizes();
+
+                let user_data = args.next().ok_or(Error::new(EINVAL))??;
+
+                let context_verb =
+                    ContextVerb::try_from_raw(user_data).ok_or(Error::new(EINVAL))?;
+
+                match context_verb {
+                    ContextVerb::ForceKill => {
+                        if context::is_current(&context) {
+                            //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+                            // The following functionality simplifies the cleanup step when detached threads
+                            // terminate.
+                            if let Some(post_unmap) = args.next() {
+                                let base = post_unmap?;
+                                let size = args.next().ok_or(Error::new(EINVAL))??;
+
+                                if size > 0 {
+                                    let addrsp =
+                                        Arc::clone(context.read(token.token()).addr_space()?);
+                                    let res = addrsp.munmap(
+                                        PageSpan::validate_nonempty(
+                                            VirtualAddress::new(base),
+                                            size,
+                                        )
+                                        .ok_or(Error::new(EINVAL))?,
+                                        false,
+                                    )?;
+                                    for r in res {
+                                        let _ = r.unmap(token);
+                                    }
+                                }
+                            }
+                            crate::syscall::exit_this_context(None, token);
+                        } else {
+                            Err(Error::new(EPERM))
+                        }
+                    }
+                    _ => Err(Error::new(EINVAL)),
+                }
             }
             _ => Err(Error::new(EBADF)),
         }
@@ -1396,15 +1421,14 @@ impl ContextHandle {
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
                 let c = &context.read(token.token());
-                let (euid, egid, ens, pid, name) =
-                    (c.euid, c.egid, c.ens.get() as u32, c.pid as u32, c.name);
+                let (euid, egid, pid, name) = (c.euid, c.egid, c.pid as u32, c.name);
                 let min = name.len().min(debug_name.len());
                 debug_name[..min].copy_from_slice(&name.as_bytes()[..min]);
                 buf.copy_common_bytes_from_slice(&ProcSchemeAttrs {
                     pid,
                     euid,
                     egid,
-                    ens,
+                    ens: 0,
                     debug_name,
                 })
             }

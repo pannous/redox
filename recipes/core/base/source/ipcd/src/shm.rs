@@ -9,47 +9,15 @@ use syscall::{
     PAGE_SIZE, PROT_READ, PROT_WRITE,
 };
 
-/// Access mode flags for shared memory handles
-#[derive(Clone, Copy)]
-struct AccessFlags {
-    read: bool,
-    write: bool,
-}
-
-impl AccessFlags {
-    fn from_open_flags(flags: usize) -> Self {
-        // O_RDONLY = 0, O_WRONLY = 1, O_RDWR = 2
-        let accmode = flags & syscall::O_ACCMODE;
-        Self {
-            read: accmode == syscall::O_RDONLY || accmode == syscall::O_RDWR,
-            write: accmode == syscall::O_WRONLY || accmode == syscall::O_RDWR,
-        }
-    }
-}
-
 enum Handle {
-    Shm { path: Rc<str>, access: AccessFlags },
+    Shm(Rc<str>),
     SchemeRoot,
 }
 impl Handle {
     fn as_shm(&self) -> Option<&Rc<str>> {
         match self {
-            Self::Shm { path, .. } => Some(path),
+            Self::Shm(path) => Some(path),
             Self::SchemeRoot => None,
-        }
-    }
-
-    fn can_read(&self) -> bool {
-        match self {
-            Self::Shm { access, .. } => access.read,
-            Self::SchemeRoot => false,
-        }
-    }
-
-    fn can_write(&self) -> bool {
-        match self {
-            Self::Shm { access, .. } => access.write,
-            Self::SchemeRoot => false,
         }
     }
 }
@@ -79,18 +47,27 @@ impl ShmScheme {
 }
 
 impl SchemeSync for ShmScheme {
-    fn open(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
-        if path.is_empty() {
-            let id = self.next_id;
-            self.next_id += 1;
+    fn scheme_root(&mut self) -> Result<usize> {
+        let id = self.next_id;
+        self.next_id += 1;
 
-            self.handles.insert(id, Handle::SchemeRoot);
-
-            return Ok(OpenResult::ThisScheme {
-                number: id,
-                flags: NewFdFlags::empty(),
-            });
+        self.handles.insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+    //FIXME: Handle O_RDONLY/O_WRONLY/O_RDWR
+    fn openat(
+        &mut self,
+        dirfd: usize,
+        path: &str,
+        flags: usize,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<OpenResult> {
+        let handle = self.handles.get(&dirfd).ok_or(Error::new(EBADF))?;
+        if !matches!(handle, Handle::SchemeRoot) {
+            return Err(Error::new(EACCES));
         }
+
         let path = Rc::from(path);
         let entry = match self.maps.entry(Rc::clone(&path)) {
             Entry::Occupied(e) => {
@@ -107,9 +84,7 @@ impl SchemeSync for ShmScheme {
             }
         };
         entry.refs += 1;
-
-        let access = AccessFlags::from_open_flags(flags);
-        self.handles.insert(self.next_id, Handle::Shm { path, access });
+        self.handles.insert(self.next_id, Handle::Shm(path));
 
         let id = self.next_id;
         self.next_id += 1;
@@ -139,7 +114,7 @@ impl SchemeSync for ShmScheme {
         Ok(PREFIX.len() + len)
     }
     fn on_close(&mut self, id: usize) {
-        let Handle::Shm { path, .. } = self.handles.remove(&id).unwrap() else {
+        let Handle::Shm(path) = self.handles.remove(&id).unwrap() else {
             return;
         };
         let mut entry = match self.maps.entry(path) {
@@ -226,20 +201,14 @@ impl SchemeSync for ShmScheme {
         id: usize,
         offset: u64,
         size: usize,
-        flags: MapFlags,
+        _flags: MapFlags,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        let path = handle.as_shm().ok_or(Error::new(EBADF))?;
-
-        // Check access permissions against mmap protection flags
-        if flags.contains(MapFlags::PROT_READ) && !handle.can_read() {
-            return Err(Error::new(EACCES));
-        }
-        if flags.contains(MapFlags::PROT_WRITE) && !handle.can_write() {
-            return Err(Error::new(EACCES));
-        }
-
+        let path = self
+            .handles
+            .get(&id)
+            .and_then(Handle::as_shm)
+            .ok_or(Error::new(EBADF))?;
         let total_size = offset as usize + size;
         match self
             .maps
@@ -248,10 +217,12 @@ impl SchemeSync for ShmScheme {
             .buffer
         {
             Some(ref mut buf) => {
-                if total_size > buf.len() {
+                // TODO: This will not work well if there's multiple segments!
+                let segment = buf.segments.first().ok_or_else(|| Error::new(ERANGE))?;
+                if total_size > segment.size {
                     return Err(Error::new(ERANGE));
                 }
-                Ok(buf.as_ptr() + offset as usize)
+                Ok(segment.base + offset as usize)
             }
             //TODO: this should be only handled by ftruncate
             ref mut buf @ None => {
@@ -268,11 +239,11 @@ impl SchemeSync for ShmScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        if !handle.can_read() {
-            return Err(Error::new(EBADF));
-        }
-        let path = handle.as_shm().ok_or(Error::new(EBADF))?;
+        let path = self
+            .handles
+            .get(&id)
+            .and_then(Handle::as_shm)
+            .ok_or(Error::new(EBADF))?;
         match self
             .maps
             .get_mut(path)
@@ -291,11 +262,11 @@ impl SchemeSync for ShmScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        if !handle.can_write() {
-            return Err(Error::new(EBADF));
-        }
-        let path = handle.as_shm().ok_or(Error::new(EBADF))?;
+        let path = self
+            .handles
+            .get(&id)
+            .and_then(Handle::as_shm)
+            .ok_or(Error::new(EBADF))?;
         match self
             .maps
             .get_mut(path)
@@ -303,84 +274,151 @@ impl SchemeSync for ShmScheme {
             .buffer
         {
             Some(ref mut map) => map.write(offset as usize, buf),
-            None => Err(Error::new(ERANGE)),
+            //TODO: this should be only handled by ftruncate, but relaxed because it can grow
+            ref mut newmap @ None => {
+                let mut map = MmapGuard::alloc(PAGE_SIZE)?;
+                let size = map.write(offset as usize, buf)?;
+                *newmap = Some(map);
+                Ok(size)
+            }
         }
     }
 }
 
-pub struct MmapGuard {
+pub struct MmapSegment {
     base: usize,
     size: usize,
-    // user specified, non-aligned size
+}
+
+pub struct MmapGuard {
+    segments: Vec<MmapSegment>,
     len: usize,
 }
+
 impl MmapGuard {
     pub fn alloc(len: usize) -> Result<Self> {
-        let page_count = len.div_ceil(PAGE_SIZE);
-        let size = page_count * PAGE_SIZE;
+        let mut guard = Self {
+            segments: Vec::new(),
+            len: 0,
+        };
+        if len > 0 {
+            guard.grow_to(len)?;
+        }
+        Ok(guard)
+    }
+
+    fn grow_to(&mut self, new_len: usize) -> Result<()> {
+        if new_len <= self.total_capacity() {
+            self.len = new_len;
+            return Ok(());
+        }
+
+        let needed = new_len - self.total_capacity();
+        let page_count = needed.div_ceil(PAGE_SIZE);
+        let alloc_size = page_count * PAGE_SIZE;
+
         let base = unsafe {
             syscall::fmap(
                 !0,
                 &Map {
                     offset: 0,
-                    size,
+                    size: alloc_size,
                     flags: MAP_PRIVATE | PROT_READ | PROT_WRITE,
                     address: 0,
                 },
             )
         }?;
 
-        Ok(Self { base, size, len })
+        self.segments.push(MmapSegment {
+            base,
+            size: alloc_size,
+        });
+        self.len = new_len;
+        Ok(())
     }
+
+    fn total_capacity(&self) -> usize {
+        self.segments.iter().map(|s| s.size).sum()
+    }
+
     pub fn len(&self) -> usize {
-        self.size
+        self.len
     }
+
+    /// TODO: Flatten multiple segment into one
     pub fn as_ptr(&self) -> usize {
-        self.base
+        self.segments.first().map(|s| s.base).unwrap_or(0)
     }
-    pub fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
-        let read_len = buf.len();
-        let end = offset
-            .checked_add(read_len)
-            .ok_or_else(|| Error::new(ERANGE))
-            .map(|f| cmp::min(f, self.len))?;
 
-        if offset > self.len {
-            return Err(Error::new(EINVAL));
+    pub fn read(&self, mut offset: usize, buf: &mut [u8]) -> Result<usize> {
+        if offset >= self.len {
+            return Ok(0);
         }
 
-        unsafe {
-            let src_ptr = (self.base as *const u8).add(offset);
-            let dst_ptr = buf.as_mut_ptr();
-            core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, end - offset);
+        let mut bytes_read = 0;
+        let mut buf_idx = 0;
+        let to_read = cmp::min(buf.len(), self.len - offset);
+
+        for seg in &self.segments {
+            if offset < seg.size {
+                let chunk_size = cmp::min(seg.size - offset, to_read - bytes_read);
+                unsafe {
+                    let src = (seg.base as *const u8).add(offset);
+                    let dst = buf.as_mut_ptr().add(buf_idx);
+                    core::ptr::copy_nonoverlapping(src, dst, chunk_size);
+                }
+                bytes_read += chunk_size;
+                buf_idx += chunk_size;
+                offset = 0;
+            } else {
+                offset -= seg.size;
+            }
+            if bytes_read >= to_read {
+                break;
+            }
         }
 
-        Ok(end - offset)
+        Ok(bytes_read)
     }
+
     pub fn write(&mut self, offset: usize, buf: &[u8]) -> Result<usize> {
-        let write_len = buf.len();
-        let end = offset
-            .checked_add(write_len)
-            .ok_or_else(|| Error::new(ERANGE))?;
+        let end = offset.checked_add(buf.len()).ok_or(Error::new(ERANGE))?;
 
-        if end > self.len {
-            return Err(Error::new(EINVAL));
+        if end > self.total_capacity() {
+            self.grow_to(end)?;
+        } else if end > self.len {
+            self.len = end;
         }
 
-        unsafe {
-            let src_ptr = buf.as_ptr();
-            let dst_ptr = (self.base as *mut u8).add(offset);
-            core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, write_len);
+        let mut bytes_written = 0;
+        let mut current_offset = offset;
+
+        for seg in &self.segments {
+            if current_offset < seg.size {
+                let chunk_size = cmp::min(seg.size - current_offset, buf.len() - bytes_written);
+                unsafe {
+                    let src = buf.as_ptr().add(bytes_written);
+                    let dst = (seg.base as *mut u8).add(current_offset);
+                    core::ptr::copy_nonoverlapping(src, dst, chunk_size);
+                }
+                bytes_written += chunk_size;
+                current_offset = 0;
+            } else {
+                current_offset -= seg.size;
+            }
+            if bytes_written >= buf.len() {
+                break;
+            }
         }
 
-        Ok(write_len)
+        Ok(bytes_written)
     }
 }
+
 impl Drop for MmapGuard {
     fn drop(&mut self) {
-        if self.size == 0 {
-            return;
+        for seg in &self.segments {
+            let _ = unsafe { syscall::funmap(seg.base, seg.size) };
         }
-        let _ = unsafe { syscall::funmap(self.base, self.size) };
     }
 }

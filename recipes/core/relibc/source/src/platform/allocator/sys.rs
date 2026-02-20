@@ -1,9 +1,9 @@
 use crate::{
     header::{
-        sys_mman::{self, MAP_FAILED, MREMAP_MAYMOVE},
-        unistd::pthread_atfork,
+        pthread::pthread_atfork,
+        sys_mman::{self, MREMAP_MAYMOVE},
     },
-    platform::{Pal, Sys, types::*},
+    platform::{Pal, Sys},
     sync::Mutex,
 };
 use core::ptr;
@@ -115,13 +115,15 @@ pub unsafe fn enable_alloc_after_fork() {
     // it will acquire the lock before any other thread,
     // protecting it from deadlock,
     // due to the child being created with only the calling thread.
-    if !FORK_PROTECTED {
-        pthread_atfork(
-            Some(_acquire_global_lock),
-            Some(_release_global_lock),
-            Some(_release_global_lock),
-        );
-        FORK_PROTECTED = true;
+    unsafe {
+        if !FORK_PROTECTED {
+            pthread_atfork(
+                Some(_acquire_global_lock),
+                Some(_release_global_lock),
+                Some(_release_global_lock),
+            );
+            FORK_PROTECTED = true;
+        }
     }
     release_global_lock();
 }

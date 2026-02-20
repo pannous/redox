@@ -2,8 +2,6 @@
 //!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/dirent.h.html>.
 
-#![deny(unsafe_op_in_unsafe_fn)]
-
 use alloc::{boxed::Box, vec::Vec};
 use core::{mem, ptr, slice};
 
@@ -13,9 +11,8 @@ use crate::{
     error::{Errno, ResultExt, ResultExtPtrMut},
     fs::File,
     header::{
-        errno::{self, EINVAL, EIO, ENOMEM, ENOTDIR},
+        errno::{EINVAL, EIO, ENOMEM, ENOTDIR},
         fcntl, stdlib, string, sys_stat,
-        unistd::{SEEK_CUR, SEEK_SET},
     },
     out::Out,
     platform::{
@@ -58,9 +55,7 @@ impl DIR {
     }
     pub fn from_fd(fd: c_int) -> Result<Box<Self>, Errno> {
         let mut stat = sys_stat::stat::default();
-        unsafe {
-            Sys::fstat(fd, Out::from_mut(&mut stat))?;
-        }
+        Sys::fstat(fd, Out::from_mut(&mut stat))?;
         if (stat.st_mode & sys_stat::S_IFMT) != sys_stat::S_IFDIR {
             return Err(Errno(ENOTDIR));
         }

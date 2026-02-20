@@ -5,12 +5,12 @@ edition = "2021"
 authors = ["Anhad Singh <andypython@protonmail.com>"]
 
 [dependencies]
-anyhow = "1.0.71"
-log = "0.4.19"
-redox_syscall = { version = "0.6", features = ["std"] }
-orbclient = "0.3.27"
-libredox = "0.1.11"
+anyhow.workspace = true
+log.workspace = true
+redox_syscall = { workspace = true, features = ["std"] }
+orbclient.workspace = true
+libredox.workspace = true
 
 common = { path = "../common" }
 daemon = { path = "../../daemon" }
-redox-scheme = "0.8.3"
+redox-scheme.workspace = true

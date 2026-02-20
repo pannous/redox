@@ -17,7 +17,6 @@ use crate::{
     cpu_stats,
     percpu::PercpuBlock,
     sync::CleanLockToken,
-    time,
 };
 
 use super::ContextRef;
@@ -40,7 +39,11 @@ enum UpdateResult {
 /// # Returns
 /// - `UpdateResult::CanSwitch`: If the context can be switched to.
 /// - `UpdateResult::Skip`: If the context should be skipped (e.g., it's running on another CPU).
-unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> UpdateResult {
+unsafe fn update_runnable(
+    context: &mut Context,
+    cpu_id: LogicalCpuId,
+    switch_time: u128,
+) -> UpdateResult {
     // Ignore contexts that are already running.
     if context.running {
         return UpdateResult::Skip;
@@ -54,8 +57,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
     // If context is soft-blocked and has a wake-up time, check if it should wake up.
     if context.status.is_soft_blocked() {
         if let Some(wake) = context.wake {
-            let current = time::monotonic();
-            if current >= wake {
+            if switch_time >= wake {
                 context.wake = None;
                 context.unblock_no_ipi();
             }
@@ -142,6 +144,8 @@ pub enum SwitchResult {
 /// - `SwitchResult::AllContextsIdle`: Indicates all contexts are idle, and the CPU will switch
 ///   to an idle context.
 pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
+    let switch_time = crate::time::monotonic();
+
     let percpu = PercpuBlock::current();
     cpu_stats::add_context_switch();
     percpu.stats.add_context_switch_local();
@@ -184,9 +188,11 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         let prev_context_guard = unsafe { prev_context_lock.write_arc() };
 
         if !prev_context_guard.is_preemptable() {
-            // Release the lock before returning
+            // Unset global lock
             arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-            return SwitchResult::AllContextsIdle;
+
+            // Pretend to have finished switching, so CPU is not idled
+            return SwitchResult::Switched;
         }
 
         let idle_context = percpu.switch_internals.idle_context();
@@ -228,7 +234,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
                 // Check if the context is runnable and can be switched to.
                 if let UpdateResult::CanSwitch =
-                    unsafe { update_runnable(&mut next_context_guard, cpu_id) }
+                    unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
                 {
                     // Store locks for previous and next context and break out from loop
                     // for the switch
@@ -240,7 +246,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     };
 
     // Update per-cpu times
-    let switch_time = crate::time::monotonic();
     let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
     let percpu_ms = percpu_nanos / 1_000_000;
     percpu.stats.add_time(percpu_ms);

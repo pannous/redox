@@ -14,10 +14,21 @@ use crate::{
             EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLLERR, EPOLLIN, EPOLLOUT, epoll_create1, epoll_ctl,
             epoll_data, epoll_event, epoll_wait,
         },
-        sys_time::timeval,
     },
-    platform::{self, types::c_int},
+    platform::{
+        self,
+        types::{c_int, suseconds_t, time_t},
+    },
 };
+
+/// See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_select.h.html>.
+///
+#[repr(C)]
+#[derive(Default)]
+pub struct timeval {
+    pub tv_sec: time_t,
+    pub tv_usec: suseconds_t,
+}
 
 // fd_set is also defined in C because cbindgen is incompatible with mem::size_of booo
 
@@ -180,22 +191,22 @@ pub unsafe extern "C" fn select(
             if readfds.is_null() {
                 None
             } else {
-                Some(&mut *readfds)
+                Some(unsafe { &mut *readfds })
             },
             if writefds.is_null() {
                 None
             } else {
-                Some(&mut *writefds)
+                Some(unsafe { &mut *writefds })
             },
             if exceptfds.is_null() {
                 None
             } else {
-                Some(&mut *exceptfds)
+                Some(unsafe { &mut *exceptfds })
             },
             if timeout.is_null() {
                 None
             } else {
-                Some(&mut *timeout)
+                Some(unsafe { &mut *timeout })
             }
         ),
         "select({}, {:p}, {:p}, {:p}, {:p})",

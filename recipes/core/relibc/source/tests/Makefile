@@ -11,10 +11,9 @@ FAILING_TESTS=tls \
 	mkfifo \
 	sigchld \
 	stdlib/ptsname \
-	sys_mman \
+	sys_epoll/epollet \
+	sys_mman/fmap \
 	signals/pthread_kill-child \
-	sys_socket/unixpeername \
-	sys_socket/unixrecvfrom \
 	unistd/isatty \
 	unistd/link \
 #	resource/getrusage
@@ -46,6 +45,7 @@ EXPECT_NAMES=\
 	error \
 	fcntl/create \
 	fcntl/fcntl \
+	fcntl/open \
 	fcntl/posix_fallocate \
 	features \
 	fnmatch \
@@ -126,6 +126,12 @@ EXPECT_NAMES=\
 	string/stpcpy \
 	string/stpncpy \
 	strings \
+	sys_socket/recv \
+	sys_socket/recvfrom \
+	sys_socket/unixpeername \
+	sys_socket/unixrecv \
+	sys_socket/unixrecvfrom \
+	sys_socket/unixsocketpair \
 	sys_stat/chmod \
 	sys_stat/lstat \
 	sys_stat/fstatat \
@@ -203,7 +209,9 @@ DYNAMIC_ONLY_NAMES=\
 VARIED_NAMES=\
 	dirent/main \
 	dirent/posix_getdents \
+	includes \
 	kill-waitpid \
+	limits \
 	net/if \
 	netdb/getaddrinfo \
 	netdb/getaddrinfo_null \
@@ -269,10 +277,9 @@ VARIED_NAMES=\
 	stdlib/mktemp \
 	stdlib/realpath \
 	sys_epoll/epoll \
+	sys_mman/mmap \
 	sys_resource/constants \
 	sys_socket/getpeername \
-	sys_socket/recv \
-	sys_socket/recvfrom \
 	sys_stat/stat \
 	sys_statvfs/statvfs \
 	sys_utsname/uname \
@@ -448,3 +455,10 @@ $(BUILD)/bins_dynamic/dlopen_scopes: dlopen_scopes.c $(BUILD)/bins_dynamic/libfo
 $(BUILD)/bins_dynamic/%: %.c $(DEPS)
 	mkdir -p "$$(dirname "$@")"
 	@$(CC) "$<" -o "$@" $(FLAGS) $(DYNAMIC_FLAGS)
+
+$(BUILD)/gen/includes: includes.c $(DEPS)
+	rm -rf $@.tmp $@
+	mkdir -p $@.tmp
+	$(CC) "$<" -H $(FLAGS) $(DYNAMIC_FLAGS) 2> $@.tmp/graph.txt
+	sed -i 's|$(SYSROOT)/include/||g' $@.tmp/graph.txt
+	mv $@.tmp $@

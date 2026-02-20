@@ -8,10 +8,11 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow.workspace = true
 bitflags = "2"
-log = "0.4"
-orbclient = "0.3.47"
-redox_syscall = "0.6"
+log.workspace = true
+orbclient.workspace = true
+redox_syscall.workspace = true
 rehid = { git = "https://gitlab.redox-os.org/redox-os/rehid.git" }
 xhcid = { path = "../../usb/xhcid" }
 

@@ -1,13 +1,13 @@
 #![no_std]
 #![allow(internal_features)]
+#![deny(unsafe_op_in_unsafe_fn)]
 #![feature(core_intrinsics, int_roundings, slice_ptr_get, sync_unsafe_cell)]
 #![forbid(unreachable_patterns)]
 
-use core::{
-    cell::UnsafeCell,
-    mem::{MaybeUninit, size_of},
-};
+use core::cell::UnsafeCell;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+use generic_rt::ExpectTlsFree; // not used on aarch64 or riscv64
 use generic_rt::GenericTcb;
 use syscall::Sigcontrol;
 
@@ -186,7 +186,10 @@ pub(crate) fn read_proc_meta(proc: &FdGuardUpper) -> syscall::Result<ProcMeta> {
     proc.read(&mut bytes)?;
     Ok(*plain::from_bytes::<ProcMeta>(&bytes).unwrap())
 }
-pub unsafe fn initialize(#[cfg(feature = "proc")] proc_fd: FdGuardUpper) {
+pub unsafe fn initialize(
+    #[cfg(feature = "proc")] proc_fd: FdGuardUpper,
+    #[cfg(feature = "proc")] ns_fd: Option<FdGuardUpper>,
+) {
     #[cfg(feature = "proc")]
     let metadata = read_proc_meta(&proc_fd).unwrap();
 
@@ -204,12 +207,10 @@ pub unsafe fn initialize(#[cfg(feature = "proc")] proc_fd: FdGuardUpper) {
             pid: metadata.pid,
 
             #[cfg(feature = "proc")]
-            proc_fd: MaybeUninit::new(proc_fd),
+            proc_fd: Some(proc_fd),
 
             #[cfg(not(feature = "proc"))]
-            proc_fd: MaybeUninit::uninit(),
-
-            has_proc_fd: cfg!(feature = "proc"),
+            proc_fd: None,
         })
     };
 
@@ -223,15 +224,14 @@ pub unsafe fn initialize(#[cfg(feature = "proc")] proc_fd: FdGuardUpper) {
             egid: metadata.egid,
             rgid: metadata.rgid,
             sgid: metadata.sgid,
+            ns_fd,
         };
     }
 }
 
-#[repr(C)] // TODO: is repr(C) required?
 pub(crate) struct StaticProcInfo {
     pid: u32,
-    proc_fd: MaybeUninit<FdGuardUpper>,
-    has_proc_fd: bool,
+    proc_fd: Option<FdGuardUpper>,
 }
 pub struct DynamicProcInfo {
     pub pgid: u32,
@@ -241,6 +241,7 @@ pub struct DynamicProcInfo {
     pub egid: u32,
     pub rgid: u32,
     pub sgid: u32,
+    pub ns_fd: Option<FdGuardUpper>,
 }
 
 static DYNAMIC_PROC_INFO: Mutex<DynamicProcInfo> = Mutex::new(DynamicProcInfo {
@@ -251,6 +252,7 @@ static DYNAMIC_PROC_INFO: Mutex<DynamicProcInfo> = Mutex::new(DynamicProcInfo {
     rgid: u32::MAX,
     egid: u32::MAX,
     sgid: u32::MAX,
+    ns_fd: None,
 });
 
 #[inline]
@@ -260,8 +262,16 @@ pub(crate) fn static_proc_info() -> &'static StaticProcInfo {
 #[inline]
 pub fn current_proc_fd() -> &'static FdGuardUpper {
     let info = static_proc_info();
-    assert!(info.has_proc_fd);
-    unsafe { info.proc_fd.assume_init_ref() }
+    info.proc_fd.as_ref().unwrap()
+}
+#[inline]
+pub fn current_namespace_fd() -> usize {
+    DYNAMIC_PROC_INFO
+        .lock()
+        .ns_fd
+        .as_ref()
+        .map(|g| g.as_raw_fd())
+        .unwrap_or(usize::MAX)
 }
 
 struct ChildHookCommonArgs {
@@ -294,8 +304,7 @@ unsafe fn child_hook_common(args: ChildHookCommonArgs) {
             .get()
             .replace(StaticProcInfo {
                 pid: metadata.pid,
-                has_proc_fd: new_proc_fd.is_some(),
-                proc_fd: new_proc_fd.map_or_else(MaybeUninit::uninit, MaybeUninit::new),
+                proc_fd: new_proc_fd,
             })
             .proc_fd
     };

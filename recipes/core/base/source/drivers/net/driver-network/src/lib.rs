@@ -61,9 +61,12 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
         daemon: daemon::Daemon,
         scheme_name: String,
     ) -> Self {
-        let socket = Socket::nonblock(&scheme_name).expect("failed to create network scheme");
+        assert!(scheme_name.starts_with("network"));
+        let socket = Socket::nonblock().expect("failed to create network scheme");
         let adapter = adapter_fn();
-        let scheme = NetworkSchemeInner::new(adapter, scheme_name.clone());
+        let mut scheme = NetworkSchemeInner::new(adapter, scheme_name.clone());
+        redox_scheme::scheme::register_sync_scheme(&socket, &scheme_name, &mut scheme)
+            .expect("failed to regitster network scheme");
         daemon.ready();
         Self {
             scheme,
@@ -214,6 +217,7 @@ struct NetworkSchemeInner<T: NetworkAdapter> {
 enum Handle {
     Data,
     Mac,
+    SchemeRoot,
 }
 
 impl<T: NetworkAdapter> NetworkSchemeInner<T> {
@@ -228,7 +232,27 @@ impl<T: NetworkAdapter> NetworkSchemeInner<T> {
 }
 
 impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
-    fn open(&mut self, path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+    fn scheme_root(&mut self) -> Result<usize> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+
+    fn openat(
+        &mut self,
+        fd: usize,
+        path: &str,
+        _flags: usize,
+        _fcntl_flags: u32,
+        ctx: &CallerCtx,
+    ) -> Result<OpenResult> {
+        if !matches!(
+            self.handles.get(&fd).ok_or(Error::new(EINVAL))?,
+            Handle::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
+        }
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -265,6 +289,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
                 buf[..i].copy_from_slice(&data[..i]);
                 return Ok(i);
             }
+            _ => return Err(Error::new(EBADF)),
         };
 
         match self.adapter.read_packet(buf)? {
@@ -292,6 +317,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
         match handle {
             Handle::Data => {}
             Handle::Mac { .. } => return Err(Error::new(EINVAL)),
+            _ => return Err(Error::new(EBADF)),
         }
 
         match self.adapter.write_packet(buf) {
@@ -335,6 +361,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
         let path = match handle {
             Handle::Data { .. } => &b""[..],
             Handle::Mac { .. } => &b"mac"[..],
+            _ => &b""[..],
         };
 
         j = 0;
@@ -358,6 +385,7 @@ impl<T: NetworkAdapter> SchemeSync for NetworkSchemeInner<T> {
                 stat.st_mode = MODE_FILE | 0o400;
                 stat.st_size = 6;
             }
+            _ => return Err(Error::new(EBADF)),
         }
 
         Ok(())

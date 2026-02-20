@@ -8,20 +8,19 @@ use redox_scheme::{RequestKind, SignalBehavior};
 use self::scheme::Scheme;
 
 fn main() {
-    daemon::Daemon::new(daemon);
+    daemon::SchemeDaemon::new(daemon);
 }
 
-fn daemon(daemon: daemon::Daemon) -> ! {
+fn daemon(daemon: daemon::SchemeDaemon) -> ! {
     let scheme_name = env::args().nth(1).expect("Usage:\n\tramfs SCHEME_NAME");
 
-    let socket =
-        redox_scheme::Socket::create(&scheme_name).expect("ramfs: failed to create socket");
+    let socket = redox_scheme::Socket::create().expect("ramfs: failed to create socket");
 
-    let mut scheme = Scheme::new(scheme_name).expect("ramfs: failed to initialize scheme");
+    let mut scheme = Scheme::new(scheme_name.clone()).expect("ramfs: failed to initialize scheme");
+
+    let _ = daemon.ready_sync_scheme(&socket, &mut scheme);
 
     libredox::call::setrens(0, 0).expect("ramfs: failed to enter null namespace");
-
-    daemon.ready();
 
     loop {
         let Some(request) = socket

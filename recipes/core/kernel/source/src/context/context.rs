@@ -18,14 +18,16 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
+    scheme::{CallerCtx, FileHandle, SchemeId},
     sync::CleanLockToken,
+    syscall::usercopy::UserSliceRw,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};
 
 use super::{
     empty_cr3,
+    file::FileDescription,
     memory::{AddrSpaceWrapper, GrantFileRef},
 };
 
@@ -140,7 +142,6 @@ pub struct Context {
     pub owner_proc_id: Option<NonZeroUsize>,
 
     // TODO: Temporary replacement for existing kernel logic, replace with capabilities!
-    pub ens: SchemeNamespace,
     pub euid: u32,
     pub egid: u32,
     pub pid: usize,
@@ -196,7 +197,6 @@ impl Context {
             being_sigkilled: false,
             owner_proc_id,
 
-            ens: 0.into(),
             euid: 0,
             egid: 0,
             pid: 0,
@@ -361,10 +361,12 @@ impl Context {
                     this_percpu.current_addrsp.borrow().as_ref().unwrap(),
                     prev_addrsp
                 ));
-                prev_addrsp
-                    .acquire_read()
-                    .used_by
-                    .atomic_clear(this_percpu.cpu_id);
+
+                // See [`crate::percpu::switch_arch_hook`].
+                prev_addrsp.used_by.atomic_clear(this_percpu.cpu_id);
+
+                core::sync::atomic::fence(Ordering::SeqCst);
+                this_percpu.maybe_handle_tlb_shootdown();
             }
 
             let _old_addrsp = core::mem::replace(
@@ -374,9 +376,8 @@ impl Context {
 
             match addr_space {
                 Some(ref new) => {
+                    new.used_by.atomic_set(this_percpu.cpu_id);
                     let new_addrsp = new.acquire_read();
-                    new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
-
                     unsafe {
                         new_addrsp.table.utable.make_current();
                     }
@@ -929,5 +930,85 @@ impl FdTbl {
         self.posix_fdtbl
             .iter_mut()
             .chain(self.upper_fdtbl.iter_mut())
+    }
+}
+
+pub fn bulk_add_fds(
+    descriptions: Vec<Arc<RwLock<FileDescription>>>,
+    payload: UserSliceRw,
+    cloexec: bool,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
+    let cnt = descriptions.len();
+    if payload.len() != cnt * size_of::<usize>() {
+        return Err(Error::new(EINVAL));
+    }
+    if descriptions.is_empty() {
+        return Ok(0);
+    }
+    let current_lock = context::current();
+    let current = current_lock.write(token.token());
+
+    let files: Vec<FileDescriptor> = descriptions
+        .into_iter()
+        .map(|description| FileDescriptor {
+            description,
+            cloexec,
+        })
+        .collect();
+    let handles = current
+        .bulk_add_files_posix(files)
+        .ok_or(Error::new(EMFILE))?;
+    let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+    for (handle, chunk) in handles.iter().zip(payload_chunks) {
+        chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+    }
+    Ok(handles.len())
+}
+
+pub fn bulk_insert_fds(
+    descriptions: Vec<Arc<RwLock<FileDescription>>>,
+    payload: UserSliceRw,
+    cloexec: bool,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
+    let cnt = descriptions.len();
+    if payload.len() != cnt * size_of::<usize>() {
+        return Err(Error::new(EINVAL));
+    }
+    if descriptions.is_empty() {
+        return Ok(0);
+    }
+    let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
+        description,
+        cloexec,
+    });
+    let first_fd = payload
+        .in_exact_chunks(size_of::<usize>())
+        .next()
+        .ok_or(Error::new(EINVAL))?
+        .read_usize()?;
+
+    let current_lock = context::current();
+    let current = current_lock.write(token.token());
+
+    if first_fd == usize::MAX {
+        let files = files_iter.collect::<Vec<_>>();
+        let handles = current
+            .bulk_insert_files_upper(files)
+            .ok_or(Error::new(EMFILE))?;
+        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+        for (handle, chunk) in handles.iter().zip(payload_chunks) {
+            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+        }
+        Ok(handles.len())
+    } else {
+        let handles: Vec<FileHandle> = payload
+            .usizes()
+            .map(|res| res.map(|i| FileHandle::from(i | syscall::UPPER_FDTBL_TAG)))
+            .collect::<Result<_, _>>()?;
+        let files = files_iter.collect::<Vec<_>>();
+        current.bulk_insert_files_upper_manual(files, &handles)?;
+        Ok(handles.len())
     }
 }

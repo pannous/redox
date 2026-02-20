@@ -6,14 +6,13 @@
 // according to the current locale (TODO).
 
 use alloc::string::{String, ToString};
-use core::{ffi::CStr, ptr, slice, str};
+use core::str;
 
-use libm::{fabs, floor, pow, round, trunc};
+use libm::{fabs, pow, round, trunc};
 
 extern crate alloc;
 
 mod strfmon;
-#[deny(unsafe_op_in_unsafe_fn)]
 #[repr(C)]
 struct LocaleMonetaryInfo {
     int_curr_symbol: &'static str,

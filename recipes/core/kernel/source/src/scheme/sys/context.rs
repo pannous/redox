@@ -8,8 +8,8 @@ use crate::{context, paging::PAGE_SIZE, sync::CleanLockToken, syscall::error::Re
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
-        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
-        "PID", "EUID", "EGID", "ENS", "STAT", "CPU", "AFFINITY", "TIME", "MEM", "NAME"
+        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
+        "PID", "EUID", "EGID", "STAT", "CPU", "AFFINITY", "TIME", "MEM", "NAME"
     );
 
     let mut rows = Vec::new();
@@ -98,7 +98,6 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 context.pid,
                 context.euid,
                 context.egid,
-                context.ens.get(),
                 stat_string,
                 cpu_string,
                 affinity,
@@ -114,7 +113,6 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         pid,
         euid,
         egid,
-        ens,
         stat_string,
         cpu_string,
         affinity,
@@ -125,11 +123,10 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     {
         let _ = writeln!(
             string,
-            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}",
+            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}",
             pid,
             euid,
             egid,
-            ens,
             stat_string,
             cpu_string,
             affinity,

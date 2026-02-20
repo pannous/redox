@@ -66,9 +66,8 @@ impl UnmapResult {
             (desc.scheme, desc.number)
         };
 
-        let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
+        let scheme_opt = scheme::get_scheme(token.token(), scheme_id);
         let funmap_result = scheme_opt
-            .ok_or(Error::new(ENODEV))
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags, token));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
@@ -82,14 +81,16 @@ impl UnmapResult {
 
 #[derive(Debug)]
 pub struct AddrSpaceWrapper {
-    inner: RwLock<AddrSpace>,
+    pub inner: RwLock<AddrSpace>,
     pub tlb_ack: AtomicU32,
+    pub used_by: LogicalCpuSet,
 }
 impl AddrSpaceWrapper {
     pub fn new() -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
             inner: RwLock::new(AddrSpace::new()?),
             tlb_ack: AtomicU32::new(0),
+            used_by: LogicalCpuSet::empty(),
         }))
     }
     pub fn acquire_read(&self) -> RwLockReadGuard<'_, AddrSpace> {
@@ -155,8 +156,9 @@ impl AddrSpaceWrapper {
         let new =
             Arc::get_mut(&mut new_arc).expect("expected new address space Arc not to be aliased");
 
+        let _this_mapper = &mut guard.table.utable;
         let this_mapper = &mut guard.table.utable;
-        let mut this_flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
+        let mut this_flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
 
         for (grant_base, grant_info) in guard.grants.iter() {
             let new_grant = match grant_info.provider {
@@ -241,7 +243,7 @@ impl AddrSpaceWrapper {
         let guard = &mut *guard;
 
         let mapper = &mut guard.table.utable;
-        let mut flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
+        let mut flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
 
         // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
         let regions = guard
@@ -274,6 +276,7 @@ impl AddrSpaceWrapper {
             if let Some(before) = before {
                 guard.grants.insert(before);
             }
+            // FIXME: andypython: should this be done at the end?
             if let Some(after) = after {
                 guard.grants.insert(after);
             }
@@ -312,7 +315,7 @@ impl AddrSpaceWrapper {
         let mut guard = self.acquire_write();
         let guard = &mut *guard;
 
-        let mut flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
+        let mut flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
         AddrSpace::munmap_inner(
             &mut guard.grants,
             &mut guard.table.utable,
@@ -337,12 +340,12 @@ impl AddrSpaceWrapper {
         let mut src_flusher;
         let mut src_opt = match src_opt {
             Some((aw, a)) => {
-                src_flusher = Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack);
+                src_flusher = Flusher::with_cpu_set(&aw.used_by, &aw.tlb_ack);
                 Some((&mut a.grants, &mut a.table.utable, &mut src_flusher))
             }
             None => None,
         };
-        let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by, &dst_lock.tlb_ack);
+        let mut dst_flusher = Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack);
 
         let dst_base = match requested_dst_base {
             Some(base) if new_flags.contains(MapFlags::MAP_FIXED_NOREPLACE) => {
@@ -718,7 +721,7 @@ impl AddrSpace {
             selected_span.base,
             page_flags(flags),
             &mut self.table.utable,
-            &mut Flusher::with_cpu_set(&mut self.used_by, &dst_lock.tlb_ack),
+            &mut Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack),
         )?;
         self.grants.insert(grant);
 
@@ -1346,7 +1349,7 @@ impl Grant {
         new_flags: PageFlags<RmmA>,
         file_ref: GrantFileRef,
         src: Option<BorrowedFmapSource<'_>>,
-        lock: &AddrSpaceWrapper,
+        _lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
         token: &mut CleanLockToken,
@@ -1355,7 +1358,8 @@ impl Grant {
             let mut guard = src.addr_space_guard;
             let mut src_addrspace = &mut *guard;
             let mut src_flusher_state =
-                Flusher::with_cpu_set(&mut src_addrspace.used_by, &lock.tlb_ack).detach();
+                Flusher::with_cpu_set(&src.addr_space_lock.used_by, &src.addr_space_lock.tlb_ack)
+                    .detach();
             for dst_page in span.pages() {
                 let src_page = src.src_base.next_by(dst_page.offset_from(span.base));
 
@@ -1428,7 +1432,7 @@ impl Grant {
                                 .table
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, flags| {
-                                    (new_cow_frame.base(), flags)
+                                    Some((new_cow_frame.base(), flags))
                                 })
                                 .expect("page did exist");
 
@@ -1697,7 +1701,7 @@ impl Grant {
                         unsafe {
                             if let Some((_flags, phys, flush)) = src_mapper
                                 .remap_with_full(src_page.start_address(), |_, f| {
-                                    (new_frame.base(), f)
+                                    Some((new_frame.base(), f))
                                 })
                             {
                                 // TODO: flush.ignore() is correct, but seems to be amplifying a
@@ -1828,7 +1832,7 @@ impl Grant {
         &mut self,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
-        flags: PageFlags<RmmA>,
+        new_flags: PageFlags<RmmA>,
     ) {
         assert!(self.info.mapped);
 
@@ -1836,7 +1840,14 @@ impl Grant {
             unsafe {
                 // Lazy mappings don't require remapping, as info.flags will be updated.
                 let Some((old_flags, phys, flush)) =
-                    mapper.remap_with(page.start_address(), |_| flags)
+                    mapper.remap_with_full(page.start_address(), |same_phys, old_flags| {
+                        if !old_flags.has_write() && new_flags.has_write() {
+                            // Page flags will be updated in [`correct_inner`].
+                            None
+                        } else {
+                            Some((same_phys, new_flags))
+                        }
+                    })
                 else {
                     continue;
                 };
@@ -1845,13 +1856,14 @@ impl Grant {
                 flusher.queue(
                     Frame::containing(phys),
                     None,
-                    TlbShootdownActions::change_of_flags(old_flags, flags),
+                    TlbShootdownActions::change_of_flags(old_flags, new_flags),
                 );
             }
         }
 
-        self.info.flags = flags;
+        self.info.flags = new_flags;
     }
+
     #[must_use = "will not unmap itself"]
     pub fn unmap(
         mut self,
@@ -2287,7 +2299,7 @@ impl Drop for Table {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AccessMode {
     Read,
     Write,
@@ -2418,7 +2430,7 @@ fn correct_inner<'l>(
     token: &mut CleanLockToken,
 ) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
     let mut addr_space = &mut *addr_space_guard;
-    let mut flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
+    let mut flusher = Flusher::with_cpu_set(&addr_space_lock.used_by, &addr_space_lock.tlb_ack);
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
         debug!("Lacks grant");
@@ -2602,7 +2614,7 @@ fn correct_inner<'l>(
                                     .table
                                     .utable
                                     .remap_with_full(src_page.start_address(), |_, f| {
-                                        (new_frame.base(), f)
+                                        Some((new_frame.base(), f))
                                     });
                             }
 
@@ -2641,11 +2653,11 @@ fn correct_inner<'l>(
                 let desc = &file_ref.description.read();
                 (desc.scheme, desc.number)
             };
-            let user_inner = scheme::schemes(token.token())
-                .get(scheme_id)
+            let user_inner = scheme::get_scheme(token.token(), scheme_id)
+                .ok()
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
-                        user.inner.upgrade()
+                        Some(user.inner)
                     } else {
                         None
                     }
@@ -2672,7 +2684,7 @@ fn correct_inner<'l>(
 
             addr_space_guard = addr_space_lock.acquire_write();
             addr_space = &mut *addr_space_guard;
-            flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
+            flusher = Flusher::with_cpu_set(&addr_space_lock.used_by, &addr_space_lock.tlb_ack);
 
             info!("Got frame {:?} from external fmap", frame);
 
@@ -2770,6 +2782,7 @@ fn handle_free_action(base: Frame, phys_contiguous_count: Option<NonZeroUsize>) 
         }
     }
 }
+#[derive(Debug)]
 struct FlusherState<'addrsp> {
     // TODO: what capacity?
     pagequeue: ArrayVec<PageQueueEntry, 32>,
@@ -2778,6 +2791,7 @@ struct FlusherState<'addrsp> {
     ackword: &'addrsp AtomicU32,
 }
 
+#[derive(Debug)]
 enum PageQueueEntry {
     Free {
         base: Frame,
@@ -2790,12 +2804,14 @@ enum PageQueueEntry {
     },
 }
 
-pub struct Flusher<'guard, 'addrsp> {
-    active_cpus: &'guard mut LogicalCpuSet,
+#[derive(Debug)]
+pub struct Flusher<'a, 'addrsp> {
+    active_cpus: &'a LogicalCpuSet,
     state: FlusherState<'addrsp>,
 }
-impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
-    fn with_cpu_set(set: &'guard mut LogicalCpuSet, ackword: &'addrsp AtomicU32) -> Self {
+
+impl<'a, 'addrsp> Flusher<'a, 'addrsp> {
+    fn with_cpu_set(set: &'a LogicalCpuSet, ackword: &'addrsp AtomicU32) -> Self {
         Self {
             active_cpus: set,
             state: FlusherState {
@@ -2833,13 +2849,18 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
 
         let current_cpu_id = crate::cpu_id();
 
-        for cpu_id in self.active_cpus.iter_mut() {
+        for cpu_id in self.active_cpus.iter() {
             if cpu_id == current_cpu_id {
                 continue;
             }
 
             crate::percpu::shootdown_tlb_ipi(Some(cpu_id));
-            affected_cpu_count += 1;
+
+            core::sync::atomic::fence(Ordering::SeqCst);
+
+            if self.active_cpus.contains(cpu_id) {
+                affected_cpu_count += 1;
+            }
         }
 
         if self.active_cpus.contains(current_cpu_id) {
@@ -2894,6 +2915,7 @@ impl Drop for Flusher<'_, '_> {
     }
 }
 bitflags::bitflags! {
+    #[derive(Debug)]
     pub struct TlbShootdownActions: usize {
         // Delay the deallocation of one or more contiguous frames.
         const FREE = 1;

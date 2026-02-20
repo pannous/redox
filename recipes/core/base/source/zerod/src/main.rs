@@ -1,4 +1,3 @@
-use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
 use scheme::ZeroScheme;
@@ -11,26 +10,22 @@ enum Ty {
 }
 
 fn main() {
-    daemon::Daemon::new(daemon);
+    daemon::SchemeDaemon::new(daemon);
 }
 
-fn daemon(daemon: daemon::Daemon) -> ! {
+fn daemon(daemon: daemon::SchemeDaemon) -> ! {
     let ty = match &*std::env::args().next().unwrap() {
         "nulld" => Ty::Null,
         "zerod" => Ty::Zero,
         _ => panic!("needs to be called as either nulld or zerod"),
     };
 
-    let name = match ty {
-        Ty::Null => "null",
-        Ty::Zero => "zero",
-    };
-    let socket = Socket::create(name).expect("zerod: failed to create zero scheme");
+    let socket = Socket::create().expect("zerod: failed to create zero scheme");
     let mut zero_scheme = ZeroScheme(ty);
 
-    libredox::call::setrens(0, 0).expect("zerod: failed to enter null namespace");
+    let _ = daemon.ready_sync_scheme(&socket, &mut zero_scheme);
 
-    daemon.ready();
+    libredox::call::setrens(0, 0).expect("zerod: failed to enter null namespace");
 
     loop {
         let Some(request) = socket
@@ -47,7 +42,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                     .write_response(response, SignalBehavior::Restart)
                     .expect("zerod: failed to write responses to zero scheme");
             }
-            RequestKind::OnClose { id } => zero_scheme.on_close(id),
             _ => (),
         }
     }

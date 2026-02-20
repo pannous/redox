@@ -1,16 +1,16 @@
-use alloc::{
-    boxed::Box,
-    string::{String, ToString},
-    vec::{IntoIter, Vec},
-};
+use alloc::{boxed::Box, string::ToString, vec::Vec};
 use core::mem;
 
 use crate::{
     out::Out,
-    platform::{Pal, Sys, types::*},
+    platform::{
+        Pal, Sys,
+        types::{c_int, c_void},
+    },
 };
 
 use crate::header::{
+    bits_time::timespec,
     errno::*,
     netinet_in::{IPPROTO_UDP, htons, in_addr, sockaddr_in},
     sys_socket::{
@@ -18,7 +18,7 @@ use crate::header::{
         constants::{AF_INET, SOCK_DGRAM},
         sockaddr, socklen_t,
     },
-    time::{self, timespec},
+    time,
 };
 
 use super::{
@@ -26,48 +26,26 @@ use super::{
     sys::get_dns_server,
 };
 
-pub struct LookupHost(IntoIter<in_addr>);
-
-impl Iterator for LookupHost {
-    type Item = in_addr;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-}
-
-impl From<u32> for LookupHost {
-    /// from ipv4 address
-    fn from(s_addr: u32) -> Self {
-        LookupHost(vec![in_addr { s_addr }].into_iter())
-    }
-}
+pub type LookupHost = Vec<in_addr>;
 
 pub fn lookup_host(host: &str) -> Result<LookupHost, c_int> {
-    trace!("[DNS] lookup_host: {}", host);
     if let Some(host_direct_addr) = parse_ipv4_string(host) {
         // already an ip address
-        trace!("[DNS] already IP address");
-        return Ok(host_direct_addr.into());
+        return Ok(vec![in_addr {
+            s_addr: host_direct_addr,
+        }]);
     }
 
-    trace!("[DNS] getting DNS server");
     let dns_string = get_dns_server().map_err(|e| e.0)?;
-    trace!("[DNS] DNS server: {}", dns_string.trim());
 
     if let Some(dns_addr) = parse_ipv4_string(&dns_string) {
-        trace!("[DNS] parsed DNS addr: 0x{:08x}", dns_addr);
         let mut timespec = timespec::default();
-        trace!("[DNS] calling clock_gettime");
-        unsafe {
-            Sys::clock_gettime(
-                time::constants::CLOCK_REALTIME,
-                Out::from_mut(&mut timespec),
-            );
-        }
-        trace!("[DNS] clock_gettime done");
+        if let Ok(()) = Sys::clock_gettime(
+            time::constants::CLOCK_REALTIME,
+            Out::from_mut(&mut timespec),
+        ) {}; // TODO handle error
         let tid = (timespec.tv_nsec >> 16) as u16;
 
-        trace!("[DNS] building DNS packet");
         let packet = Dns {
             transaction_id: tid,
             flags: 0x0100,
@@ -79,17 +57,12 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, c_int> {
             answers: vec![],
         };
 
-        trace!("[DNS] compiling packet");
         let packet_data = packet.compile();
         let packet_data_len = packet_data.len();
-        trace!("[DNS] packet len: {}", packet_data_len);
 
-        trace!("[DNS] boxing packet");
         let packet_data_box = packet_data.into_boxed_slice();
         let packet_data_ptr = Box::into_raw(packet_data_box) as *mut _ as *mut c_void;
-        trace!("[DNS] packet_data_ptr: {:?}", packet_data_ptr);
 
-        trace!("[DNS] creating sockaddr_in");
         let dest = sockaddr_in {
             sin_family: AF_INET as u16,
             sin_port: htons(53),
@@ -98,38 +71,27 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, c_int> {
         };
         let dest_ptr = &dest as *const _ as *const sockaddr;
 
-        trace!("[DNS] creating socket");
         let sock = unsafe {
             let sock = sys_socket::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP as i32);
-            trace!("[DNS] socket fd: {}", sock);
             if sys_socket::connect(sock, dest_ptr, mem::size_of_val(&dest) as socklen_t) < 0 {
-                trace!("[DNS] connect failed");
                 return Err(EIO);
             }
-            trace!("[DNS] connected");
             if sys_socket::send(sock, packet_data_ptr, packet_data_len, 0) < 0 {
-                trace!("[DNS] send failed");
-                Box::from_raw(packet_data_ptr);
+                drop(Box::from_raw(packet_data_ptr));
                 return Err(EIO);
             }
-            trace!("[DNS] sent {} bytes", packet_data_len);
             sock
         };
 
-        trace!("[DNS] freeing packet_data_ptr");
         unsafe {
-            Box::from_raw(packet_data_ptr);
+            drop(Box::from_raw(packet_data_ptr));
         }
 
-        trace!("[DNS] allocating recv buffer");
         let i = 0 as socklen_t;
         let mut buf = vec![0u8; 65536];
         let buf_ptr = buf.as_mut_ptr() as *mut c_void;
-        trace!("[DNS] buf_ptr: {:?}", buf_ptr);
 
-        trace!("[DNS] calling recv");
         let count = unsafe { sys_socket::recv(sock, buf_ptr, 65536, 0) };
-        trace!("[DNS] recv returned: {}", count);
         if count < 0 {
             return Err(EIO);
         }
@@ -158,7 +120,8 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, c_int> {
                         }
                     })
                     .collect();
-                Ok(LookupHost(addrs.into_iter()))
+
+                Ok(addrs)
             }
             Err(_err) => Err(EINVAL),
         }
@@ -179,12 +142,10 @@ pub fn lookup_addr(addr: in_addr) -> Result<Vec<Vec<u8>>, c_int> {
         );
 
         let mut timespec = timespec::default();
-        unsafe {
-            Sys::clock_gettime(
-                time::constants::CLOCK_REALTIME,
-                Out::from_mut(&mut timespec),
-            )
-        };
+        if let Ok(()) = Sys::clock_gettime(
+            time::constants::CLOCK_REALTIME,
+            Out::from_mut(&mut timespec),
+        ) {}; // TODO handle error
         let tid = (timespec.tv_nsec >> 16) as u16;
 
         let packet = Dns {
@@ -227,7 +188,7 @@ pub fn lookup_addr(addr: in_addr) -> Result<Vec<Vec<u8>>, c_int> {
         }
 
         unsafe {
-            Box::from_raw(packet_data_ptr);
+            drop(Box::from_raw(packet_data_ptr));
         }
 
         let i = mem::size_of::<sockaddr_in>() as socklen_t;

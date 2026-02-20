@@ -41,14 +41,14 @@ headers: $(HEADERS_DEPS)
 	cp "openlibm/src"/*.h $(TARGET_HEADERS)
 	@set -e ; \
 	for header in $(HEADERS_UNPARSED); do \
-		echo "\033[0;36;49mWriting Header $$header\033[0m"; \
+		echo -e "\033[0;36;49mWriting Header $$header\033[0m"; \
 		if test -f "src/header/$$header/cbindgen.toml"; then \
 			out=`echo "$$header" | sed 's/_/\//g'`; \
 			out="$(TARGET_HEADERS)/$$out.h"; \
 			cat "src/header/$$header/cbindgen.toml" cbindgen.globdefs.toml \
 				 | cbindgen "src/header/$$header/mod.rs" --config=/dev/stdin --output "$$out"; \
 		fi \
-	done; echo "\033[0;36;49mAll headers written\033[0m";
+	done; echo -e "\033[0;36;49mAll headers written\033[0m";
 
 clean:
 	$(CARGO) clean
@@ -133,6 +133,10 @@ $(BUILD)/$(PROFILE)/libc.so: $(BUILD)/$(PROFILE)/librelibc.a $(BUILD)/openlibm/l
 		$(LINKFLAGS) \
 		-o $@
 
+$(BUILD)/$(PROFILE)/ld_so: $(BUILD)/$(PROFILE)/ld_so.o $(BUILD)/$(PROFILE)/crti.o $(BUILD)/$(PROFILE)/libc.a $(BUILD)/$(PROFILE)/crtn.o
+	# TODO: merge ld.so with libc.so: --dynamic-list=dynamic-list-file
+	$(LD) --shared -Bsymbolic --no-relax -T ld_so/ld_script/$(TARGET).ld --allow-multiple-definition --gc-sections $^ -o $@
+
 # Debug targets
 
 $(BUILD)/debug/libc.a: $(BUILD)/debug/librelibc.a $(BUILD)/openlibm/libopenlibm.a
@@ -165,9 +169,6 @@ $(BUILD)/debug/crtn.o: $(SRC)
 $(BUILD)/debug/ld_so.o: $(SRC)
 	$(CARGO) rustc --manifest-path ld_so/Cargo.toml $(CARGOFLAGS) -- --emit obj=$@ -C panic=abort -g -C debug-assertions=no $(RUSTCFLAGS)
 	touch $@
-
-$(BUILD)/debug/ld_so: $(BUILD)/debug/ld_so.o $(BUILD)/debug/crti.o $(BUILD)/debug/libc.a $(BUILD)/debug/crtn.o
-	$(LD) --no-relax -T ld_so/ld_script/$(TARGET).ld --allow-multiple-definition --gc-sections $^ -o $@
 
 # Release targets
 
@@ -204,9 +205,6 @@ $(BUILD)/release/ld_so.o: $(SRC)
 	$(CARGO) rustc --release --manifest-path ld_so/Cargo.toml $(CARGOFLAGS) -- --emit obj=$@ -C panic=abort $(RUSTCFLAGS)
 	touch $@
 
-$(BUILD)/release/ld_so: $(BUILD)/release/ld_so.o $(BUILD)/release/crti.o $(BUILD)/release/libc.a $(BUILD)/release/crtn.o
-	$(LD) --no-relax -T ld_so/ld_script/$(TARGET).ld --allow-multiple-definition --gc-sections $^ -o $@
-
 # Other targets
 
 $(BUILD)/openlibm: openlibm
@@ -216,6 +214,6 @@ $(BUILD)/openlibm: openlibm
 	mv $@.partial $@
 	touch $@
 
-$(BUILD)/openlibm/libopenlibm.a: $(BUILD)/openlibm $(BUILD)/release/librelibc.a
+$(BUILD)/openlibm/libopenlibm.a: $(BUILD)/openlibm $(BUILD)/$(PROFILE)/librelibc.a
 	$(MAKE) -s AR=$(AR) CC="$(CC_WRAPPER) $(CC)" LD=$(LD) CPPFLAGS="$(CPPFLAGS) -fno-stack-protector -I$(shell pwd)/include -I$(TARGET_HEADERS)" -C $< libopenlibm.a
 	./renamesyms.sh "$@" "$(BUILD)/release/deps/"

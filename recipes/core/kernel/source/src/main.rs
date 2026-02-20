@@ -40,6 +40,7 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 #![allow(static_mut_refs)] // FIXME deny once IRQ_CHIP is wrapped in safe abstraction
+#![feature(asm_cfg)] // Stabilized in 1.93
 #![feature(if_let_guard)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
@@ -55,7 +56,7 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{context::switch::SwitchResult, scheme::SchemeNamespace};
+use crate::context::switch::SwitchResult;
 
 use crate::consts::*;
 
@@ -138,8 +139,8 @@ mod syscall;
 /// Time
 mod time;
 
-/// VFS path caching
-mod vfs_cache;
+// FIXME: vfs_cache uses SchemeNamespace which was removed in upstream namespace removal
+// mod vfs_cache;
 
 #[cfg_attr(not(test), global_allocator)]
 static ALLOCATOR: allocator::Allocator = allocator::Allocator;
@@ -202,7 +203,6 @@ fn kmain(bootstrap: Bootstrap) -> ! {
             context.name.push_str("[bootstrap]");
 
             // TODO: Remove these from kernel
-            context.ens = SchemeNamespace::from(1);
             context.euid = 0;
             context.egid = 0;
         }

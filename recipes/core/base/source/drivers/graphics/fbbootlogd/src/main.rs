@@ -7,7 +7,6 @@
 //! In the future fbbootlogd may also pull from logd as opposed to have logd push logs to it. And it
 //! it could display a boot splash like plymouth instead of a boot log when booting in quiet mode.
 
-use std::io::Write;
 use std::os::fd::AsRawFd;
 
 use event::EventQueue;
@@ -21,9 +20,9 @@ use crate::scheme::FbbootlogScheme;
 mod scheme;
 
 fn main() {
-    daemon::Daemon::new(daemon);
+    daemon::SchemeDaemon::new(daemon);
 }
-fn daemon(daemon: daemon::Daemon) -> ! {
+fn daemon(daemon: daemon::SchemeDaemon) -> ! {
     let event_queue = EventQueue::new().expect("fbbootlogd: failed to create event queue");
 
     event::user_data! {
@@ -33,17 +32,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         }
     }
 
-    let socket =
-        Socket::nonblock("fbbootlog").expect("fbbootlogd: failed to create fbbootlog scheme");
+    let socket = Socket::nonblock().expect("fbbootlogd: failed to create fbbootlog scheme");
 
-    {
-        // Add ourself as log sink
-        let mut log_file = std::fs::OpenOptions::new()
-            .write(true)
-            .open("/scheme/log/add_sink")
-            .unwrap();
-        log_file.write(b"/scheme/fbbootlog").unwrap();
-    }
+    let mut scheme = FbbootlogScheme::new();
 
     event_queue
         .subscribe(
@@ -51,9 +42,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
             Source::Scheme,
             event::EventFlags::READ,
         )
-        .expect("fbcond: failed to subscribe to scheme events");
-
-    let mut scheme = FbbootlogScheme::new();
+        .expect("fbbootlogd: failed to subscribe to scheme events");
 
     event_queue
         .subscribe(
@@ -63,11 +52,27 @@ fn daemon(daemon: daemon::Daemon) -> ! {
         )
         .expect("fbbootlogd: failed to subscribe to scheme events");
 
+    {
+        let log_fd = socket
+            .create_this_scheme_fd(0, 0, 0, 0)
+            .expect("fbbootlogd: failed to create log fd");
+        // Add ourself as log sink
+        let log_file = libredox::Fd::open(
+            "/scheme/log/add_sink",
+            libredox::flag::O_WRONLY | libredox::flag::O_CLOEXEC,
+            0,
+        )
+        .expect("fbbootlogd: failed to open log/add_sink");
+        log_file
+            .call_wo(&log_fd.to_ne_bytes(), syscall::CallFlags::FD, &[])
+            .expect("fbbootlogd: failed to send log fd to log scheme.");
+    }
+
+    let _ = daemon.ready_sync_scheme(&socket, &mut scheme);
+
     // This is not possible for now as fbbootlogd needs to open new displays at runtime for graphics
     // driver handoff. In the future inputd may directly pass a handle to the display instead.
     //libredox::call::setrens(0, 0).expect("fbbootlogd: failed to enter null namespace");
-
-    daemon.ready();
 
     for event in event_queue {
         match event.expect("fbbootlogd: failed to get event").user_data {
