@@ -91,20 +91,15 @@ setup_rust_tools() {
     # LLVM tools bundled with Rust
     LLVM_TOOLS_DIR="$RUST_SYSROOT/lib/rustlib/${HOST_TRIPLE}/bin"
 
-    if [ -d "$LLVM_TOOLS_DIR" ]; then
-        export AR="$LLVM_TOOLS_DIR/llvm-ar"
-        export STRIP="$LLVM_TOOLS_DIR/llvm-strip"
-        export OBJCOPY="$LLVM_TOOLS_DIR/llvm-objcopy"
-        export NM="$LLVM_TOOLS_DIR/llvm-nm"
-        export RANLIB="$LLVM_TOOLS_DIR/llvm-ar s"
-    else
-        # Fallback to system LLVM tools
-        export AR="$(which llvm-ar 2>/dev/null || which ar)"
-        export STRIP="$(which llvm-strip 2>/dev/null || which strip)"
-        export OBJCOPY="$(which llvm-objcopy 2>/dev/null || which objcopy)"
-        export NM="$(which llvm-nm 2>/dev/null || which nm)"
-        export RANLIB="$(which llvm-ranlib 2>/dev/null || which ranlib)"
-    fi
+    # Use per-tool fallback: prefer toolchain binary if it exists, else system LLVM tools.
+    _pick_tool() { local t="$LLVM_TOOLS_DIR/$1"; [ -f "$t" ] && echo "$t" || shift && echo "$(which "$@" 2>/dev/null | head -1)"; }
+    export AR="$(_pick_tool llvm-ar llvm-ar ar)"
+    export STRIP="$(_pick_tool llvm-strip llvm-strip strip)"
+    export OBJCOPY="$(_pick_tool llvm-objcopy llvm-objcopy objcopy)"
+    export NM="$(_pick_tool llvm-nm llvm-nm nm)"
+    RANLIB_BIN="$(_pick_tool llvm-ar llvm-ar ar)"
+    export RANLIB="$RANLIB_BIN s"
+    unset -f _pick_tool
 
     # rust-lld linker (no GCC needed!)
     export RUST_LLD="$RUST_SYSROOT/lib/rustlib/${HOST_TRIPLE}/bin/rust-lld"
