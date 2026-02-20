@@ -174,7 +174,7 @@ pub unsafe extern "C" fn fwscanf(
     format: *const wchar_t,
     mut __valist: ...
 ) -> c_int {
-    unsafe { vfwscanf(stream, format, __valist.as_va_list()) }
+    unsafe { vfwscanf(stream, format, __valist) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/getwc.html>.
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn swscanf(
     format: *const wchar_t,
     mut __valist: ...
 ) -> c_int {
-    unsafe { vswscanf(s, format, __valist.as_va_list()) }
+    unsafe { vswscanf(s, format, __valist) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/ungetwc.html>.
@@ -384,7 +384,7 @@ pub unsafe extern "C" fn fwprintf(
     format: *const wchar_t,
     mut __valist: ...
 ) -> c_int {
-    unsafe { vfwprintf(stream, format, __valist.as_va_list()) }
+    unsafe { vfwprintf(stream, format, __valist) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/vfwprintf.html>.
@@ -396,7 +396,7 @@ pub unsafe extern "C" fn vwprintf(format: *const wchar_t, arg: va_list) -> c_int
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/fwprintf.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wprintf(format: *const wchar_t, mut __valist: ...) -> c_int {
-    unsafe { vfwprintf(&mut *stdout, format, __valist.as_va_list()) }
+    unsafe { vfwprintf(&mut *stdout, format, __valist) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/vfwprintf.html>.
@@ -421,7 +421,7 @@ pub unsafe extern "C" fn swprintf(
     format: *const wchar_t,
     mut __valist: ...
 ) -> c_int {
-    unsafe { vswprintf(s, n, format, __valist.as_va_list()) }
+    unsafe { vswprintf(s, n, format, __valist) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/wcpcpy.html>.
@@ -1130,7 +1130,7 @@ pub unsafe extern "C" fn vwscanf(format: *const wchar_t, __valist: va_list) -> c
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/wscanf.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wscanf(format: *const wchar_t, mut __valist: ...) -> c_int {
-    unsafe { vfwscanf(stdin, format, __valist.as_va_list()) }
+    unsafe { vfwscanf(stdin, format, __valist) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/wcscasecmp.html>.

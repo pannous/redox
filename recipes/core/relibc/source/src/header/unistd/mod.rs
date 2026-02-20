@@ -4,7 +4,7 @@
 
 use core::{
     convert::TryFrom,
-    ffi::VaListImpl,
+    ffi::VaList,
     mem::{self, MaybeUninit},
     ptr, slice,
 };
@@ -296,7 +296,7 @@ pub unsafe extern "C" fn execl(
     mut __valist: ...
 ) -> c_int {
     unsafe {
-        with_argv(__valist, arg0, |args, _remaining_va| {
+        with_argv(__valist, arg0, |args, _remaining_va: VaList| {
             execv(path, args.as_ptr().cast())
         })
     }
@@ -310,7 +310,7 @@ pub unsafe extern "C" fn execle(
     mut __valist: ...
 ) -> c_int {
     unsafe {
-        with_argv(__valist, arg0, |args, mut remaining_va| {
+        with_argv(__valist, arg0, |args, mut remaining_va: VaList| {
             let envp = remaining_va.arg::<*const *mut c_char>();
             execve(path, args.as_ptr().cast(), envp)
         })
@@ -325,7 +325,7 @@ pub unsafe extern "C" fn execlp(
     mut __valist: ...
 ) -> c_int {
     unsafe {
-        with_argv(__valist, arg0, |args, _remaining_va| {
+        with_argv(__valist, arg0, |args, _remaining_va: VaList| {
             execvp(file, args.as_ptr().cast())
         })
     }
@@ -1185,16 +1185,17 @@ pub extern "C" fn vfork() -> pid_t {
 }
 
 unsafe fn with_argv(
-    mut va: VaListImpl,
+    mut va: VaList,
     arg0: *const c_char,
-    f: impl FnOnce(&[*const c_char], VaListImpl) -> c_int,
+    f: impl FnOnce(&[*const c_char], VaList) -> c_int,
 ) -> c_int {
-    let argc = 1 + unsafe {
-        va.with_copy(|mut copy| {
+    let argc = 1 + {
+        let mut copy = va.clone();
+        unsafe {
             core::iter::from_fn(|| Some(copy.arg::<*const c_char>()))
                 .position(|p| p.is_null())
                 .unwrap()
-        })
+        }
     };
 
     let mut stack: [MaybeUninit<*const c_char>; 32] = [MaybeUninit::uninit(); 32];

@@ -1178,7 +1178,7 @@ pub fn resolve_sym<'a>(
             }
         }
         // DSO not found in current scopes - fall through to normal lookup
-        trace!("[ld.so cache] MISS (DSO not found): {} in {}", name, cached.dso_path);
+        log::trace!("[ld.so cache] MISS (DSO not found): {} in {}", name, cached.dso_path);
     }
 
     // Normal lookup
@@ -1195,7 +1195,7 @@ pub fn resolve_sym<'a>(
             &dso.name,
         );
         if inserted {
-            trace!("[ld.so cache] INSERTED: {} from {}", name, dso.name);
+            log::trace!("[ld.so cache] INSERTED: {} from {}", name, dso.name);
         }
     }
 
