@@ -66,10 +66,13 @@ impl<T> WaitQueue<T> {
             let mut inner = self.inner.lock();
 
             if inner.is_empty() {
+                warn!("WAITQ-DEBUG: receive_into_user empty queue, block={}", block);
                 if block {
+                    warn!("WAITQ-DEBUG: going to wait ({})", reason);
                     if !self.condition.wait(inner, reason, token) {
                         return Err(Error::new(EINTR));
                     }
+                    warn!("WAITQ-DEBUG: woke up from wait ({})", reason);
                     continue;
                 } else if buf.is_empty() {
                     return Ok(0);

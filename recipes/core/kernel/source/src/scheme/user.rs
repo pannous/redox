@@ -224,6 +224,7 @@ impl UserInner {
             return Err(Error::new(ENODEV));
         }
 
+        warn!("SCHEME-DEBUG: call_inner op={} tag={} scheme={:?}", sqe.opcode, sqe.tag, self.scheme_id);
         {
             // Disable preemption to avoid context switches between setting the
             // process state and sending the scheme request. The process is made
@@ -249,9 +250,11 @@ impl UserInner {
                     callee_responsible: PageSpan::empty(),
                 };
             }
-            self.todo.send(sqe, token);
+            let waiters = self.todo.send(sqe, token);
+            warn!("SCHEME-DEBUG: sent SQE, queue_len={} scheme={:?}", waiters, self.scheme_id);
 
             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+            warn!("SCHEME-DEBUG: triggered event root={:?} scheme={:?}", self.root_id, self.scheme_id);
         }
 
         loop {
@@ -698,6 +701,7 @@ impl UserInner {
 
         // If unmounting, do not block so that EOF can be returned immediately
         let block = !(nonblock || self.unmounting.load(Ordering::SeqCst));
+        warn!("SCHEME-DEBUG: UserInner::read() scheme={:?} block={}", self.scheme_id, block);
 
         match self
             .todo
@@ -1351,7 +1355,9 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        warn!("SCHEME-DEBUG: kopenat file={} path={:?} scheme={:?}", file, path.as_str().unwrap_or("?"), self.inner.scheme_id);
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
+        warn!("SCHEME-DEBUG: kopenat captured tail, calling call_inner");
         let result = self.inner.call(
             ctx,
             Vec::new(),
