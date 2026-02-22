@@ -36,6 +36,9 @@ impl log::Log for Logger {
 const KERNEL_METADATA_BASE: usize = crate::arch::USERMODE_END - syscall::KERNEL_METADATA_SIZE;
 
 pub fn main() -> ! {
+    // Debug: write directly to fd 2 (debug/stderr)
+    let _ = syscall::write(2, b"bootstrap: exec::main() started\n");
+
     let mut cursor = KERNEL_METADATA_BASE;
     let kernel_scheme_infos = unsafe {
         let base_ptr = cursor as *const u8;
@@ -54,6 +57,7 @@ pub fn main() -> ! {
     };
 
     let kernel_schemes = KernelSchemeMap::new(kernel_scheme_infos);
+    let _ = syscall::write(2, b"bootstrap: got kernel_schemes\n");
 
     let auth = FdGuard::new(
         *kernel_schemes
@@ -70,6 +74,7 @@ pub fn main() -> ! {
         .to_upper()
         .unwrap();
     let this_thr_fd = unsafe { redox_rt::initialize_freestanding(this_thr_fd) };
+    let _ = syscall::write(2, b"bootstrap: initialized freestanding\n");
 
     let mut env_bytes = [0_u8; 4096];
     let mut envs = {
@@ -126,6 +131,7 @@ pub fn main() -> ! {
         (*(core::ptr::addr_of!(__initfs_header) as *const redox_initfs::types::Header)).initfs_size
     };
 
+    let _ = syscall::write(2, b"bootstrap: spawning initfs daemon\n");
     let initfs_fd = spawn(
         "initfs daemon",
         &auth,
@@ -146,6 +152,7 @@ pub fn main() -> ! {
         },
     );
 
+    let _ = syscall::write(2, b"bootstrap: spawning process manager\n");
     let proc_fd = spawn(
         "process manager",
         &auth,
@@ -154,6 +161,7 @@ pub fn main() -> ! {
         |write_fd| crate::procmgr::run(write_fd, &auth, &kernel_schemes, scheme_creation_cap),
     );
 
+    let _ = syscall::write(2, b"bootstrap: spawning init ns manager\n");
     let initns_fd = spawn(
         "init namespace manager",
         &auth,
@@ -171,6 +179,7 @@ pub fn main() -> ! {
         },
     );
 
+    let _ = syscall::write(2, b"bootstrap: making init process\n");
     let (init_proc_fd, init_thr_fd) = unsafe { make_init(proc_fd) };
     // from this point, this_thr_fd is no longer valid
 
@@ -187,6 +196,7 @@ pub fn main() -> ! {
 
     let path = "/bin/init";
 
+    let _ = syscall::write(2, b"bootstrap: opening /bin/init\n");
     let image_file = FdGuard::new(
         syscall::openat(initfs_fd, path, O_RDONLY | O_CLOEXEC, 0).expect("failed to open init"),
     )

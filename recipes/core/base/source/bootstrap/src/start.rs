@@ -53,14 +53,12 @@ pub unsafe extern "C" fn start() -> ! {
     let _ = syscall::openat(debug_fd, "", syscall::O_WRONLY, 0); // stderr
 
     unsafe {
-        // Make the entire initfs read-only (header + content)
-        // The initfs header is at 4096 (after the null page)
-        let initfs_header = 4096 as *const redox_initfs::types::Header;
-        let initfs_size = (*initfs_header).initfs_size.get() as usize;
-        // Round up to page boundary
-        let initfs_pages = initfs_size.div_ceil(4096) * 4096;
-        let _ = syscall::mprotect(4096, initfs_pages, MapFlags::PROT_READ | MapFlags::MAP_PRIVATE)
-            .expect("mprotect failed for initfs");
+        // Protect only the initfs header page (before our text segment).
+        // The bootstrap ELF text is also in the initfs range, so we can't mprotect the
+        // entire initfs here without removing exec from our own running code. The later
+        // per-segment mprotects (text, rodata, data, rest) cover the rest.
+        let _ = syscall::mprotect(4096, 4096, MapFlags::PROT_READ | MapFlags::MAP_PRIVATE)
+            .expect("mprotect failed for initfs header page");
 
         let _ = syscall::mprotect(
             text_start,
