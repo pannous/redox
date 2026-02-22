@@ -156,8 +156,10 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         }
     };
 
-    #[allow(deprecated)]
-    let executor = driver_block::FuturesExecutor;
+    // Use TrivialExecutor (busy-poll) for partition table detection during init.
+    // FuturesExecutor parks the thread and relies on a waker that nobody calls
+    // before the event loop is running, causing a deadlock.
+    let executor = driver_block::TrivialExecutor;
     let mut scheme = DiskScheme::new(
         Some(daemon),
         scheme_name,

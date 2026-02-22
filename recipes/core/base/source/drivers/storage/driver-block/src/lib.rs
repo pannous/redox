@@ -325,7 +325,9 @@ impl<T: Disk> DiskScheme<T> {
         executor: &impl ExecutorTrait,
     ) -> Self {
         assert!(scheme_name.starts_with("disk"));
+        eprintln!("driver-block: DiskScheme::new start, scheme_name={}", scheme_name);
         let socket = Socket::nonblock().expect("failed to create disk scheme");
+        eprintln!("driver-block: Socket::nonblock() OK");
 
         let mut scheme = Self {
             scheme_name: scheme_name,
@@ -338,14 +340,20 @@ impl<T: Disk> DiskScheme<T> {
             handles: BTreeMap::new(),
         };
 
+        eprintln!("driver-block: calling scheme_root()");
         let cap_id = scheme
             .scheme_root()
             .expect("failed to get this scheme root");
+        eprintln!("driver-block: scheme_root() OK, cap_id={}", cap_id);
+        eprintln!("driver-block: calling register_scheme_inner");
         register_scheme_inner(&scheme.socket, &scheme.scheme_name, cap_id)
             .expect("failed to register disk scheme root");
+        eprintln!("driver-block: register_scheme_inner OK");
 
         if let Some(daemon) = daemon {
+            eprintln!("driver-block: calling daemon.ready()");
             daemon.ready();
+            eprintln!("driver-block: daemon.ready() OK");
         }
 
         scheme
