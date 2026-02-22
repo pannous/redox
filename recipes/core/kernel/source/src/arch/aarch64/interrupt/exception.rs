@@ -32,6 +32,18 @@ unsafe fn far_el1() -> usize {
     }
 }
 
+// Direct UART write bypassing all lock-based logging - for deadlock diagnosis
+// Matches the pattern used in start.rs for early UART output
+#[inline(never)]
+unsafe fn uart_puts(s: &[u8]) {
+    unsafe {
+        let uart = (crate::PHYS_OFFSET + 0x0900_0000) as *mut u32;
+        for &b in s {
+            core::ptr::write_volatile(uart, b as u32);
+        }
+    }
+}
+
 unsafe fn instr_data_abort_inner(
     stack: &mut InterruptStack,
     from_user: bool,
@@ -39,12 +51,13 @@ unsafe fn instr_data_abort_inner(
     _from: &str,
 ) -> bool {
     unsafe {
+        // Direct UART output - bypasses spin::Mutex LOG to detect deadlock
+        uart_puts(b"[DA]");
+
         let iss = iss(stack.iret.esr_el1);
         let fsc = iss & 0x3F;
-        //dbg!(fsc);
 
         let was_translation_fault = fsc >= 0b000100 && fsc <= 0b000111;
-        //let was_permission_fault = fsc >= 0b001101 && fsc <= 0b001111;
         let write_not_read_if_data = iss & (1 << 6) != 0;
 
         let mut flags = GenericPfFlags::empty();
@@ -65,6 +78,7 @@ unsafe fn instr_data_abort_inner(
             fsc, faulting_addr.data(), elr, from_user, write_not_read_if_data);
 
         let result = crate::memory::page_fault_handler(stack, flags, faulting_addr);
+        uart_puts(b"[DA-done]");
         warn!("BOOT: data_abort result={}", result.is_ok());
         result.is_ok()
     }
@@ -152,11 +166,14 @@ unsafe fn instr_trapped_msr_mrs_inner(
 
 exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
     unsafe {
+        // Direct UART: fires for ANY sync exception at EL1
+        uart_puts(b"[SYNC_EL1]");
         if !pf_inner(
             stack,
             exception_code(stack.iret.esr_el1),
             "sync_exc_el1_spx",
         ) {
+            uart_puts(b"[PF-UNHANDLED]");
             println!("Synchronous exception at EL1 with SPx");
             if exception_code(stack.iret.esr_el1) == 0b100101 {
                 let far_el1 = far_el1();

@@ -196,7 +196,42 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         let header_slice = UserSliceWo::new(cursor, HEADER_SIZE)
             .expect("failed to create kernel schemes header user slice");
         warn!("BOOT: umb step 6b UserSliceWo created");
+        // Probe address translation for metadata page before attempting write
+        unsafe {
+            let uart = (crate::PHYS_OFFSET + 0x0900_0000) as *mut u32;
+            // AT S1E1W: EL1 write translation probe for user space address
+            let par: u64;
+            core::arch::asm!(
+                "at s1e1w, {addr}",
+                "isb",
+                "mrs {par}, par_el1",
+                addr = in(reg) KERNEL_METADATA_BASE as u64,
+                par = out(reg) par,
+            );
+            // PAR_EL1 bit 0 = F (fault). If F=1, fault occurred
+            let fault = par & 1;
+            let fst = (par >> 1) & 0x3f;  // fault status
+            let ptw = (par >> 8) & 1;     // page table walk
+            for &b in b"[AT_S1E1W:F=" { core::ptr::write_volatile(uart, b as u32); }
+            core::ptr::write_volatile(uart, b'0' as u32 + fault as u32);
+            for &b in b",FST=" { core::ptr::write_volatile(uart, b as u32); }
+            // print fst as hex
+            let hi = (fst >> 4) as u8;
+            let lo = (fst & 0xf) as u8;
+            core::ptr::write_volatile(uart, if hi < 10 { b'0' + hi } else { b'a' + hi - 10 } as u32);
+            core::ptr::write_volatile(uart, if lo < 10 { b'0' + lo } else { b'a' + lo - 10 } as u32);
+            for &b in b"]\n" { core::ptr::write_volatile(uart, b as u32); }
+            let _ = ptw;
+        }
+        unsafe {
+            let uart = (crate::PHYS_OFFSET + 0x0900_0000) as *mut u32;
+            for &b in b"[PRE-COPY]\n" { core::ptr::write_volatile(uart, b as u32); }
+        }
         let header_result = header_slice.copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes());
+        unsafe {
+            let uart = (crate::PHYS_OFFSET + 0x0900_0000) as *mut u32;
+            for &b in b"[POST-COPY]\n" { core::ptr::write_volatile(uart, b as u32); }
+        }
         warn!("BOOT: umb step 6c header_result={:?}", header_result.is_ok());
         header_result.expect("failed to copy kernel schemes count");
         cursor += HEADER_SIZE;
