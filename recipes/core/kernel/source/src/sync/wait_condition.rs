@@ -25,7 +25,7 @@ impl WaitCondition {
         let mut contexts = self.contexts.lock(token.token());
         let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
-        warn!("WAITCOND-DEBUG: notify() found {} waiters", len);
+        trace!("WAITCOND-DEBUG: notify() found {} waiters", len);
         while let Some(context_weak) = contexts.pop() {
             if let Some(context_ref) = context_weak.upgrade() {
                 context_ref.write(token.token()).unblock();

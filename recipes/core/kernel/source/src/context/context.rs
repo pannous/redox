@@ -218,7 +218,7 @@ impl Context {
     pub fn block(&mut self, reason: &'static str) -> bool {
         if self.status.is_runnable() {
             if self.name.starts_with("[init]") || self.name.starts_with("/scheme/initfs/bin/init") {
-                warn!("CTX-DEBUG: block() name={} reason={}", self.name, reason);
+                trace!("CTX-DEBUG: block() name={} reason={}", self.name, reason);
             }
             self.status = Status::Blocked;
             self.status_reason = reason;
