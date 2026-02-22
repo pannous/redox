@@ -225,7 +225,7 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
                             &mut resolve_nodes,
                         )
                     })?;
-                    return self.open(&resolved, flags, ctx);
+                    return self.open_internal(TreePtr::root(), &resolved, flags, ctx);
                 } else if !node.data().is_symlink() && flags & O_SYMLINK == O_SYMLINK {
                     return Err(Error::new(EINVAL));
                 } else {
@@ -430,8 +430,11 @@ fn dirname(path: &str) -> Option<String> {
 }
 
 impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
-    fn open(&mut self, url: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
-        self.open_internal(TreePtr::root(), url, flags, ctx)
+    fn scheme_root(&mut self) -> Result<usize> {
+        // Allocate a root DirResource at id=0 (next_id starts at 1, so 0 is reserved for root)
+        let root = DirResource::new(self.scheme_name.clone(), None, TreePtr::root(), None, 0);
+        self.files.insert(0, Box::new(root));
+        Ok(0)
     }
 
     fn openat(

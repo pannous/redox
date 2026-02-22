@@ -167,7 +167,9 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         &executor,
     );
 
+    eprintln!("virtio-blkd: BEFORE setrens");
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
+    eprintln!("virtio-blkd: AFTER setrens");
 
     event_queue
         .subscribe(
@@ -176,6 +178,7 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
             event::EventFlags::READ,
         )
         .unwrap();
+    eprintln!("virtio-blkd: AFTER subscribe, entering event loop");
 
     // Use TrivialExecutor (busy-poll) for scheme tick. FuturesExecutor would park the
     // thread when virtio I/O returns Pending, but no waker is connected to virtio IRQs.

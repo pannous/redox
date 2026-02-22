@@ -1,4 +1,4 @@
-use redox_scheme::{scheme::SchemeSync, RequestKind, Response, SignalBehavior, Socket};
+use redox_scheme::{scheme::{register_sync_scheme, SchemeSync}, RequestKind, Response, SignalBehavior, Socket};
 use std::io;
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -21,12 +21,17 @@ where
 {
     let mountpoint = mountpoint.as_ref();
     let scheme_name = format!("{}", mountpoint.display());
-    let socket = Socket::create(&scheme_name)?;
+    let socket = Socket::create()?;
 
     let mounted_path = format!("/scheme/{}", mountpoint.display());
-    let res = callback(Path::new(&mounted_path));
 
-    let mut scheme = FileScheme::new(scheme_name, mounted_path, filesystem, &socket);
+    // Register scheme BEFORE calling callback (callback calls setrens/capability_mode
+    // which enters null namespace - scheme registration must happen before that).
+    let mut scheme = FileScheme::new(scheme_name.clone(), mounted_path.clone(), filesystem, &socket);
+    register_sync_scheme(&socket, &scheme_name, &mut scheme)
+        .map_err(|e| io::Error::from_raw_os_error(e.errno as i32))?;
+
+    let res = callback(Path::new(&mounted_path));
     while IS_UMT.load(Ordering::SeqCst) == 0 {
         let req = match socket.next_request(SignalBehavior::Restart)? {
             None => break,
