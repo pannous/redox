@@ -460,9 +460,11 @@ build_drivers() {
         # PCI and hardware
         pcid pcid-spawner acpid hwd
         # Storage
-        nvmed virtio-blkd virtio-9pd lived
+        nvmed virtio-blkd lived
+        # FS drivers
+        virtio-9pd
         # Graphics
-        vesad fbcond fbbootlogd virtio-gpud virtio-gpu-venusd inputd
+        vesad fbcond fbbootlogd virtio-gpud inputd
         # Network
         virtio-netd
         # Test utilities

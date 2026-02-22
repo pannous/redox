@@ -448,16 +448,18 @@ build_drivers() {
         # PCI and hardware
         pcid pcid-spawner acpid hwd
         # Storage
-        nvmed virtio-blkd virtio-9pd lived
-        # Graphics
-        vesad fbcond fbbootlogd virtio-gpud virtio-gpu-venusd inputd
+        nvmed virtio-blkd lived
+        # FS drivers (virtio-9pd uses old Socket::create(name) API, needs redox-scheme 0.9 porting)
+        # virtio-9pd
+        # Graphics (virtio-gpud removed: requires virtio-gpu-venusd which was removed by upstream)
+        vesad fbcond fbbootlogd inputd
         # Network
         virtio-netd
         # Test utilities
         test-9p
     )
 
-    RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-z -Clink-arg=muldefs" \
+    RUSTFLAGS="$RUSTFLAGS -L $sysroot/lib -Cpanic=abort -Clink-arg=-lunwind_stubs -Clink-arg=-z -Clink-arg=muldefs" \
     cargo build \
         --target ${TARGET_USER}-clif.json \
         --release \
@@ -500,7 +502,8 @@ build_simple_coreutils() {
 
     local count=0
     for bin in "${binaries[@]}"; do
-        local src="target/${TARGET_USER}-clif/release/$bin"
+        # Binaries go to workspace target dir (not subdirectory target)
+        local src="../target/${TARGET_USER}-clif/release/$bin"
         if [ -f "$src" ]; then
             $STRIP -o "$output_dir/$bin" "$src"
             ((count++))

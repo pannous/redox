@@ -16,6 +16,16 @@ members = [
     "ramfs",
     "randd",
     "zerod",
+    "test-9p",
+    "simple-coreutils",
+    "simple-ls",
+    "simple-file",
+    "simple-edit",
+    # "simple-pkg",  # removed during merge, not critical for initfs
+    # "simple-xxd",  # removed during merge, not critical for initfs
+    "gpu-info",
+    "set-background",
+    "strace",
 
     "drivers/common",
     "drivers/executor",
@@ -42,6 +52,8 @@ members = [
     "drivers/graphics/ihdgd",
     "drivers/graphics/vesad",
     "drivers/graphics/virtio-gpud",
+
+    "drivers/fs/virtio-9pd",
 
     "drivers/input/ps2d",
     "drivers/input/usbhidd",
@@ -83,6 +95,7 @@ log = "0.4"
 libredox = "0.1.12"
 orbclient = { git = "https://gitlab.redox-os.org/redox-os/orbclient" }
 redox_event = "0.4.3"
+event = { package = "redox_event", version = "0.4.3" }
 redox-ioctl = { git = "https://gitlab.redox-os.org/redox-os/relibc.git" }
 redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git" }
 redox-rt = { git = "https://gitlab.redox-os.org/redox-os/relibc.git", default-features = false }

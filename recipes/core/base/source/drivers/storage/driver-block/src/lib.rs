@@ -698,7 +698,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
 
     async fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> Result<()> {
         match *self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::List(_) => Ok(()),
+            Handle::List(_) | Handle::SchemeRoot => Ok(()),
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 disk.flush().await

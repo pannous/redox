@@ -5,7 +5,7 @@ use event::{EventQueue, UserData};
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult};
 use syscall::schemev2::NewFdFlags;
-use syscall::{Error, EventFlags, Result, EAGAIN, EBADF, ENOENT, O_NONBLOCK};
+use syscall::{Error, EventFlags, Result, EACCES, EAGAIN, EBADF, ENOENT, O_NONBLOCK};
 
 use crate::display::Display;
 use crate::text::TextScreen;

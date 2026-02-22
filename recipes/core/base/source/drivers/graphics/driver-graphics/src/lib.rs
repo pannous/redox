@@ -1,4 +1,4 @@
-#![feature(slice_as_array)]
+// #![feature(slice_as_array)]  // stabilized in nightly-2026+
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_char;
