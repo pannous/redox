@@ -224,7 +224,11 @@ impl UserInner {
             return Err(Error::new(ENODEV));
         }
 
-        warn!("SCHEME-DEBUG: call_inner op={} tag={} scheme={:?}", sqe.opcode, sqe.tag, self.scheme_id);
+        {
+            let ctx = context::current();
+            let name = ctx.read(token.token()).name.clone();
+            warn!("SCHEME-DEBUG: call_inner op={} tag={} scheme={:?} caller={}", sqe.opcode, sqe.tag, self.scheme_id, name);
+        }
         {
             // Disable preemption to avoid context switches between setting the
             // process state and sending the scheme request. The process is made
@@ -701,7 +705,11 @@ impl UserInner {
 
         // If unmounting, do not block so that EOF can be returned immediately
         let block = !(nonblock || self.unmounting.load(Ordering::SeqCst));
-        warn!("SCHEME-DEBUG: UserInner::read() scheme={:?} block={}", self.scheme_id, block);
+        {
+            let ctx = context::current();
+            let name = ctx.read(token.token()).name.clone();
+            warn!("SCHEME-DEBUG: UserInner::read() scheme={:?} block={} ctx={}", self.scheme_id, block, name);
+        }
 
         match self
             .todo
@@ -718,6 +726,7 @@ impl UserInner {
     }
 
     pub fn write(&self, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
+        warn!("SCHEME-DEBUG: UserInner::write() scheme={:?} buf_len={}", self.scheme_id, buf.len());
         let mut bytes_read = 0;
         for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
             match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? })
@@ -901,6 +910,7 @@ impl UserInner {
         Ok(())
     }
     fn respond(&self, tag: u32, mut response: Response, token: &mut CleanLockToken) -> Result<()> {
+        warn!("SCHEME-DEBUG: respond() tag={} scheme={:?}", tag, self.scheme_id);
         let to_close: Vec<FileDescription>;
 
         {
@@ -1355,7 +1365,11 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        warn!("SCHEME-DEBUG: kopenat file={} path={:?} scheme={:?}", file, path.as_str().unwrap_or("?"), self.inner.scheme_id);
+        {
+            let ctx = context::current();
+            let name = ctx.read(token.token()).name.clone();
+            warn!("SCHEME-DEBUG: kopenat file={} path={:?} scheme={:?} caller={}", file, path.as_str().unwrap_or("?"), self.inner.scheme_id, name);
+        }
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
         warn!("SCHEME-DEBUG: kopenat captured tail, calling call_inner");
         let result = self.inner.call(

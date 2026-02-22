@@ -252,6 +252,7 @@ fn run_userspace(token: &mut CleanLockToken) -> ! {
                         info!("run_userspace: CPU {} idle spin {} (all contexts idle)",
                               crate::cpu_id().get(), c);
                     }
+                    // Context blocks are logged via CTX-DEBUG in context::block()
                     // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
                     interrupt::enable_and_halt();
                 }
