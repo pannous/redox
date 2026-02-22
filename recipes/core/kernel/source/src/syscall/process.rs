@@ -89,7 +89,7 @@ const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_S
 
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
-    warn!("BOOT: umb step 1 page_count={}", bootstrap.page_count);
+    debug!("BOOT: umb step 1 page_count={}", bootstrap.page_count);
 
     {
         let addr_space = Arc::clone(
@@ -98,7 +98,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
-        warn!("BOOT: umb step 2 got addr_space");
+        debug!("BOOT: umb step 2 got addr_space");
 
         let base = Page::containing_address(VirtualAddress::new(PAGE_SIZE));
         let flags = MapFlags::MAP_FIXED_NOREPLACE
@@ -129,13 +129,13 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             )
             .expect("Failed to allocate bootstrap pages");
-        warn!("BOOT: umb step 3 mapped initfs");
+        debug!("BOOT: umb step 3 mapped initfs");
 
         // Insert kernel schemes root capabilities.
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
         for (i, scheme) in ALL_KERNEL_SCHEMES.iter().enumerate() {
-            warn!("BOOT: umb inserting scheme {}", i);
+            debug!("BOOT: umb inserting scheme {}", i);
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {
@@ -152,7 +152,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             };
         }
-        warn!("BOOT: umb step 4 inserted scheme fds");
+        debug!("BOOT: umb step 4 inserted scheme fds");
         // Insert a scheme creation capability for the usermode bootstrap.
         let scheme_creation_cap = {
             // First, get the scheme root to initialize the schemelist.
@@ -164,7 +164,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             let scheme_id = &SchemeList.id();
             insert_fd(*scheme_id, cap_fd, false, token)
         };
-        warn!("BOOT: umb step 5 inserted scheme creation cap");
+        debug!("BOOT: umb step 5 inserted scheme creation cap");
 
         let kernel_schemes_info_page = addr_space
             .acquire_write()
@@ -188,54 +188,19 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             )
             .expect("Failed to allocate kernel scheme info page");
-        warn!("BOOT: umb step 6 mapped metadata page at {:X}", KERNEL_METADATA_BASE);
+        debug!("BOOT: umb step 6 mapped metadata page at {:X}", KERNEL_METADATA_BASE);
 
         let mut cursor = kernel_schemes_info_page.start_address().data();
-        warn!("BOOT: umb step 6a cursor={:X}", cursor);
+        debug!("BOOT: umb step 6a cursor={:X}", cursor);
         const HEADER_SIZE: usize = mem::size_of::<usize>();
         let header_slice = UserSliceWo::new(cursor, HEADER_SIZE)
             .expect("failed to create kernel schemes header user slice");
-        warn!("BOOT: umb step 6b UserSliceWo created");
-        // Probe address translation for metadata page before attempting write
-        unsafe {
-            let uart = (crate::PHYS_OFFSET + 0x0900_0000) as *mut u32;
-            // AT S1E1W: EL1 write translation probe for user space address
-            let par: u64;
-            core::arch::asm!(
-                "at s1e1w, {addr}",
-                "isb",
-                "mrs {par}, par_el1",
-                addr = in(reg) KERNEL_METADATA_BASE as u64,
-                par = out(reg) par,
-            );
-            // PAR_EL1 bit 0 = F (fault). If F=1, fault occurred
-            let fault = par & 1;
-            let fst = (par >> 1) & 0x3f;  // fault status
-            let ptw = (par >> 8) & 1;     // page table walk
-            for &b in b"[AT_S1E1W:F=" { core::ptr::write_volatile(uart, b as u32); }
-            core::ptr::write_volatile(uart, b'0' as u32 + fault as u32);
-            for &b in b",FST=" { core::ptr::write_volatile(uart, b as u32); }
-            // print fst as hex
-            let hi = (fst >> 4) as u8;
-            let lo = (fst & 0xf) as u8;
-            core::ptr::write_volatile(uart, if hi < 10 { b'0' + hi } else { b'a' + hi - 10 } as u32);
-            core::ptr::write_volatile(uart, if lo < 10 { b'0' + lo } else { b'a' + lo - 10 } as u32);
-            for &b in b"]\n" { core::ptr::write_volatile(uart, b as u32); }
-            let _ = ptw;
-        }
-        unsafe {
-            let uart = (crate::PHYS_OFFSET + 0x0900_0000) as *mut u32;
-            for &b in b"[PRE-COPY]\n" { core::ptr::write_volatile(uart, b as u32); }
-        }
+        debug!("BOOT: umb step 6b UserSliceWo created");
         let header_result = header_slice.copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes());
-        unsafe {
-            let uart = (crate::PHYS_OFFSET + 0x0900_0000) as *mut u32;
-            for &b in b"[POST-COPY]\n" { core::ptr::write_volatile(uart, b as u32); }
-        }
-        warn!("BOOT: umb step 6c header_result={:?}", header_result.is_ok());
+        debug!("BOOT: umb step 6c header_result={:?}", header_result.is_ok());
         header_result.expect("failed to copy kernel schemes count");
         cursor += HEADER_SIZE;
-        warn!("BOOT: umb step 6d after header copy cursor={:X}", cursor);
+        debug!("BOOT: umb step 6d after header copy cursor={:X}", cursor);
         let info_bytes = unsafe {
             core::slice::from_raw_parts(
                 kernel_schemes_infos.as_ptr() as *const u8,
@@ -243,18 +208,18 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             )
         };
         let info_len = KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>();
-        warn!("BOOT: umb step 6e info_len={} cursor={:X}", info_len, cursor);
+        debug!("BOOT: umb step 6e info_len={} cursor={:X}", info_len, cursor);
         UserSliceWo::new(cursor, info_len)
         .expect("failed to create kernel schemes info user slice")
         .copy_common_bytes_from_slice(info_bytes)
         .expect("failed to copy kernel schemes info");
-        warn!("BOOT: umb step 6f after info copy");
+        debug!("BOOT: umb step 6f after info copy");
         cursor += KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>();
         UserSliceWo::new(cursor, mem::size_of::<usize>())
             .expect("failed to create scheme creation cap user slice")
             .copy_common_bytes_from_slice(&scheme_creation_cap.to_ne_bytes())
             .expect("failed to copy scheme creation cap");
-        warn!("BOOT: umb step 7 wrote metadata");
+        debug!("BOOT: umb step 7 wrote metadata");
 
         mprotect(
             KERNEL_METADATA_BASE,
@@ -262,19 +227,19 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             MapFlags::PROT_READ,
         )
         .expect("failed to mprotect kernel schemes info page");
-        warn!("BOOT: umb step 8 mprotected metadata");
+        debug!("BOOT: umb step 8 mprotected metadata");
     }
 
-    warn!("BOOT: umb step 9 copying bootstrap to user");
+    debug!("BOOT: umb step 9 copying bootstrap to user");
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
     UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
         .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
-    warn!("BOOT: umb step 10 bootstrap copied");
+    debug!("BOOT: umb step 10 bootstrap copied");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
-    warn!("BOOT: Bootstrap entry point: {:X}", bootstrap_entry);
+    debug!("BOOT: Bootstrap entry point: {:X}", bootstrap_entry);
     assert_ne!(bootstrap_entry, 0);
 
     // Start in a minimal environment without any stack.
