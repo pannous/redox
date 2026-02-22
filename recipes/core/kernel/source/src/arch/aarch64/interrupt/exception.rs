@@ -60,9 +60,13 @@ unsafe fn instr_data_abort_inner(
         flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, from_user);
 
         let faulting_addr = VirtualAddress::new(far_el1());
-        //dbg!(faulting_addr, flags, from);
+        let elr = stack.iret.elr_el1;
+        warn!("BOOT: data_abort fsc={:#x} far={:#x} elr={:#x} from_user={} write={}",
+            fsc, faulting_addr.data(), elr, from_user, write_not_read_if_data);
 
-        crate::memory::page_fault_handler(stack, flags, faulting_addr).is_ok()
+        let result = crate::memory::page_fault_handler(stack, flags, faulting_addr);
+        warn!("BOOT: data_abort result={}", result.is_ok());
+        result.is_ok()
     }
 }
 

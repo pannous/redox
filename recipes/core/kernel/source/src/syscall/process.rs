@@ -191,25 +191,29 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         warn!("BOOT: umb step 6 mapped metadata page at {:X}", KERNEL_METADATA_BASE);
 
         let mut cursor = kernel_schemes_info_page.start_address().data();
+        warn!("BOOT: umb step 6a cursor={:X}", cursor);
         const HEADER_SIZE: usize = mem::size_of::<usize>();
-        UserSliceWo::new(cursor, HEADER_SIZE)
-            .expect("failed to create kernel schemes header user slice")
-            .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
-            .expect("failed to copy kernel schemes count");
+        let header_slice = UserSliceWo::new(cursor, HEADER_SIZE)
+            .expect("failed to create kernel schemes header user slice");
+        warn!("BOOT: umb step 6b UserSliceWo created");
+        let header_result = header_slice.copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes());
+        warn!("BOOT: umb step 6c header_result={:?}", header_result.is_ok());
+        header_result.expect("failed to copy kernel schemes count");
         cursor += HEADER_SIZE;
+        warn!("BOOT: umb step 6d after header copy cursor={:X}", cursor);
         let info_bytes = unsafe {
             core::slice::from_raw_parts(
                 kernel_schemes_infos.as_ptr() as *const u8,
                 KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
             )
         };
-        UserSliceWo::new(
-            cursor,
-            KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
-        )
+        let info_len = KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>();
+        warn!("BOOT: umb step 6e info_len={} cursor={:X}", info_len, cursor);
+        UserSliceWo::new(cursor, info_len)
         .expect("failed to create kernel schemes info user slice")
         .copy_common_bytes_from_slice(info_bytes)
         .expect("failed to copy kernel schemes info");
+        warn!("BOOT: umb step 6f after info copy");
         cursor += KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>();
         UserSliceWo::new(cursor, mem::size_of::<usize>())
             .expect("failed to create scheme creation cap user slice")
