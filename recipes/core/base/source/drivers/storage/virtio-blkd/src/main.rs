@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
-use driver_block::DiskScheme;
+use driver_block::{DiskScheme, ExecutorTrait};
 use static_assertions::const_assert_eq;
 
 use pcid_interface::*;
@@ -177,9 +177,16 @@ fn daemon(daemon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         )
         .unwrap();
 
+    // Use TrivialExecutor (busy-poll) for scheme tick. FuturesExecutor would park the
+    // thread when virtio I/O returns Pending, but no waker is connected to virtio IRQs.
+    let executor = driver_block::TrivialExecutor;
     for event in event_queue {
         match event.unwrap().user_data {
-            Event::Scheme => futures::executor::block_on(scheme.tick()).unwrap(),
+            Event::Scheme => {
+                eprintln!("virtio-blkd: event loop tick");
+                executor.block_on(scheme.tick()).unwrap();
+                eprintln!("virtio-blkd: event loop tick done");
+            }
         }
     }
 

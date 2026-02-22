@@ -309,7 +309,7 @@ impl ExecutorTrait for TrivialExecutor {
             match fut.as_mut().poll(&mut cx) {
                 Poll::Ready(v) => return v,
                 Poll::Pending => {
-                    log::warn!("TrivialExecutor: future wasn't trivial");
+                    log::trace!("TrivialExecutor: future wasn't trivial");
                     continue;
                 }
             }

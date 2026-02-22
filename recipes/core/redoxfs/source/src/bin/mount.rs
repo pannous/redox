@@ -166,10 +166,13 @@ fn filesystem_by_path(
             bootloader_password()
         };
 
+        eprintln!("redoxfs: DiskFile::open {}", path);
         match DiskFile::open(path).map(DiskCache::new) {
             Ok(disk) => {
+                eprintln!("redoxfs: DiskFile::open {} OK, calling FileSystem::open", path);
                 match redoxfs::FileSystem::open(disk, password_opt.as_deref(), block_opt, true) {
                     Ok(filesystem) => {
+                        eprintln!("redoxfs: FileSystem::open {} OK", path);
                         log::debug!(
                             "opened filesystem on {} with uuid {}",
                             path,
@@ -178,7 +181,9 @@ fn filesystem_by_path(
 
                         return Some((path.to_string(), filesystem));
                     }
-                    Err(err) => match err.errno {
+                    Err(err) => {
+                        eprintln!("redoxfs: FileSystem::open {} err errno={}", path, err.errno);
+                        match err.errno {
                         syscall::ENOKEY => {
                             if password_opt.is_some() {
                                 eprintln!("redoxfs: incorrect password ({}/{})", attempt, attempts);
@@ -190,10 +195,12 @@ fn filesystem_by_path(
                             }
                             break;
                         }
+                        }
                     },
                 }
             }
             Err(err) => {
+                eprintln!("redoxfs: DiskFile::open {} err errno={}", path, err.errno);
                 if log_errors {
                     log::error!("failed to open image {}: {}", path, err);
                 }
@@ -221,8 +228,10 @@ fn filesystem_by_uuid(
 
     use redox_path::RedoxPath;
 
+    eprintln!("redoxfs: filesystem_by_uuid start, uuid={}", uuid.hyphenated());
     match fs::read_dir("/scheme") {
         Ok(entries) => {
+            eprintln!("redoxfs: read_dir /scheme OK");
             for entry_res in entries {
                 if let Ok(entry) = entry_res {
                     if let Some(disk) = entry.path().to_str() {
@@ -230,15 +239,16 @@ fn filesystem_by_uuid(
                             .unwrap_or(RedoxPath::from_absolute("/")?)
                             .is_scheme_category("disk")
                         {
-                            log::debug!("found scheme {}", disk);
+                            eprintln!("redoxfs: found disk scheme: {}", disk);
                             match fs::read_dir(disk) {
                                 Ok(entries) => {
+                                    eprintln!("redoxfs: read_dir {} OK", disk);
                                     for entry_res in entries {
                                         if let Ok(entry) = entry_res {
                                             if let Ok(path) =
                                                 entry.path().into_os_string().into_string()
                                             {
-                                                log::debug!("found path {}", path);
+                                                eprintln!("redoxfs: trying path: {}", path);
                                                 if let Some((path, filesystem)) =
                                                     filesystem_by_path(&path, block_opt, false)
                                                 {
