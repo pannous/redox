@@ -79,4 +79,3 @@ panic = "abort"
 # Avoids having to define the eh_personality lang item and reduces kernel size
 panic = "abort"
 #lto = true
-debug = "full"

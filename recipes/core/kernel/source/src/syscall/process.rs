@@ -89,6 +89,7 @@ const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_S
 
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
+    warn!("BOOT: umb step 1 page_count={}", bootstrap.page_count);
 
     {
         let addr_space = Arc::clone(
@@ -97,6 +98,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
+        warn!("BOOT: umb step 2 got addr_space");
 
         let base = Page::containing_address(VirtualAddress::new(PAGE_SIZE));
         let flags = MapFlags::MAP_FIXED_NOREPLACE
@@ -127,11 +129,13 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             )
             .expect("Failed to allocate bootstrap pages");
+        warn!("BOOT: umb step 3 mapped initfs");
 
         // Insert kernel schemes root capabilities.
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
         for (i, scheme) in ALL_KERNEL_SCHEMES.iter().enumerate() {
+            warn!("BOOT: umb inserting scheme {}", i);
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {
@@ -148,6 +152,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             };
         }
+        warn!("BOOT: umb step 4 inserted scheme fds");
         // Insert a scheme creation capability for the usermode bootstrap.
         let scheme_creation_cap = {
             // First, get the scheme root to initialize the schemelist.
@@ -159,6 +164,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             let scheme_id = &SchemeList.id();
             insert_fd(*scheme_id, cap_fd, false, token)
         };
+        warn!("BOOT: umb step 5 inserted scheme creation cap");
 
         let kernel_schemes_info_page = addr_space
             .acquire_write()
@@ -182,6 +188,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             )
             .expect("Failed to allocate kernel scheme info page");
+        warn!("BOOT: umb step 6 mapped metadata page at {:X}", KERNEL_METADATA_BASE);
 
         let mut cursor = kernel_schemes_info_page.start_address().data();
         const HEADER_SIZE: usize = mem::size_of::<usize>();
@@ -208,6 +215,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             .expect("failed to create scheme creation cap user slice")
             .copy_common_bytes_from_slice(&scheme_creation_cap.to_ne_bytes())
             .expect("failed to copy scheme creation cap");
+        warn!("BOOT: umb step 7 wrote metadata");
 
         mprotect(
             KERNEL_METADATA_BASE,
@@ -215,16 +223,19 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             MapFlags::PROT_READ,
         )
         .expect("failed to mprotect kernel schemes info page");
+        warn!("BOOT: umb step 8 mprotected metadata");
     }
 
+    warn!("BOOT: umb step 9 copying bootstrap to user");
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
     UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
         .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
+    warn!("BOOT: umb step 10 bootstrap copied");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
-    debug!("Bootstrap entry point: {:X}", bootstrap_entry);
+    warn!("BOOT: Bootstrap entry point: {:X}", bootstrap_entry);
     assert_ne!(bootstrap_entry, 0);
 
     // Start in a minimal environment without any stack.

@@ -165,9 +165,12 @@ fn init_env() -> &'static [u8] {
 }
 
 extern "C" fn userspace_init() {
+    warn!("BOOT: userspace_init called");
     let mut token = unsafe { CleanLockToken::new() };
     let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
+    warn!("BOOT: calling usermode_bootstrap");
     unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) }
+    warn!("BOOT: usermode_bootstrap returned");
 }
 
 struct Bootstrap {
