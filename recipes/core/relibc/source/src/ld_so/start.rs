@@ -293,10 +293,10 @@ pub unsafe extern "C" fn relibc_ld_so_start(
     }
 
     let mut base_addr = None;
-    if !is_manual {
+    if !is_manual && cfg!(not(target_os = "redox")) {
         // if we are not running in manual mode, then the main
         // program is already loaded by the kernel and we want
-        // to use it. on redox, we treat it the same.
+        // to use it. on linux we assume the kernel preloads it, on redox we load it ourselves.
         for ph in phdrs.iter() {
             if ph.p_type(NativeEndian) == PT_PHDR {
                 assert!(base_addr.is_none(), "`PT_PHDR` cannot occur more than once");
