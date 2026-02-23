@@ -212,15 +212,18 @@ fn create_ap_identity_mapping() -> u64 {
         // Format: [phys_l1 | 0x3] (valid=1, type=1=table)
         *l0_virt = l1_phys | 0x3;
 
-        // L1 block descriptors: identity-map each 1GB slot in 2GB–4GB range.
+        // L1 block descriptors: identity-map RAM ranges.
         // Block descriptor bits: AF=1[10], SH=InnerShareable=0b11[9:8],
         //   AttrIndx=0[4:2]=Normal-WB (MAIR attr0=0xFF), valid+block=0b01[1:0]
         // Upper attribute bits (not-execute-never for EL1 code) = default 0
         let block_attr: u64 = (1 << 10) | (0b11 << 8) | (0 << 2) | 0b01;
 
-        // L1[2] = identity-maps 0x80000000–0xBFFFFFFF (covers typical RAM at ~2GB)
+        // L1[1] = identity-maps 0x40000000–0x7FFFFFFF (QEMU virt RAM base: 1GB–2GB)
+        // CRITICAL: QEMU aarch64 virt RAM starts at 0x40000000; kernel may load here
+        *l1_virt.add(1) = 0x4000_0000 | block_attr;
+        // L1[2] = identity-maps 0x80000000–0xBFFFFFFF (2GB–3GB)
         *l1_virt.add(2) = 0x8000_0000 | block_attr;
-        // L1[3] = identity-maps 0xC0000000–0xFFFFFFFF (extra coverage)
+        // L1[3] = identity-maps 0xC0000000–0xFFFFFFFF (3GB–4GB)
         *l1_virt.add(3) = 0xC000_0000 | block_attr;
 
         // Data sync barrier to ensure table writes are visible before TTBR0 is set
