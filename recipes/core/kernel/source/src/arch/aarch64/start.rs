@@ -381,6 +381,7 @@ pub struct KernelArgsAp {
     pub stack_end: u64,        // offset 24
     pub kernel_phys_base: u64, // offset 32
     pub tcr_el1: u64,          // offset 40: BSP's TCR_EL1 (includes PARange, must match)
+    pub identity_ttbr0: u64,   // offset 48: physical addr of L0 identity-map table for AP trampoline
 }
 
 // External declaration for assembly entry point
@@ -405,14 +406,17 @@ global_asm!("
         // Save x0 for later - we'll need it after page table setup
         mov x10, x0
 
-        // Load page_table (offset 8 in KernelArgsAp)
+        // Load TTBR1_EL1 = kernel page table (offset 8 in KernelArgsAp)
         ldr x1, [x0, #8]
         msr ttbr1_el1, x1
+        // Load TTBR0_EL1 = identity-map table (offset 48): maps phys addrs identity
+        // so physical PC remains accessible after MMU enable
+        ldr x1, [x0, #48]
         msr ttbr0_el1, x1
 
         // Flush TLB
         dsb sy
-        tlbi vmalle1
+        tlbi vmalle1is
         dsb sy
         isb
 
@@ -487,35 +491,36 @@ global_asm!("
         mov w11, #0x4D  // 'M'
         str w11, [x9]
 
-        // Compute virtual address of post-MMU trampoline label.
-        // KERNEL_OFFSET = 0xFFFFFF0000000000 (where kernel code is linked)
-        // virtual_addr = physical_addr - kernel_phys_base + KERNEL_OFFSET
-        ldr x7, [x10, #32]           // x7 = kernel_phys_base (offset 32 in struct)
-        movz x6, #0xFF00, lsl #32    // x6 = 0x0000_FF00_0000_0000
-        movk x6, #0xFFFF, lsl #48    // x6 = 0xFFFF_FF00_0000_0000 = KERNEL_OFFSET
-        adr x5, .Lap_mmu_on          // x5 = physical address of trampoline label
-        sub x5, x5, x7               // x5 = offset from kernel_phys_base
-        add x5, x5, x6               // x5 = KERNEL_OFFSET + offset = virtual address
-
         // Serial marker 'V' - about to enable MMU
         mov w11, #0x56  // 'V'
         str w11, [x9]
 
         // Enable MMU: set SCTLR_EL1.M (bit 0).
-        // After msr, the change is pending until a pipeline flush.
-        // The `br x5` below acts as that flush: it is fetched from
-        // physical PC (MMU still off), then after the branch the CPU
-        // continues at virtual x5 with MMU now active.
+        // Physical address 0x8e35xxxx is identity-mapped in TTBR0, so the CPU can
+        // continue fetching from physical PC after ISB flushes the pipeline.
         mrs x3, sctlr_el1
         orr x3, x3, #1         // set M bit
         msr sctlr_el1, x3
-        br x5                  // jump to virtual address (acts as ISB for SCTLR change)
+        isb                    // flush pipeline; SCTLR.M now in effect
 
-    .Lap_mmu_on:
-        // MMU is now active. Execution is at virtual address (KERNEL_OFFSET region).
-        // x10 still holds args_phys; pass it to start_ap_shared_direct.
+        // MMU is now active. Physical address is identity-mapped in TTBR0,
+        // so we can still fetch instructions and read args (no serial writes:
+        // serial at 0x09000000 is NOT in identity map, would data-abort).
+        //
+        // Convert start_ap_shared_direct physical address to KERNEL_OFFSET virtual.
+        // adrp from physical PC gives physical page of symbol (linear mapping).
+        // Convert: virtual = phys - kernel_phys_base + KERNEL_OFFSET
+        adrp x8, start_ap_shared_direct
+        add x8, x8, :lo12:start_ap_shared_direct   // x8 = physical addr of fn
+        ldr x7, [x10, #32]                          // x7 = kernel_phys_base
+        movz x6, #0xFF00, lsl #32
+        movk x6, #0xFFFF, lsl #48   // x6 = KERNEL_OFFSET = 0xFFFFFF0000000000
+        sub x8, x8, x7              // x8 = fn_phys - kernel_phys_base (kernel offset)
+        add x8, x8, x6              // x8 = KERNEL_OFFSET + offset = virtual address
+
+        // x0 = args_phys for start_ap_shared_direct
         mov x0, x10
-        b start_ap_shared_direct
+        br x8                  // jump to virtual address; TTBR1 maps KERNEL_OFFSET ✓
 
     .Lap_stuck:
         wfi

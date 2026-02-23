@@ -181,6 +181,55 @@ unsafe fn psci_call(function_id: u64, arg0: u64, arg1: u64, arg2: u64) -> i64 {
     result
 }
 
+/// Create a minimal identity-mapping L0+L1 page table for AP trampoline.
+///
+/// Maps physical addresses 0x80000000–0xFFFFFFFF (2GB–4GB) as identity
+/// using 1GB blocks in TTBR0. This lets the AP's physical PC remain
+/// accessible after MMU enable (via TTBR0 identity mapping), so `isb`
+/// followed by a branch works correctly.
+///
+/// Returns the physical address of the L0 table.
+fn create_ap_identity_mapping() -> u64 {
+    use crate::memory::allocate_p2frame;
+
+    // Allocate two 4KB pages: one L0 table, one L1 table
+    let l0_frame = allocate_p2frame(1).expect("AP identity L0 alloc");
+    let l1_frame = allocate_p2frame(1).expect("AP identity L1 alloc");
+
+    let l0_phys = l0_frame.base().data() as u64;
+    let l1_phys = l1_frame.base().data() as u64;
+
+    // Get virtual pointers (physical memory is accessible via PHYS_OFFSET)
+    let l0_virt = (l0_phys as usize + crate::PHYS_OFFSET) as *mut u64;
+    let l1_virt = (l1_phys as usize + crate::PHYS_OFFSET) as *mut u64;
+
+    unsafe {
+        // Zero both tables
+        core::ptr::write_bytes(l0_virt, 0, 512);
+        core::ptr::write_bytes(l1_virt, 0, 512);
+
+        // L0[0] = table descriptor pointing to L1
+        // Format: [phys_l1 | 0x3] (valid=1, type=1=table)
+        *l0_virt = l1_phys | 0x3;
+
+        // L1 block descriptors: identity-map each 1GB slot in 2GB–4GB range.
+        // Block descriptor bits: AF=1[10], SH=InnerShareable=0b11[9:8],
+        //   AttrIndx=0[4:2]=Normal-WB (MAIR attr0=0xFF), valid+block=0b01[1:0]
+        // Upper attribute bits (not-execute-never for EL1 code) = default 0
+        let block_attr: u64 = (1 << 10) | (0b11 << 8) | (0 << 2) | 0b01;
+
+        // L1[2] = identity-maps 0x80000000–0xBFFFFFFF (covers typical RAM at ~2GB)
+        *l1_virt.add(2) = 0x8000_0000 | block_attr;
+        // L1[3] = identity-maps 0xC0000000–0xFFFFFFFF (extra coverage)
+        *l1_virt.add(3) = 0xC000_0000 | block_attr;
+
+        // Data sync barrier to ensure table writes are visible before TTBR0 is set
+        core::arch::asm!("dsb sy", options(nomem, nostack));
+    }
+
+    l0_phys
+}
+
 /// Start secondary CPUs using PSCI CPU_ON
 unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
     // Get current CPU's MPIDR to identify BSP
@@ -198,6 +247,10 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
     };
 
     debug!("BSP MPIDR=0x{:x}, page_table=0x{:x}", bsp_mpidr, page_table_phys);
+
+    // Create identity-mapping L0 table once for all APs
+    let identity_ttbr0 = create_ap_identity_mapping();
+    debug!("AP identity mapping L0 phys=0x{:x}", identity_ttbr0);
 
     let mut ap_count = 0;
     for gicc in giccs.iter() {
@@ -247,6 +300,7 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
                 stack_end: stack_end as u64,
                 kernel_phys_base,
                 tcr_el1,
+                identity_ttbr0,
             });
         }
 
@@ -331,6 +385,10 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
 
     debug!("BSP MPIDR=0x{:x}, page_table=0x{:x}", bsp_mpidr, page_table_phys);
 
+    // Create identity-mapping L0 table once for all APs
+    let identity_ttbr0 = create_ap_identity_mapping();
+    debug!("AP identity mapping L0 phys=0x{:x}", identity_ttbr0);
+
     let mut ap_count = 0;
 
     // Try to start CPUs with MPIDR values 0, 1, 2, 3...
@@ -376,6 +434,7 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
                 stack_end: stack_end as u64,
                 kernel_phys_base,
                 tcr_el1,
+                identity_ttbr0,
             });
         }
 
