@@ -490,10 +490,12 @@ impl DSO {
         let bounds = {
             let mut bounds_opt: Option<(usize, usize)> = None;
             for ph in elf.elf_program_headers() {
-                let voff = ph.p_vaddr(endian) % ph.p_align(endian);
+                // p_align of 0 means no alignment required (treat as 1)
+                let align = ph.p_align(endian).max(1);
+                let voff = ph.p_vaddr(endian) % align;
                 let vaddr = (ph.p_vaddr(endian) - voff) as usize;
                 let vsize = ((ph.p_memsz(endian) + voff) as usize)
-                    .next_multiple_of(ph.p_align(endian) as usize);
+                    .next_multiple_of(align as usize);
 
                 match ph.p_type(endian) {
                     elf::PT_DYNAMIC => {
