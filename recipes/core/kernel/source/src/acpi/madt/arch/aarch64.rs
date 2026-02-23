@@ -234,6 +234,10 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
         // Get kernel physical base from memory map (needed for args and entry point)
         let kernel_phys_base = crate::startup::memory::kernel_phys_base() as u64;
 
+        // Read BSP's TCR_EL1 (includes PARange from hardware) for AP to restore
+        let tcr_el1: u64;
+        unsafe { core::arch::asm!("mrs {}, tcr_el1", out(reg) tcr_el1); }
+
         // Write args to allocated frame
         unsafe {
             args_virt.write(crate::arch::start::KernelArgsAp {
@@ -241,7 +245,8 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
                 page_table: page_table_phys,
                 stack_start: stack_start as u64,
                 stack_end: stack_end as u64,
-                kernel_phys_base,  // NEW: Pass kernel physical base
+                kernel_phys_base,
+                tcr_el1,
             });
         }
 
@@ -358,14 +363,19 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
         // Get kernel physical base from memory map (needed for args and entry point)
         let kernel_phys_base = crate::startup::memory::kernel_phys_base() as u64;
 
+        // Read BSP's TCR_EL1 (includes PARange from hardware) for AP to restore
+        let tcr_el1: u64;
+        unsafe { core::arch::asm!("mrs {}, tcr_el1", out(reg) tcr_el1); }
+
         // Write args to allocated frame
         unsafe {
             args_virt.write(crate::arch::start::KernelArgsAp {
-                cpu_id: cpu_id as u64,  // Use actual CPU ID
+                cpu_id: cpu_id as u64,
                 page_table: page_table_phys,
                 stack_start: stack_start as u64,
                 stack_end: stack_end as u64,
-                kernel_phys_base,  // NEW: Pass kernel physical base
+                kernel_phys_base,
+                tcr_el1,
             });
         }
 

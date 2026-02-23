@@ -34,11 +34,6 @@ pub static AP_ENTRY_COUNT: AtomicU32 = AtomicU32::new(0);
 #[unsafe(no_mangle)]
 static mut IS_AP_FLAG: bool = false;
 
-/// Function pointer for AP entry - points directly to start_ap_shared_direct
-/// Cast as function pointer - naked functions don't have normal call ABI
-#[unsafe(no_mangle)]
-static AP_ENTRY_FN: unsafe extern "C" fn() -> ! = start_ap_shared_direct;
-
 /// Alternative counter using volatile ptr (bypasses atomic infrastructure for testing)
 pub static mut AP_ENTRY_VOLATILE: u32 = 0;
 
@@ -380,11 +375,12 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
 #[repr(C, packed)]
 pub struct KernelArgsAp {
-    pub cpu_id: u64,
-    pub page_table: u64,
-    pub stack_start: u64,
-    pub stack_end: u64,
-    pub kernel_phys_base: u64,  // NEW: Physical base address of kernel
+    pub cpu_id: u64,           // offset 0
+    pub page_table: u64,       // offset 8
+    pub stack_start: u64,      // offset 16
+    pub stack_end: u64,        // offset 24
+    pub kernel_phys_base: u64, // offset 32
+    pub tcr_el1: u64,          // offset 40: BSP's TCR_EL1 (includes PARange, must match)
 }
 
 // External declaration for assembly entry point
@@ -472,70 +468,59 @@ global_asm!("
         mov w11, #0x53  // 'S'
         str w11, [x9]
 
-        // Now convert args_phys (x10) to virtual for passing to Rust
-        // start() expects args as PHYS_OFFSET virtual address
-        movz x6, #0x0000, lsl #0
-        movk x6, #0x0000, lsl #16
-        movk x6, #0x8000, lsl #32
-        movk x6, #0xFFFF, lsl #48
-        add x0, x10, x6  // x0 = args_virt (PHYS_OFFSET + args_phys)
+        // Setup MAIR_EL1: attr0=0xFF(Normal WB), attr1=0x44(Normal UC), attr2=0x00(Device)
+        movz x3, #0x44FF
+        msr mair_el1, x3
 
-        // Serial marker 'T' - Args converted for Rust
-        mov w11, #0x54  // 'T'
+        // Restore BSP's TCR_EL1 (offset 40 in KernelArgsAp) - includes PARange bits
+        ldr x3, [x10, #40]
+        msr tcr_el1, x3
+        isb
+
+        // Re-flush TLB after MAIR/TCR change
+        dsb sy
+        tlbi vmalle1is
+        dsb sy
+        isb
+
+        // Serial marker 'M' - MAIR/TCR configured
+        mov w11, #0x4D  // 'M'
         str w11, [x9]
 
-        // Clear link register
-        mov lr, #0
+        // Compute virtual address of post-MMU trampoline label.
+        // KERNEL_OFFSET = 0xFFFFFF0000000000 (where kernel code is linked)
+        // virtual_addr = physical_addr - kernel_phys_base + KERNEL_OFFSET
+        ldr x7, [x10, #32]           // x7 = kernel_phys_base (offset 32 in struct)
+        movz x6, #0xFF00, lsl #32    // x6 = 0x0000_FF00_0000_0000
+        movk x6, #0xFFFF, lsl #48    // x6 = 0xFFFF_FF00_0000_0000 = KERNEL_OFFSET
+        adr x5, .Lap_mmu_on          // x5 = physical address of trampoline label
+        sub x5, x5, x7               // x5 = offset from kernel_phys_base
+        add x5, x5, x6               // x5 = KERNEL_OFFSET + offset = virtual address
 
-        // Serial marker 'J' - About to jump
-        mov w11, #0x4A  // 'J'
-        str w11, [x9]
-
-        // Serial marker '!' - Entering inline Rust init
-        mov w11, #0x21  // '!'
-        str w11, [x9]
-        mov w11, #0x52  // 'R'
-        str w11, [x9]
-        mov w11, #0x55  // 'U'
-        str w11, [x9]
-        mov w11, #0x53  // 'S'
-        str w11, [x9]
-        mov w11, #0x54  // 'T'
+        // Serial marker 'V' - about to enable MMU
+        mov w11, #0x56  // 'V'
         str w11, [x9]
 
-        // Load function pointer from AP_ENTRY_FN static (avoids wrapper!)
-        // This is a no-mangle static, so we can reference it directly
-        adrp x8, {ap_fn_ptr}
-        add x8, x8, :lo12:{ap_fn_ptr}
-        ldr x8, [x8]      // x8 = function pointer from AP_ENTRY_FN
+        // Enable MMU: set SCTLR_EL1.M (bit 0).
+        // After msr, the change is pending until a pipeline flush.
+        // The `br x5` below acts as that flush: it is fetched from
+        // physical PC (MMU still off), then after the branch the CPU
+        // continues at virtual x5 with MMU now active.
+        mrs x3, sctlr_el1
+        orr x3, x3, #1         // set M bit
+        msr sctlr_el1, x3
+        br x5                  // jump to virtual address (acts as ISB for SCTLR change)
 
-        // Debug: Print 'F' before call
-        mov w11, #0x46  // 'F' = about to call Function
-        str w11, [x9]
-
-        // Set up argument: x0 = args_phys
-        mov x0, x10       // x10 still contains args_phys
-
-        // Debug: Print 'C' right before call
-        mov w11, #0x43  // 'C' = Calling now
-        str w11, [x9]
-
-        // Call via function pointer (indirect call, no wrapper!)
-        blr x8
-
-        // Debug: Print 'Z' if we return (should never happen)
-        mov w11, #0x5A  // 'Z' = returned!
-        str w11, [x9]
-
-        // Should never reach here (function never returns)
-        mov w11, #0x58  // 'X' = returned unexpectedly!
-        str w11, [x9]
+    .Lap_mmu_on:
+        // MMU is now active. Execution is at virtual address (KERNEL_OFFSET region).
+        // x10 still holds args_phys; pass it to start_ap_shared_direct.
+        mov x0, x10
+        b start_ap_shared_direct
 
     .Lap_stuck:
         wfi
         b .Lap_stuck
     ",
-    ap_fn_ptr = sym AP_ENTRY_FN,
 );
 
 /// Direct AP entry point - uses naked function to avoid wrapper
