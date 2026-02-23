@@ -203,47 +203,54 @@ pub unsafe extern "C" fn relibc_ld_so_start(
 
     let self_base = if at_base != 0 {
         at_base
-    } else {
+    } else if !dynamic.is_null() {
+        // PIE ld.so: compute base from _DYNAMIC symbol and PT_DYNAMIC vaddr
         let ph = phdrs
             .iter()
             .find(|ph| ph.p_type(NativeEndian) == PT_DYNAMIC as u32)
             .unwrap();
         unsafe { dynamic.byte_sub(ph.p_vaddr(NativeEndian) as usize) as usize }
+    } else {
+        // Non-PIE static ld.so: no relocation needed, base is 0
+        0
     };
 
     let is_manual = at_entry == ld_entry; // Whether the dynamic linker was invoked as a command.
 
-    let mut i = dynamic;
     let mut rela_ptr = None;
     let mut rela_len = None;
     let mut relr_ptr = None;
     let mut relr_len = None;
     let mut rel_ptr = None;
     let mut rel_len = None;
-    loop {
-        let entry = unsafe { &*i };
-        let val = entry.d_val(NativeEndian);
-        let ptr = val as *const u8;
-        match entry.d_tag(NativeEndian) as u32 {
-            elf::DT_NULL => break,
-            elf::DT_RELA => rela_ptr = Some(ptr.cast::<Rela>()),
-            elf::DT_RELASZ => rela_len = Some(val as usize / size_of::<Rela>()),
-            elf::DT_RELAENT => {
-                assert_eq!(val as usize, size_of::<Rela>(),);
+    // Skip self-relocation if dynamic is null (non-PIE static build has no .dynamic section)
+    if !dynamic.is_null() {
+        let mut i = dynamic;
+        loop {
+            let entry = unsafe { &*i };
+            let val = entry.d_val(NativeEndian);
+            let ptr = val as *const u8;
+            match entry.d_tag(NativeEndian) as u32 {
+                elf::DT_NULL => break,
+                elf::DT_RELA => rela_ptr = Some(ptr.cast::<Rela>()),
+                elf::DT_RELASZ => rela_len = Some(val as usize / size_of::<Rela>()),
+                elf::DT_RELAENT => {
+                    assert_eq!(val as usize, size_of::<Rela>(),);
+                }
+                elf::DT_REL => rel_ptr = Some(ptr.cast::<Rel>()),
+                elf::DT_RELSZ => rel_len = Some(val as usize / size_of::<Rel>()),
+                elf::DT_RELENT => {
+                    assert_eq!(val as usize, size_of::<Rel>());
+                }
+                DT_RELR => relr_ptr = Some(ptr.cast::<Relr>()),
+                DT_RELRSZ => relr_len = Some(val as usize / size_of::<Relr>()),
+                DT_RELRENT => {
+                    assert_eq!(val as usize, size_of::<Relr>());
+                }
+                _ => {}
             }
-            elf::DT_REL => rel_ptr = Some(ptr.cast::<Rel>()),
-            elf::DT_RELSZ => rel_len = Some(val as usize / size_of::<Rel>()),
-            elf::DT_RELENT => {
-                assert_eq!(val as usize, size_of::<Rel>());
-            }
-            DT_RELR => relr_ptr = Some(ptr.cast::<Relr>()),
-            DT_RELRSZ => relr_len = Some(val as usize / size_of::<Relr>()),
-            DT_RELRENT => {
-                assert_eq!(val as usize, size_of::<Relr>());
-            }
-            _ => {}
+            i = unsafe { i.add(1) };
         }
-        i = unsafe { i.add(1) };
     }
 
     unsafe fn get_array<'a, T>(
