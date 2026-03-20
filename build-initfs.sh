@@ -1,1 +1,0 @@
-build_scripts/build-initfs.sh

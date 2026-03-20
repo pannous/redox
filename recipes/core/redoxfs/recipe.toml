@@ -1,9 +1,0 @@
-[source]
-git = "https://github.com/pannous/redoxfs.git"
-
-[build]
-template = "custom"
-script = """
-# Must be statically linked
-cookbook_cargo
-"""
