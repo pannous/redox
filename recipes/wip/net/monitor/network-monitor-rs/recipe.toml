@@ -1,9 +1,0 @@
-#TODO not compiled or tested
-[source]
-git = "https://github.com/grigio/network-monitor"
-[build]
-template = "cargo"
-dependencies = [
-    "gtk4",
-    "libadwaita",
-]

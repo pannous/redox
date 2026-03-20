@@ -257,23 +257,14 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
         info!("PSCI CPU_ON: mpidr=0x{:x}, virt=0x{:x}, phys=0x{:x}, kbase=0x{:x}, context=0x{:x}",
               mpidr, entry_point_virt, entry_point_phys, kernel_phys_base, args_phys);
 
-        // Reset AP_READY flag
-        crate::arch::start::AP_READY.store(false, Ordering::SeqCst);
-
         // Call PSCI CPU_ON - pass PHYSICAL addresses
         let result = unsafe { psci_call(PSCI_CPU_ON_64, mpidr, entry_point_phys, args_phys) };
 
         if result == 0 {
             debug!("PSCI CPU_ON succeeded for AP {}", ap_count);
 
-            // Wait for AP to signal ready (with timeout)
-            let mut timeout = 10_000_000;  // ~10 seconds
-            while !crate::arch::start::AP_READY.load(Ordering::SeqCst) && timeout > 0 {
-                hint::spin_loop();
-                timeout -= 1;
-            }
-
-            if timeout == 0 {
+            // Wait for AP to signal ready (with timeout) via bitmask
+            if !crate::arch::smp_sync::wait_for_ready((ap_count + 1) as u32) {
                 warn!("Timeout waiting for AP {} to become ready", ap_count);
             } else {
                 debug!("AP {} is ready", ap_count);
@@ -377,7 +368,8 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
               mpidr, entry_point_virt, entry_point_phys, kernel_phys_base, args_phys);
 
         // Reset AP_READY flag
-        crate::arch::start::AP_READY.store(false, Ordering::SeqCst);
+       // Signal readiness via bitmask
+    crate::arch::smp_sync::signal_ready(cpu_id as u32);
 
         // Call PSCI CPU_ON - pass PHYSICAL addresses
         let result = unsafe { psci_call(PSCI_CPU_ON_64, mpidr, entry_point_phys, args_phys) };

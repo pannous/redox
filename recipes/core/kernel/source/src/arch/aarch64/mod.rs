@@ -25,6 +25,7 @@ pub mod smp_sync;
 pub mod rmm;
 
 /// Initialization and start function
+pub mod smp_sync;
 pub mod start;
 
 /// Stop function
