@@ -644,6 +644,7 @@ unsafe fn start_ap_shared(args_phys: usize) -> ! {
     warn!("AP {}: Initialized via shared start() path!", cpu_id.get());
 
     // Signal readiness
+    crate::arch::smp_sync::set_cpu_ready(cpu_id.get());
     AP_READY.store(true, Ordering::SeqCst);
 
     // Wait for BSP to complete initialization
