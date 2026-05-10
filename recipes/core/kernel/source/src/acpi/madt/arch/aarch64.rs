@@ -211,7 +211,8 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
             continue;
         }
 
-        debug!("Starting AP {} with MPIDR=0x{:x}", ap_count, mpidr);
+        let cpu_id = ap_count + 1;
+        debug!("Starting AP {} with MPIDR=0x{:x}", cpu_id, mpidr);
 
         // Allocate per-CPU stack (4 * 2MB = 8MB per CPU)
         let stack_frame = allocate_p2frame(4)
@@ -233,7 +234,7 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
         // Write args to allocated frame
         unsafe {
             args_virt.write(crate::arch::start::KernelArgsAp {
-                cpu_id: ap_count + 1,  // CPUs numbered 1, 2, 3...
+                cpu_id,  // CPUs numbered 1, 2, 3...
                 page_table: page_table_phys,
                 stack_start: stack_start as u64,
                 stack_end: stack_end as u64,
@@ -257,29 +258,31 @@ unsafe fn start_secondary_cpus(giccs: &[&super::MadtGicc]) {
         info!("PSCI CPU_ON: mpidr=0x{:x}, virt=0x{:x}, phys=0x{:x}, kbase=0x{:x}, context=0x{:x}",
               mpidr, entry_point_virt, entry_point_phys, kernel_phys_base, args_phys);
 
-        // Reset AP_READY flag
+        // Reset readiness for this AP before CPU_ON. A per-CPU bit avoids a
+        // late AP from satisfying the wait for a different CPU.
+        crate::arch::smp_sync::clear_cpu_ready(cpu_id as u32);
         crate::arch::start::AP_READY.store(false, Ordering::SeqCst);
 
         // Call PSCI CPU_ON - pass PHYSICAL addresses
         let result = unsafe { psci_call(PSCI_CPU_ON_64, mpidr, entry_point_phys, args_phys) };
 
         if result == 0 {
-            debug!("PSCI CPU_ON succeeded for AP {}", ap_count);
+            debug!("PSCI CPU_ON succeeded for AP {}", cpu_id);
 
             // Wait for AP to signal ready (with timeout)
             let mut timeout = 10_000_000;  // ~10 seconds
-            while !crate::arch::start::AP_READY.load(Ordering::SeqCst) && timeout > 0 {
+            while !crate::arch::smp_sync::is_cpu_ready(cpu_id as u32) && timeout > 0 {
                 hint::spin_loop();
                 timeout -= 1;
             }
 
             if timeout == 0 {
-                warn!("Timeout waiting for AP {} to become ready", ap_count);
+                warn!("Timeout waiting for AP {} to become ready", cpu_id);
             } else {
-                debug!("AP {} is ready", ap_count);
+                debug!("AP {} is ready", cpu_id);
             }
         } else {
-            warn!("PSCI CPU_ON failed for AP {} with error code {}", ap_count, result);
+            warn!("PSCI CPU_ON failed for AP {} with error code {}", cpu_id, result);
         }
 
         ap_count += 1;
@@ -330,7 +333,7 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
             continue;
         }
 
-        debug!("Starting AP {} with MPIDR=0x{:x}", ap_count, mpidr);
+        debug!("Starting AP {} with MPIDR=0x{:x}", cpu_id, mpidr);
 
         // Allocate per-CPU stack (4 * 2MB = 8MB per CPU)
         let stack_frame = allocate_p2frame(4)
@@ -376,32 +379,34 @@ unsafe fn start_secondary_cpus_from_dtb(total_cpus: usize) {
         info!("PSCI CPU_ON: mpidr=0x{:x}, virt=0x{:x}, phys=0x{:x}, kbase=0x{:x}, context=0x{:x}",
               mpidr, entry_point_virt, entry_point_phys, kernel_phys_base, args_phys);
 
-        // Reset AP_READY flag
+        // Reset readiness for this AP before CPU_ON. A per-CPU bit avoids a
+        // late AP from satisfying the wait for a different CPU.
+        crate::arch::smp_sync::clear_cpu_ready(cpu_id as u32);
         crate::arch::start::AP_READY.store(false, Ordering::SeqCst);
 
         // Call PSCI CPU_ON - pass PHYSICAL addresses
         let result = unsafe { psci_call(PSCI_CPU_ON_64, mpidr, entry_point_phys, args_phys) };
 
         if result == 0 {
-            debug!("PSCI CPU_ON succeeded for AP {}", ap_count);
+            debug!("PSCI CPU_ON succeeded for AP {}", cpu_id);
 
             // Wait for AP to signal ready (with timeout)
             let mut timeout = 10_000_000;  // ~10 seconds
-            while !crate::arch::start::AP_READY.load(Ordering::SeqCst) && timeout > 0 {
+            while !crate::arch::smp_sync::is_cpu_ready(cpu_id as u32) && timeout > 0 {
                 hint::spin_loop();
                 timeout -= 1;
             }
 
             if timeout == 0 {
-                warn!("Timeout waiting for AP {} to become ready", ap_count);
+                warn!("Timeout waiting for AP {} to become ready", cpu_id);
             } else {
-                debug!("AP {} is ready", ap_count);
+                debug!("AP {} is ready", cpu_id);
             }
 
             ap_count += 1;
         } else {
             debug!("PSCI CPU_ON failed for AP {} (MPIDR=0x{:x}) with error code {} (may be disabled)",
-                   ap_count, mpidr, result);
+                   cpu_id, mpidr, result);
         }
     }
 
