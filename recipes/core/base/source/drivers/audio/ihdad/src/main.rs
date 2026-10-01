@@ -25,6 +25,7 @@ QEMU ICH9    8086:293E
 */
 
 fn main() {
+    common::init();
     pcid_interface::pci_daemon(daemon);
 }
 

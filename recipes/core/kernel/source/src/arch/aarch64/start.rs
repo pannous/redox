@@ -555,6 +555,9 @@ pub unsafe extern "C" fn ap_start_rust() -> ! {
             start_fn = sym start,
         )
     }
+
+    // Call kmain_ap to enter scheduler
+    crate::kmain_ap(cpu_id);
 }
 
 /// Minimal AP entry - just test if we can reach Rust from assembly

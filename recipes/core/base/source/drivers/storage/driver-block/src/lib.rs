@@ -14,6 +14,7 @@ use partitionlib::{LogicalBlockSize, PartitionTable};
 use redox_scheme::scheme::{register_scheme_inner, SchemeAsync};
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket};
 use syscall::dirent::DirentBuf;
+use syscall::error::{Error, Result};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
     CallFlags, Error, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EISDIR, ENOENT, ENOLCK,
@@ -715,6 +716,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
                 disk.flush().await
             }
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 }

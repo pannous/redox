@@ -23,6 +23,9 @@ uutils = {}
 [[files]]
 path = "/usr/lib/init.d/00_base"
 data = """
+# Set timezone to Berlin
+export TZ=Europe/Berlin
+
 # clear and recreate tmpdir with 0o1777 permission
 rm -rf /tmp
 mkdir -m a=rwxt /tmp

@@ -6,9 +6,12 @@ set -e
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
+export HVF_WFI_SLEEP=100 # default
+echo HVF_WFI_SLEEP $HVF_WFI_SLEEP
+
 # QEMU="qemu-system-aarch64"
 QEMU="/opt/other/qemu/build/qemu-system-aarch64"
-echo "using custom $QEMU" # for venus and wip idle fixes
+echo "using custom $QEMU" # for venus and wip idle fixes        
 RAW_IMG="${RAW_IMG:-$ROOT/build/aarch64/pure-rust.img}"
 SHARE="${SHARE:-$ROOT/share/}"
 SOCKET_DIR="${SOCKET_DIR:-/private/tmp}"
@@ -25,7 +28,8 @@ NOMENU="-boot menu=off,strict=on" #Doesn't prevent 2-second boot delay.  via ESC
 #     •   cache=writeback # Host cache used, asynchronous flush (fastest, least safe).
 # ,readonly=on  if you want guest writes to fail loudly
 # ,snapshot=on if you want guest writes to be discarded on shutdown
-echo "4-core HVF + $CACHE | /scheme/9p.hostshare/ for persistence"
+SMP="${SMP:-1}" # default to single CPU to avoid SMP hangs during early bring-up
+echo "${SMP}-core HVF + $CACHE | /scheme/9p.hostshare/ for persistence"
 
 if [[ ! -f "$RAW_IMG" ]]; then
     echo "Missing raw image: $RAW_IMG" >&2
@@ -36,9 +40,7 @@ if [[ ! -f "$RAW_IMG" ]]; then
 fi
 
 # CPU="-accel tcg,thread=multi -cpu cortex-a72 -smp 4" # slower but works
-CPU="-accel hvf -cpu host -smp 4" # hvf fixed with ISB barriers (2026-01-11) true smp wip 01-25, 01-26
-# CPU="-accel hvf -cpu host -smp 1"  # debug single cpu
-# CPU="-accel hvf -cpu host"  # debug single cpu
+CPU="-accel hvf -cpu host -smp ${SMP}" # hvf fixed with ISB barriers (2026-01-11) true smp wip 01-25, 01-26
 # CPU="-M virt,highmem=off -accel hvf -cpu host" # not needed, regular HVF works
 NETDEV_ARGS=()
 if [[ "$HOST_SSH_PORT" != "0" ]]; then
@@ -50,12 +52,12 @@ fi
 NETDEV_ARGS+=(-device virtio-net-pci,netdev=net0)
 
 # Socket mode: for scripted/heredoc usage
-if [[ "$1" == "-s" || "$1" == "--socket" ]]; then
+if [[ "$1" == "-so" || "$1" == "--socket" ]]; then
     rm -f "$SOCK" "$MONSOCK"
     echo "Socket mode: $SOCK" >&2
     echo "Monitor: $MONSOCK" >&2
     echo "Connect: socat - unix-connect:$SOCK" >&2
-    qemu-system-aarch64 -M virt $CPU -m 2G \
+    "$QEMU" -M virt $CPU -m 2G \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -78,7 +80,7 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
     echo "Graphical mode: QEMU window with framebuffer terminal" >&2
     echo "Serial console also available in this terminal" >&2
     echo "Using virtio-gpu-pci with blob support"
-    qemu-system-aarch64 -M virt $CPU -m 2G  $NOMENU \
+    "$QEMU" -M virt $CPU -m 2G  $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -89,7 +91,9 @@ elif [[ "$1" == "-g" || "$1" == "--gui" ]]; then
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
         -fsdev local,id=host0,path="$SHARE",security_model=none \
         -device ramfb \
-        -serial mon:stdio
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0
         # -device virtio-gpu-pci,edid=on \  ramfb gives better debug info until
         # neither virtio-gpu-pci nor 9p Responsible or even tangential for extreme 100% CPU slowdown. 
 elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
@@ -103,7 +107,7 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
     echo "Using virtio-gpu-pci with blob support"
 
     tmux new-session -d -s "$SESSION" \
-        "qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
+        "\"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -114,11 +118,43 @@ elif [[ "$1" == "-tg" || "$1" == "--tmux-gui" ]]; then
         ${NETDEV_ARGS[*]} \
         -device qemu-xhci -device usb-kbd -device usb-tablet \
         -device virtio-gpu-pci,edid=on \
-        -serial mon:stdio"
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0"
 
 
     # Auto-select default resolution in GUI
     (sleep 2 && tmux send-keys -t "$SESSION" "" Enter && sleep 2) &
+
+    if [[ "$2" != "-d" ]]; then
+        tmux attach -t "$SESSION"
+    fi
+elif [[ "$1" == "-ts" || "$1" == "--tmux-serial" ]]; then
+    # Tmux mode with serial logging - no GUI, full debug.log capture
+    SESSION="redox-dev"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+    echo "Starting QEMU in tmux session with serial logging: $SESSION" >&2
+    echo "Attach: tmux attach -t $SESSION" >&2
+    echo "Detach: Ctrl-b d" >&2
+    echo "Serial output logged to debug.log" >&2
+    rm -f debug.log
+
+    tmux new-session -d -s "$SESSION" \
+        "HVF_WFI_SLEEP=$HVF_WFI_SLEEP \"$QEMU\" -M virt $CPU -m 2G $NOMENU \
+        -rtc base=utc,clock=host \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
+        -drive file=\"$RAW_IMG\",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
+        ${NETDEV_ARGS[*]} \
+        -device qemu-xhci -device usb-kbd \
+        -nographic \
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0"
 
     if [[ "$2" != "-d" ]]; then
         tmux attach -t "$SESSION"
@@ -132,7 +168,7 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     echo "Detach: Ctrl-b d" >&2
 
     tmux new-session -d -s "$SESSION" \
-        "qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
+        "\"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
@@ -147,20 +183,62 @@ elif [[ "$1" == "-t" || "$1" == "--tmux" ]]; then
     if [[ "$2" != "-d" ]]; then
         tmux attach -t "$SESSION"
     fi
-else
-    # Interactive mode (default)
-    # cache=writeback
-    echo "Using: $RAW_IMG" >&2
-    echo "Socket mode: $0 -s" >&2
-    qemu-system-aarch64 -M virt $CPU -m 2G $NOMENU \
+elif [[ "$1" == "-sl" || "$1" == "-s" || "$1" == "--serial" || "$1" == "--serial-only" ]]; then
+    # Serial-only mode: no framebuffer, all output to serial and debug.log
+    echo "Serial-only mode: All kernel output captured to debug.log" >&2
+    echo "No GUI - framebuffer disabled for complete text logging" >&2
+    rm -f debug.log
+    HVF_WFI_SLEEP=$HVF_WFI_SLEEP "$QEMU" -M virt $CPU -m 2G $NOMENU \
+        -rtc base=utc,clock=host \
+        -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
+        -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
+        -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
+        -device virtio-blk-pci,drive=disk0 \
+        "${NETDEV_ARGS[@]}" \
+        -device qemu-xhci -device usb-kbd \
+        -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
+        -fsdev local,id=host0,path="$SHARE",security_model=none \
+        -nographic \
+        -chardev stdio,id=char0,mux=on,logfile=debug.log \
+        -serial chardev:char0 \
+        -mon chardev=char0
+elif [[ "$1" == "-vnc" || "$1" == "--vnc" ]]; then
+    # VNC mode: graphical display via VNC with automatic recording
+    VNC_DISPLAY=":1"
+    VNC_PORT="5901"
+    SESSION="redox-dev"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+    echo "Starting QEMU in tmux session: $SESSION" >&2
+    echo "Attach: tmux attach -t $SESSION" >&2
+    echo "Detach: Ctrl-b d" >&2
+    echo "VNC mode: Display on localhost:$VNC_PORT" >&2
+    echo "Connect with: vncviewer localhost:$VNC_PORT" >&2
+    echo "Recording automatically to ./recordings/" >&2
+    echo "Using ramfb graphics device" >&2
+    # echo "Serial output -> vnc-serial.log" >&2
+
+    # Start QEMU in background, log serial to file
+    # "$QEMU" -M virt $CPU -m 2G $NOMENU \
+    tmux new-session -d -s "$SESSION" \
+        "\"$QEMU\" -M virt $CPU -m 2G $NOMENU \
         -rtc base=utc,clock=host \
         -drive if=pflash,format=raw,readonly=on,file=tools/firmware/edk2-aarch64-code.fd \
         -drive if=pflash,format=raw,file=tools/firmware/edk2-aarch64-vars.fd \
         -drive file="$RAW_IMG",format=raw,id=disk0,if=none,$CACHE \
         -device virtio-blk-pci,drive=disk0 \
         -device virtio-9p-pci,fsdev=host0,mount_tag=hostshare \
-        -fsdev local,id=host0,path="$SHARE",security_model=none \
-        "${NETDEV_ARGS[@]}" \
-        -device qemu-xhci -device usb-kbd \
-        -nographic
+        -fsdev local,id=host0,path=\"$SHARE\",security_model=none \
+        ${NETDEV_ARGS[*]} \
+        -device qemu-xhci -device usb-kbd -device usb-tablet \
+        -device ramfb \
+        -display vnc=$VNC_DISPLAY \
+        -serial mon:stdio"
+
+    # Start recording in background
+    sleep 2  # Give VNC time to start
+    "$ROOT/record-vnc.sh" "$VNC_DISPLAY" &
+else
+    echo "Using: $RAW_IMG" >&2
+    echo "Modes: -s (serial-only+log) | -ts (tmux-serial) | -tg (tmux+gui)  | -vnc | -so (socket) | -g (gui) | -t (tmux)" >&2
 fi

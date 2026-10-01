@@ -14,6 +14,7 @@ mod scheme;
 // FIXME add a driver-graphics implementation
 
 fn main() {
+    common::init();
     pcid_interface::pci_daemon(daemon);
 }
 

@@ -7,9 +7,10 @@ use redox_scheme::{
     scheme::{IntoTag, Op, SchemeResponse, SchemeSync},
     CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket,
 };
+use syscall::error::{Error, Result};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, EventFlags, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EWOULDBLOCK, MODE_FILE,
+    EventFlags, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EWOULDBLOCK, MODE_FILE,
 };
 
 pub trait NetworkAdapter {

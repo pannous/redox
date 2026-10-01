@@ -27,6 +27,8 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
 
     libredox::call::setrens(0, 0).expect("zerod: failed to enter null namespace");
 
+    libredox::call::setrens(0, 0).expect("zerod: failed to enter null namespace");
+
     loop {
         let Some(request) = socket
             .next_request(SignalBehavior::Restart)

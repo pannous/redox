@@ -2,7 +2,8 @@ use std::ffi::c_char;
 use std::fmt::Debug;
 
 use drm_sys::{DRM_MODE_OBJECT_BLOB, DRM_MODE_OBJECT_PROPERTY, DRM_PROP_NAME_LEN};
-use syscall::{Error, Result, EINVAL};
+use syscall::error::{Error, Result};
+use syscall::EINVAL;
 
 use crate::objects::{DrmObject, DrmObjectId, DrmObjects};
 use crate::GraphicsAdapter;

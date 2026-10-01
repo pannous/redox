@@ -351,8 +351,7 @@ build_kernel() {
         fi
     fi
     echo "auto-inject"
-    ./inject-kernel.sh
-        
+    /opt/other/redox/inject-kernel.sh
 
     cd "$BASE_DIR"
 }
@@ -482,6 +481,11 @@ build_drivers() {
     success "Built $built core drivers"
 
     cd "$BASE_DIR"
+}
+
+build_initfs() {
+    log "Building initfs for $ARCH with Cranelift"
+    (cd recipes/core/base/source && ./build-initfs-cranelift.sh)
 }
 
 build_simple_coreutils() {
@@ -640,6 +644,7 @@ usage() {
     echo "  kernel      Build kernel with Cranelift"
     echo "  relibc      Build relibc with Cranelift"
     echo "  drivers     Build base drivers with Cranelift"
+    echo "  initfs      Build initfs with Cranelift"
     echo "  coreutils   Build simple-coreutils with Cranelift"
     echo "  orbital     Build Orbital compositor with Cranelift"
     echo "  all         Full build (kernel + relibc + drivers + coreutils)"
@@ -695,6 +700,9 @@ main() {
             ;;
         drivers)
             build_drivers
+            ;;
+        initfs)
+            build_initfs
             ;;
         coreutils|simple-coreutils)
             build_simple_coreutils

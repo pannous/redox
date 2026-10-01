@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use inputd::{ControlEvent, VtEvent, VtEventKind};
 
 use libredox::errno::ESTALE;
-use redox_scheme::scheme::SchemeSync;
+use redox_scheme::scheme::{create_socket_for_scheme, register_sync_scheme, SchemeSync};
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket};
 
 use orbclient::{Event, EventOption};
@@ -105,8 +105,10 @@ impl InputScheme {
             return;
         }
 
-        // Mark that we have new events to trigger notification to display drivers
-        self.has_new_events = true;
+        log::debug!(
+            "switching from VT #{} to VT #{new_active}",
+            self.active_vt.unwrap_or(0)
+        );
 
         for handle in self.handles.values_mut() {
             match handle {
@@ -517,7 +519,6 @@ impl SchemeSync for InputScheme {
             Handle::Display {
                 ref mut events,
                 ref mut notified,
-                device: _,
                 ..
             } => {
                 *events = flags;
@@ -610,14 +611,13 @@ fn deamon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
                     events,
                     pending,
                     ref mut notified,
-                    device: _,
                     ..
                 } => {
                     if pending.is_empty() || *notified || !events.contains(EventFlags::EVENT_READ) {
                         continue;
                     }
 
-                    // Notify the consumer that we have some events to read.
+                    // Notify the consumer that we have some events to read. Yum yum.
                     socket_file.write_response(
                         Response::post_fevent(*id, EventFlags::EVENT_READ.bits()),
                         SignalBehavior::Restart,
@@ -652,6 +652,7 @@ fn main() {
             // Activates a VT.
             "-A" => {
                 let vt = args.next().unwrap().parse::<usize>().unwrap();
+
                 let mut handle =
                     inputd::ControlHandle::new().expect("inputd: failed to open control handle");
                 handle
@@ -691,8 +692,28 @@ fn main() {
 
             // Set keymap (stub - keymaps are handled by ps2d)
             "-K" => {
-                let _keymap = args.next().unwrap_or_default();
-                // Just exit successfully, keymap change not implemented in inputd
+                let vt = args
+                    .next()
+                    .unwrap()
+                    .to_ascii_lowercase()
+                    .parse::<KeymapKind>()
+                    .expect("inputd: unrecognized keymap code (see: inputd --keymaps)");
+
+                let mut handle =
+                    inputd::ControlHandle::new().expect("inputd: failed to open control handle");
+                handle
+                    .activate_keymap(vt as usize)
+                    .expect("inputd: failed to activate keymap");
+            }
+            // List available keymaps
+            "--keymaps" => {
+                // TODO: configurable KeymapKind using files
+                for key in vec!["dvorak", "us", "gb", "azerty", "bepo", "it"] {
+                    println!("{}", key);
+                }
+            }
+            "--help" => {
+                println!("{}", HELP);
             }
 
             _ => panic!("inputd: invalid argument: {}", val),

@@ -442,3 +442,38 @@ To verify parallel loading, look for "parallel mode" in boot messages.
 - Binary location: share/draw-gradient
 - Displays beautiful radial gradient on VT 3
 - Switch VTs with: `inputd -A 3` (gradient) or `inputd -A 1` (shell)
+
+## 2026-01-26: draw-gradient VT selection support
+
+Added ability to specify which VT draw-gradient draws onto:
+
+### Usage
+```bash
+# Auto-assign VT (default)
+draw-gradient radial
+
+# Specify VT via command line
+draw-gradient plasma 5
+
+# Specify VT via environment variable
+VT=7 draw-gradient sunset
+
+# Different patterns
+draw-gradient radial     # Purple center to teal edge
+draw-gradient diagonal   # Cyan to magenta diagonal
+draw-gradient plasma     # Colorful plasma effect
+draw-gradient sunset     # Sky gradient from blue to orange
+```
+
+### Implementation
+- Opens `/scheme/input/consumer/{vt}` when VT is specified
+- Opens `/scheme/input/consumer` (auto-assign) when not specified
+- Properly constructs v2 display path: `/scheme/display.*/v2/{vt}`
+- Uses libredox for fpath syscall to get display path
+
+### Files Modified
+- recipes/core/base/source/draw-gradient/src/main.rs
+- recipes/core/base/source/draw-gradient/Cargo.toml
+
+### Testing
+All patterns tested on multiple VTs (3, 4, 5, 6, 7) - working correctly!

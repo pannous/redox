@@ -41,6 +41,7 @@ const MAX_QUEUE_SIZE: usize = 65536;
 // In almost all places where Rust (and LLVM) uses pointers, they are limited to nonnegative isize,
 // so this is fine.
 const WRITE_NOT_READ_BIT: usize = 1;
+pub const PIPE_ROOT_ID: usize = usize::MAX - 1;
 
 fn from_raw_id(id: usize) -> (bool, usize) {
     (id & WRITE_NOT_READ_BIT != 0, id & !WRITE_NOT_READ_BIT)
@@ -54,6 +55,7 @@ pub fn pipe(token: &mut CleanLockToken) -> Result<(usize, usize)> {
         id,
         Handle::Pipe(Arc::new(Pipe {
             queue: Mutex::new(VecDeque::new()),
+            fd_queue: Mutex::new(VecDeque::new()),
             read_condition: WaitCondition::new(),
             write_condition: WaitCondition::new(),
             writer_is_alive: AtomicBool::new(true),
@@ -107,7 +109,9 @@ impl KernelScheme for PipeScheme {
         }
         if !is_writer_not_reader
             && flags.contains(EVENT_READ)
-            && (!pipe.queue.lock().is_empty() || !pipe.writer_is_alive.load(Ordering::Acquire))
+            && (!pipe.queue.lock().is_empty()
+                || !pipe.fd_queue.lock().is_empty()
+                || !pipe.writer_is_alive.load(Ordering::Acquire))
         {
             ready |= EventFlags::EVENT_READ;
         }
@@ -475,8 +479,87 @@ pub struct Pipe {
     read_condition: WaitCondition, // signals whether there are available bytes to read
     write_condition: WaitCondition, // signals whether there is room for additional bytes
     queue: Mutex<VecDeque<u8>>,
+    fd_queue: Mutex<VecDeque<Vec<Arc<spin::RwLock<FileDescription>>>>>,
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
     fd_queue: Mutex<VecDeque<Arc<SpinRwLock<FileDescription>>>>,
+}
+
+fn bulk_add_fds(
+    descriptions: Vec<Arc<spin::RwLock<FileDescription>>>,
+    payload: UserSliceRw,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
+    let cnt = descriptions.len();
+    if payload.len() != cnt * size_of::<usize>() {
+        return Err(Error::new(EINVAL));
+    }
+    if descriptions.is_empty() {
+        return Ok(0);
+    }
+    let current_lock = context::current();
+    let current = current_lock.write(token.token());
+
+    let files: Vec<FileDescriptor> = descriptions
+        .into_iter()
+        .map(|description| FileDescriptor {
+            description,
+            cloexec: true,
+        })
+        .collect();
+    let handles = current
+        .bulk_add_files_posix(files)
+        .ok_or(Error::new(EMFILE))?;
+    let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+    for (handle, chunk) in handles.iter().zip(payload_chunks) {
+        chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+    }
+    Ok(handles.len())
+}
+
+fn bulk_insert_fds(
+    descriptions: Vec<Arc<spin::RwLock<FileDescription>>>,
+    payload: UserSliceRw,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
+    let cnt = descriptions.len();
+    if payload.len() != cnt * size_of::<usize>() {
+        return Err(Error::new(EINVAL));
+    }
+    if descriptions.is_empty() {
+        return Ok(0);
+    }
+    let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
+        description,
+        cloexec: true,
+    });
+    let first_fd = payload
+        .in_exact_chunks(size_of::<usize>())
+        .next()
+        .ok_or(Error::new(EINVAL))?
+        .read_usize()?;
+
+    let current_lock = context::current();
+    let current = current_lock.write(token.token());
+
+    if first_fd == usize::MAX {
+        let files = files_iter.collect::<Vec<_>>();
+        let handles = current
+            .bulk_insert_files_upper(files)
+            .ok_or(Error::new(EMFILE))?;
+        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+        for (handle, chunk) in handles.iter().zip(payload_chunks) {
+            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+        }
+        Ok(handles.len())
+    } else {
+        let handles: Vec<FileHandle> = payload
+            .usizes()
+            .map(|res| res.map(|i| FileHandle::from(i | syscall::UPPER_FDTBL_TAG)))
+            .collect::<Result<_, _>>()?;
+        let files = files_iter.collect::<Vec<_>>();
+        current.bulk_insert_files_upper_manual(files, &handles)?;
+        Ok(handles.len())
+    }
 }

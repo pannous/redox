@@ -176,6 +176,27 @@ impl KernelScheme for SysScheme {
         }
     }
 
+    fn kopenat(
+        &self,
+        file: usize,
+        user_buf: StrOrBytes,
+        flags: usize,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        let is_top = {
+            let handles = HANDLES.read(token.token());
+            matches!(handles.get(&file), Some(Handle::TopLevel))
+        };
+        if !is_top {
+            return Err(Error::new(ENOTDIR));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        self.kopen(path, flags, ctx, token)
+    }
+
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let (kind, data_lock) = {
             let handles = HANDLES.read(token.token());

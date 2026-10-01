@@ -20,6 +20,7 @@ use crate::{
 use crate::{
     context,
     context::context::FdTbl,
+    context::file::FileDescriptor,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{
         KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
@@ -29,6 +30,8 @@ use crate::{
 };
 
 use super::usercopy::UserSliceWo;
+use syscall::{data::GlobalSchemes as UserGlobalSchemes, data::KernelSchemeInfo, O_CLOEXEC, O_RDONLY};
+use crate::scheme::{event::EVENT_ROOT_ID, pipe::PIPE_ROOT_ID};
 
 pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
     let mut close_files;
@@ -118,13 +121,13 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 flags,
                 &mut Vec::new(),
                 |page, flags, mapper, flusher| {
-                    let shared = false;
-                    Ok(Grant::zeroed(
+                    // Eagerly allocate all bootstrap pages to avoid massive COW page faults
+                    // during the initfs copy, without requiring physical contiguity.
+                    Ok(Grant::zeroed_phys_noncontig(
                         PageSpan::new(page, bootstrap.page_count),
                         flags,
                         mapper,
                         flusher,
-                        shared,
                     )?)
                 },
             )

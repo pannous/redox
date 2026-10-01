@@ -3,7 +3,7 @@ use std::{env, process};
 mod filesystem;
 mod scheme;
 
-use redox_scheme::{RequestKind, SignalBehavior};
+use redox_scheme::{scheme::create_socket_for_scheme, RequestKind, SignalBehavior};
 
 use self::scheme::Scheme;
 

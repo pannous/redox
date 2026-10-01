@@ -1,7 +1,7 @@
 use redox_rt::protocol::ProcMeta;
 use std::fmt::Debug;
 use std::{cmp, convert::TryInto, mem};
-use syscall::{error::*, Error};
+use syscall::{error::*};
 
 pub mod dgram;
 pub mod stream;

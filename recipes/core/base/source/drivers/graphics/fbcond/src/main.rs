@@ -3,7 +3,7 @@ use inputd::ConsumerHandleEvent;
 use libredox::errno::{EAGAIN, EINTR};
 use orbclient::Event;
 use redox_scheme::{
-    scheme::{Op, SchemeResponse, SchemeSync},
+    scheme::{create_socket_for_scheme, register_sync_scheme, Op, SchemeResponse, SchemeSync},
     CallerCtx, RequestKind, Response, SignalBehavior, Socket,
 };
 use std::env;

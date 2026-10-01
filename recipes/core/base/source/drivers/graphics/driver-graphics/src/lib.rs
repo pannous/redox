@@ -21,6 +21,8 @@ use inputd::{VtEvent, VtEventKind};
 use libredox::Fd;
 use redox_scheme::scheme::{register_scheme_inner, SchemeSync};
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, SignalBehavior, Socket};
+use syscall::error::{Error, Result};
+use syscall::flag::MapFlags;
 use syscall::schemev2::NewFdFlags;
 use syscall::{
     CallFlags, Error, MapFlags, Result, EACCES, EAGAIN, EBADF, EINVAL, ENOENT, EOPNOTSUPP,

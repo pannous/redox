@@ -75,15 +75,15 @@ impl ConsumerHandle {
     pub fn open_display_v2(&self) -> io::Result<File> {
         let mut buffer = [0; 1024];
         let fd = self.0.as_raw_fd();
-
         let written = libredox::call::fpath(fd as usize, &mut buffer)?;
+
         assert!(written <= buffer.len());
 
-        let base_path = std::str::from_utf8(&buffer[..written])
-            .expect("init: display path UTF-8 check failed")
-            .to_owned();
-
-        let mut display_path = PathBuf::from(base_path);
+        let mut display_path = PathBuf::from(
+            std::str::from_utf8(&buffer[..written])
+                .expect("init: display path UTF-8 check failed")
+                .to_owned(),
+        );
         display_path.set_file_name(format!(
             "v2/{}",
             display_path.file_name().unwrap().to_str().unwrap()

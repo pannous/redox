@@ -99,13 +99,17 @@ pub fn syscall(
             SYS_FMAP => {
                 let addrspace = AddrSpace::current()?;
                 let map = unsafe { UserSlice::ro(c, d)?.read_exact::<Map>()? };
-                if b == !0 {
+                let result = if b == !0 {
                     MemoryScheme::fmap_anonymous(&addrspace, &map, false, token)
                 } else {
                     file_op_generic(fd, token, |scheme, number, token| {
                         scheme.kfmap(number, &addrspace, &map, false, token)
                     })
+                };
+                if let Err(ref err) = result {
+                    error!("SYS_FMAP failed: {err:?} map={map:?} fd={b:#x}");
                 }
+                result
             }
             SYS_GETDENTS => {
                 let header_size = u16::try_from(e).map_err(|_| Error::new(EINVAL))?;

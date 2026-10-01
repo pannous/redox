@@ -26,7 +26,3 @@ plain = "0.2"
 twox-hash = "1.6"
 
 redox-initfs = {path = ".."}
-
-[[bin]]
-name = "redox-initfs-extract"
-path = "src/bin/extract.rs"

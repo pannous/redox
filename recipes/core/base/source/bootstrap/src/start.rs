@@ -1,3 +1,4 @@
+use syscall::data::GlobalSchemes;
 use syscall::flag::MapFlags;
 
 mod offsets {
@@ -86,5 +87,60 @@ pub unsafe extern "C" fn start() -> ! {
         .expect("mprotect failed for rest of memory");
     }
 
+    log_str("bootstrap: start enter");
+
+    unsafe {
+        if let Err(err) =
+            syscall::mprotect(4096, 4096, MapFlags::PROT_READ | MapFlags::MAP_PRIVATE)
+        {
+            log_str("bootstrap: mprotect failed for initfs header page");
+            let _ = err;
+            core::intrinsics::abort();
+        }
+
+        if let Err(err) = syscall::mprotect(
+            text_start,
+            text_end - text_start,
+            MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::MAP_PRIVATE,
+        ) {
+            log_str("bootstrap: mprotect failed for .text");
+            let _ = err;
+            core::intrinsics::abort();
+        }
+
+        if let Err(err) = syscall::mprotect(
+            rodata_start,
+            rodata_end - rodata_start,
+            MapFlags::PROT_READ | MapFlags::MAP_PRIVATE,
+        ) {
+            log_str("bootstrap: mprotect failed for .rodata");
+            let _ = err;
+            core::intrinsics::abort();
+        }
+
+        if let Err(err) = syscall::mprotect(
+            data_start,
+            data_end - data_start,
+            MapFlags::PROT_READ | MapFlags::PROT_WRITE | MapFlags::MAP_PRIVATE,
+        ) {
+            log_str("bootstrap: mprotect failed for .data/.bss");
+            let _ = err;
+            core::intrinsics::abort();
+        }
+
+        if let Err(err) = syscall::mprotect(
+            data_end,
+            crate::arch::STACK_START - data_end,
+            MapFlags::PROT_READ | MapFlags::MAP_PRIVATE,
+        ) {
+            log_str("bootstrap: mprotect failed for rest of memory");
+            let _ = err;
+            core::intrinsics::abort();
+        }
+    }
+
+    // FIXME make the initfs read-only
+
+    log_str("bootstrap: start calling exec::main");
     crate::exec::main();
 }

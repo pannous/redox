@@ -19,6 +19,7 @@ name = "bootstrap"
 version = "0.0.0"
 dependencies = [
  "arrayvec",
+ "bitflags",
  "hashbrown",
  "libredox",
  "linked_list_allocator",

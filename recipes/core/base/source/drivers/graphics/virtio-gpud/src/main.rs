@@ -3,8 +3,6 @@
 //! XXX: 3D mode will offload rendering ops to the host gpu and therefore requires a GPU with 3D support
 //! on the host machine.
 
-#![allow(dead_code, unused_variables, unused_imports)]
-
 // Notes for the future:
 //
 // `virtio-gpu` 2D acceleration is just blitting. 3D acceleration has 2 kinds:
@@ -22,22 +20,23 @@
 // cc https://docs.mesa3d.org/drivers/venus.html
 // cc https://docs.mesa3d.org/drivers/virgl.html
 
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use driver_graphics::GraphicsAdapter;
+use event::{user_data, EventQueue};
 use pcid_interface::PciFunctionHandle;
 
 use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
 
 mod scheme;
-pub mod venus;
 
-const VIRTIO_GPU_F_VIRGL: u32 = 0;
+//const VIRTIO_GPU_F_VIRGL: u32 = 0;
 const VIRTIO_GPU_F_EDID: u32 = 1;
-const VIRTIO_GPU_F_RESOURCE_UUID: u32 = 2;
-const VIRTIO_GPU_F_RESOURCE_BLOB: u32 = 3;
-const VIRTIO_GPU_F_CONTEXT_INIT: u32 = 4;
+//const VIRTIO_GPU_F_RESOURCE_UUID: u32 = 2;
+//const VIRTIO_GPU_F_RESOURCE_BLOB: u32 = 3;
+//const VIRTIO_GPU_F_CONTEXT_INIT: u32 = 4;
 
 const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1 << 0;
 const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
@@ -208,7 +207,7 @@ static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1); // XXX: 0 is reserved for 
 pub struct ResourceId(u32);
 
 impl ResourceId {
-    pub fn alloc() -> Self {
+    fn alloc() -> Self {
         ResourceId(RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst))
     }
 }
@@ -494,130 +493,128 @@ fn deamon(deamon: daemon::Daemon, mut pcid_handle: PciFunctionHandle) -> anyhow:
         common::file_level(),
     );
 
-    // File-based debug logging helper - defined early for use throughout init
-    use std::io::Write;
-    fn debug_log(msg: &str) {
-        for path in &["/scheme/9p.hostshare/virtio-gpud-debug.log", "/tmp/virtio-gpud-debug.log"] {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                let _ = writeln!(f, "{}", msg);
-                let _ = f.flush();
-                return;
-            }
-        }
-    }
-
-    // Double check that we have the right device (0x1050 = virtio-gpu)
+    // Double check that we have the right device.
+    //
+    // 0x1050 - virtio-gpu
     let pci_config = pcid_handle.config();
+
     assert_eq!(pci_config.func.full_device_id.device_id, 0x1050);
-    log::info!("virtio-gpu: initiating startup sequence");
+    log::info!("virtio-gpu: initiating startup sequence :^)");
 
     let device = DEVICE.try_call_once(|| virtio_core::probe_device(&mut pcid_handle))?;
     let config = unsafe { &mut *(device.device_space as *mut GpuConfig) };
 
-    // Negotiate features
+    // Negotiate features.
     let has_edid = device.transport.check_device_feature(VIRTIO_GPU_F_EDID);
     if has_edid {
         device.transport.ack_driver_feature(VIRTIO_GPU_F_EDID);
     }
-
-    // Check for 3D/Venus features
-    let has_virgl = device.transport.check_device_feature(VIRTIO_GPU_F_VIRGL);
-    let has_resource_blob = device.transport.check_device_feature(VIRTIO_GPU_F_RESOURCE_BLOB);
-    let has_context_init = device.transport.check_device_feature(VIRTIO_GPU_F_CONTEXT_INIT);
-
-    // Debug log Venus feature detection
-    debug_log(&format!(
-        "Venus features: VIRGL={} BLOB={} CTX_INIT={} num_capsets={}",
-        has_virgl, has_resource_blob, has_context_init, config.num_capsets.get()
-    ));
-
-    if has_virgl {
-        device.transport.ack_driver_feature(VIRTIO_GPU_F_VIRGL);
-        log::info!("virtio-gpu: VIRGL (3D) feature enabled");
-        debug_log("VIRGL feature acknowledged");
-    }
-    if has_resource_blob {
-        device.transport.ack_driver_feature(VIRTIO_GPU_F_RESOURCE_BLOB);
-        log::info!("virtio-gpu: RESOURCE_BLOB feature enabled");
-        debug_log("RESOURCE_BLOB feature acknowledged");
-    }
-    if has_context_init {
-        device.transport.ack_driver_feature(VIRTIO_GPU_F_CONTEXT_INIT);
-        log::info!("virtio-gpu: CONTEXT_INIT feature enabled");
-        debug_log("CONTEXT_INIT feature acknowledged");
-    }
-
-    let has_venus = has_virgl && has_resource_blob && has_context_init;
-    if has_venus {
-        log::info!("virtio-gpu: Venus/Vulkan support available!");
-        debug_log("Venus/Vulkan support AVAILABLE!");
-    } else {
-        debug_log("Venus/Vulkan NOT available (missing features)");
-    }
-
     device.transport.finalize_features();
 
-    // Queue for sending control commands
+    // Queue for sending control commands.
     let control_queue = device
         .transport
         .setup_queue(MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
 
-    // Queue for sending cursor updates
+    // Queue for sending cursor updates.
     let cursor_queue = device
         .transport
         .setup_queue(MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
 
     device.transport.setup_config_notify(MSIX_PRIMARY_VECTOR);
+
     device.transport.run_device();
 
-    // Create the display scheme BEFORE signaling ready, so fbbootlogd/fbcond can find it
     let (mut scheme, mut inputd_handle) = scheme::GpuScheme::new(
         config,
         control_queue.clone(),
         cursor_queue.clone(),
         device.transport.clone(),
         has_edid,
-        has_venus,
-        config.num_capsets.get(),
     )?;
     deamon.ready();
 
     // Signal that the daemon is ready (display scheme exists)
     deamon.ready();
 
-    debug_log("1: after ready()");
-
-    // Process any initial VT events from inputd
-    eprintln!("virtio-gpud: entering VT event loop");
-    debug_log("2: entering VT event loop");
-    while let Some(vt_event) = inputd_handle
-        .read_vt_event()
-        .expect("virtio-gpud: failed to read display handle")
-    {
-        eprintln!("virtio-gpud: got VT event: {:?}", vt_event.kind);
-        scheme.handle_vt_event(vt_event);
-    }
-    eprintln!("virtio-gpud: VT event loop done");
-    debug_log("3: VT event loop done");
-
-    // Process any initial scheme requests
-    eprintln!("virtio-gpud: calling initial tick()");
-    debug_log("4: calling tick()");
-    let _ = scheme.tick();
-    eprintln!("virtio-gpud: initial tick() done");
-    debug_log("5: tick() done, entering main loop");
-
-    // Use a polling loop for scheme requests
-    // This is a workaround for event notification issues on aarch64 where
-    // the kernel event queue doesn't reliably deliver scheme socket notifications
-    log::info!("virtio-gpud: entering main loop");
-    loop {
-        // Poll scheme for any pending requests
-        let _ = scheme.tick();
-
-        // Yield to avoid busy-waiting
-        for _ in 0..10 {
-            let _ = syscall::sched_yield();
+    user_data! {
+        enum Source {
+            Input,
+            Scheme,
+            Interrupt,
         }
     }
+
+    let event_queue: EventQueue<Source> =
+        EventQueue::new().expect("virtio-gpud: failed to create event queue");
+    event_queue
+        .subscribe(
+            inputd_handle.inner().as_raw_fd() as usize,
+            Source::Input,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+    event_queue
+        .subscribe(
+            scheme.event_handle().raw(),
+            Source::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+    event_queue
+        .subscribe(
+            device.irq_handle.as_raw_fd() as usize,
+            Source::Interrupt,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+
+    let all = [Source::Input, Source::Scheme, Source::Interrupt];
+    for event in all
+        .into_iter()
+        .chain(event_queue.map(|e| e.expect("virtio-gpud: failed to get next event").user_data))
+    {
+        match event {
+            Source::Input => {
+                while let Some(vt_event) = inputd_handle
+                    .read_vt_event()
+                    .expect("virtio-gpud: failed to read display handle")
+                {
+                    scheme.handle_vt_event(vt_event);
+                }
+            }
+            Source::Scheme => {
+                scheme
+                    .tick()
+                    .expect("virtio-gpud: failed to process scheme events");
+            }
+            Source::Interrupt => loop {
+                let before_gen = device.transport.config_generation();
+
+                let events = scheme.adapter().config.events_read.get();
+
+                if events & VIRTIO_GPU_EVENT_DISPLAY != 0 {
+                    let standard_properties = scheme.standard_properties();
+                    let (adapter, objects) = scheme.adapter_and_objects_mut();
+                    futures::executor::block_on(async { adapter.update_displays().await.unwrap() });
+                    for connector_id in objects.connector_ids().to_vec() {
+                        adapter.probe_connector(objects, &standard_properties, connector_id);
+                    }
+                    scheme.notify_displays_changed();
+                    scheme
+                        .adapter_mut()
+                        .config
+                        .events_clear
+                        .set(VIRTIO_GPU_EVENT_DISPLAY);
+                }
+
+                let after_gen = device.transport.config_generation();
+                if before_gen == after_gen {
+                    break;
+                }
+            },
+        }
+    }
+
+    std::process::exit(0);
 }

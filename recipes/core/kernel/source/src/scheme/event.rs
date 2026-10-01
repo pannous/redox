@@ -18,6 +18,7 @@ use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 const SCHEME_ROOT_ID: usize = usize::MAX;
 
 pub struct EventScheme;
+pub const EVENT_ROOT_ID: usize = usize::MAX - 2;
 
 impl KernelScheme for EventScheme {
     fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
@@ -35,6 +36,30 @@ impl KernelScheme for EventScheme {
         if id != SCHEME_ROOT_ID {
             return Err(Error::new(EACCES));
         }
+        let id = next_queue_id();
+        queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
+
+        Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
+    }
+
+    fn kopenat(
+        &self,
+        id: usize,
+        user_buf: super::StrOrBytes,
+        _flags: usize,
+        _fcntl_flags: u32,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        if id != EVENT_ROOT_ID {
+            return Err(Error::new(EBADF));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        if !path.is_empty() {
+            return Err(Error::new(ENOENT));
+        }
+
         let id = next_queue_id();
         queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
 

@@ -14,6 +14,14 @@ static MAP: Map = Map {
         .union(MapFlags::MAP_FIXED_NOREPLACE),
     address: STACK_START, // highest possible user address
 };
+static MAP_FALLBACK: Map = Map {
+    offset: 0,
+    size: STACK_SIZE,
+    flags: MapFlags::PROT_READ
+        .union(MapFlags::PROT_WRITE)
+        .union(MapFlags::MAP_PRIVATE),
+    address: 0,
+};
 
 core::arch::global_asm!(
     "
@@ -27,10 +35,10 @@ core::arch::global_asm!(
     svc 0
 
     // Failure if return value is zero
-    cbz x0, 1f
+    cbz x0, 0f
 
     // Failure if return value is negative
-    tbnz x0, 63, 1f
+    tbnz x0, 63, 0f
 
     // Set up stack frame
     mov sp, x0
@@ -41,12 +49,31 @@ core::arch::global_asm!(
     bl start
     // `start` must never return.
 
+    // failure, try a fallback mapping without a fixed address
+    0:
+    ldr x8, ={number}
+    ldr x0, ={fd}
+    ldr x1, ={map_fallback} // pointer to Map struct
+    ldr x2, ={map_size} // size of Map struct
+    svc 0
+
+    cbz x0, 1f
+    tbnz x0, 63, 1f
+
+    // Set up stack frame (fallback)
+    mov sp, x0
+    add sp, sp, #{stack_size}
+    mov fp, sp
+
+    bl start
+
     // failure, emit undefined instruction
     1:
     udf #0
     ",
     fd = const usize::MAX, // dummy fd indicates anonymous map
     map = sym MAP,
+    map_fallback = sym MAP_FALLBACK,
     map_size = const mem::size_of::<Map>(),
     number = const SYS_FMAP,
     stack_size = const STACK_SIZE,

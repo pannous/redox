@@ -68,7 +68,6 @@ impl FbconScheme {
         }
     }
 
-    #[allow(dead_code)]
     fn get_vt_handle_mut(&mut self, id: usize) -> Result<&mut FdHandle> {
         match self.handles.get_mut(&id) {
             Some(Handle::Vt(handle)) => Ok(handle),
@@ -170,7 +169,7 @@ impl SchemeSync for FbconScheme {
         }
     }
 
-    fn fcntl(&mut self, id: usize, _cmd: usize, _arg: usize, _ctx: &CallerCtx) -> Result<usize> {
+    fn fcntl(&mut self, id: usize, cmd: usize, arg: usize, _ctx: &CallerCtx) -> Result<usize> {
         if !self.handles.get(&id).is_some() {
             return Err(Error::new(EBADF));
         };

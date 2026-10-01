@@ -3,7 +3,7 @@
 # Uses ./git-all.sh for multi-repo support
 
 echo "Git auto-commit currently disabled, please commit if you did any meaningful change, even if it's work in process."
-return 0
+exit 0
 
 set -e
 

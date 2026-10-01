@@ -28,7 +28,8 @@
       "Bash(xxd:*)",
       "Bash(grep:*)",
       "Bash(ldd:*)",
-      "Bash(./build_scripts/build-initfs.sh)"
+      "Bash(./build_scripts/build-initfs.sh)",
+      "Bash(./build.sh:*)"
     ]
   },
   "hooks": {

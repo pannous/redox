@@ -13,7 +13,10 @@ use event::EventQueue;
 use inputd::ConsumerHandleEvent;
 use libredox::errno::EAGAIN;
 use orbclient::Event;
-use redox_scheme::{RequestKind, SignalBehavior, Socket};
+use redox_scheme::{
+    scheme::{create_socket_for_scheme, register_sync_scheme},
+    RequestKind, SignalBehavior, Socket,
+};
 
 use crate::scheme::FbbootlogScheme;
 

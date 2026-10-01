@@ -92,6 +92,7 @@ pub fn main() -> ! {
         let bytes_read = fd
             .read(&mut env_bytes)
             .expect("bootstrap: failed to read env");
+        bootlog("bootstrap: env read ok");
 
         if bytes_read >= env_bytes.len() {
             // TODO: Handle this, we can allocate as much as we want in theory.
@@ -109,7 +110,7 @@ pub fn main() -> ! {
     //envs.push(b"LD_DEBUG=all");
     envs.push(b"LD_LIBRARY_PATH=/scheme/initfs/lib");
 
-    log::set_max_level(log::LevelFilter::Warn);
+    log::set_max_level(log::LevelFilter::Info);
 
     if let Some(log_env) = envs
         .iter()
@@ -121,6 +122,7 @@ pub fn main() -> ! {
     }
 
     let _ = log::set_logger(&Logger);
+    bootlog("bootstrap: logger ready");
 
     unsafe extern "C" {
         // The linker script will define this as the location of the initfs header.
@@ -130,6 +132,7 @@ pub fn main() -> ! {
     let initfs_length = unsafe {
         (*(core::ptr::addr_of!(__initfs_header) as *const redox_initfs::types::Header)).initfs_size
     };
+    bootlog("bootstrap: initfs header ok");
 
     let _ = syscall::write(2, b"bootstrap: spawning initfs daemon\n");
     let initfs_fd = spawn(
@@ -143,6 +146,7 @@ pub fn main() -> ! {
             let initfs_start = core::ptr::addr_of!(__initfs_header);
             let initfs_length = initfs_length.get() as usize;
 
+            // Force legacy scheme creation to avoid cap-based issues during early bootstrap.
             crate::initfs::run(
                 core::slice::from_raw_parts(initfs_start, initfs_length),
                 write_fd,
@@ -151,6 +155,7 @@ pub fn main() -> ! {
             );
         },
     );
+    bootlog("bootstrap: initfs spawn returned");
 
     let _ = syscall::write(2, b"bootstrap: spawning process manager\n");
     let proc_fd = spawn(
@@ -293,7 +298,11 @@ pub(crate) fn spawn(
                     &[],
                 ) {
                     Err(Error { errno: EINTR }) => continue,
-                    _ => break,
+                    Err(err) => {
+                        log::error!("bootstrap: failed to receive fd for {name}: {err}");
+                        continue;
+                    }
+                    Ok(_) => break,
                 }
             }
 

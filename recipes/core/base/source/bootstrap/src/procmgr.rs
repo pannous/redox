@@ -1407,7 +1407,7 @@ impl<'a> ProcScheme<'a> {
         let recv_nonblock = |waitpid: &mut BTreeMap<WaitpidKey, (ProcessId, WaitpidStatus)>,
                              key: &WaitpidKey|
          -> Option<(ProcessId, WaitpidStatus)> {
-            if let Some((pid, sts)) = waitpid.get(key).map(|(k, v)| (*k, *v)) {
+            if let Some((pid, mut sts)) = waitpid.get(key).map(|(k, v)| (*k, *v)) {
                 waitpid.remove(key);
                 /*while let Some((_, new_sts)) = waitpid.remove(&WaitpidKey { pid: Some(pid), pgid: None }) {
                     sts = new_sts;
@@ -1642,7 +1642,7 @@ impl<'a> ProcScheme<'a> {
         awoken: &mut VecDeque<VirtualId>,
     ) -> Poll<Response> {
         let req_id = *state_entry.key();
-        let state = state_entry.get_mut();
+        let mut state = state_entry.get_mut();
         let this_state = core::mem::replace(state, PendingState::Placeholder);
         match this_state {
             PendingState::Placeholder => return Pending, // unreachable!(),
@@ -2541,7 +2541,7 @@ impl<'a> ProcScheme<'a> {
         // Useful for debugging memory leaks.
         log::trace!("NEXT FD: {}", {
             let nextfd = syscall::dup(0, &[]).unwrap();
-            let _ = syscall::close(nextfd);
+            syscall::close(nextfd);
             nextfd
         });
         log::trace!("{} processes", self.processes.len());

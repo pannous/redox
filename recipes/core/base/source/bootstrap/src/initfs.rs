@@ -6,13 +6,12 @@ use core::str;
 use alloc::string::String;
 
 use hashbrown::HashMap;
-use redox_initfs::{InitFs, Inode, InodeDir, InodeKind, InodeStruct, types::Timespec};
+use redox_initfs::{types::Timespec, InitFs, Inode, InodeDir, InodeKind, InodeStruct};
 
 use redox_rt::proc::FdGuard;
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, scheme::SchemeSync};
 
 use redox_scheme::{SignalBehavior, Socket};
-use syscall::PAGE_SIZE;
 use syscall::data::Stat;
 use syscall::dirent::DirEntry;
 use syscall::dirent::DirentBuf;
@@ -20,6 +19,7 @@ use syscall::dirent::DirentKind;
 use syscall::error::*;
 use syscall::flag::*;
 use syscall::schemev2::NewFdFlags;
+use syscall::PAGE_SIZE;
 
 use crate::KernelSchemeMap;
 
